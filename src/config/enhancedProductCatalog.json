@@ -1,0 +1,639 @@
+{
+  "categories": [
+    {
+      "name": "Cups",
+      "products": [
+        {
+          "key": "chi-cup",
+          "name": "Chi Cup",
+          "template": "/templates/cup/template.png",
+          "printAreas": {
+            "wrap": {
+              "name": "Wrap Around",
+              "x": 150,
+              "y": 300,
+              "width": 500,
+              "height": 200,
+              "maxWidth": 500,
+              "maxHeight": 200
+            }
+          },
+          "colors": ["#ffffff", "#000000", "#ff0000", "#0000ff"],
+          "basePrice": 12.99
+        }
+      ]
+    },
+    {
+      "name": "Water Bottle",
+      "products": [
+        {
+          "key": "cooli",
+          "name": "Cooli",
+          "template": "/templates/water-bottle/template.png",
+          "printAreas": {
+            "wrap": {
+              "name": "Wrap Around",
+              "x": 200,
+              "y": 250,
+              "width": 400,
+              "height": 300,
+              "maxWidth": 400,
+              "maxHeight": 300
+            }
+          },
+          "colors": ["#ffffff", "#000000", "#0000ff", "#ff0000", "#00ff00"],
+          "basePrice": 19.99
+        }
+      ]
+    },
+    {
+      "name": "Bags",
+      "products": [
+        {
+          "key": "5oz-cotton-bag",
+          "name": "5oz Cotton Bag",
+          "template": "/templates/bag/template.png",
+          "printAreas": {
+            "front": {
+              "name": "Front",
+              "x": 200,
+              "y": 200,
+              "width": 400,
+              "height": 400,
+              "maxWidth": 400,
+              "maxHeight": 400
+            }
+          },
+          "colors": ["#f5deb3", "#ffffff", "#000000"],
+          "basePrice": 18.99
+        },
+        {
+          "key": "5oz-recycled-cotton-bag",
+          "name": "5oz Recycled Cotton Bag",
+          "template": "/templates/bag/template.png",
+          "printAreas": {
+            "front": {
+              "name": "Front",
+              "x": 200,
+              "y": 200,
+              "width": 400,
+              "height": 400,
+              "maxWidth": 400,
+              "maxHeight": 400
+            }
+          },
+          "colors": ["#f5deb3", "#ffffff"],
+          "basePrice": 19.99
+        },
+        {
+          "key": "5oz-mini-cotton-bag",
+          "name": "5oz Mini Cotton Bag",
+          "template": "/templates/bag/template.png",
+          "printAreas": {
+            "front": {
+              "name": "Front",
+              "x": 250,
+              "y": 250,
+              "width": 300,
+              "height": 300,
+              "maxWidth": 300,
+              "maxHeight": 300
+            }
+          },
+          "colors": ["#f5deb3", "#ffffff", "#000000"],
+          "basePrice": 16.99
+        },
+        {
+          "key": "5oz-organic-cotton-gots",
+          "name": "5oz Organic Cotton (GOTS)",
+          "template": "/templates/bag/template.png",
+          "printAreas": {
+            "front": {
+              "name": "Front",
+              "x": 200,
+              "y": 200,
+              "width": 400,
+              "height": 400,
+              "maxWidth": 400,
+              "maxHeight": 400
+            }
+          },
+          "colors": ["#f5deb3", "#ffffff"],
+          "basePrice": 21.99
+        },
+        {
+          "key": "5oz-natural-cotton-gusseted-bag",
+          "name": "5oz Natural Cotton Gusseted Bag",
+          "template": "/templates/bag/template.png",
+          "printAreas": {
+            "front": {
+              "name": "Front",
+              "x": 200,
+              "y": 200,
+              "width": 400,
+              "height": 400,
+              "maxWidth": 400,
+              "maxHeight": 400
+            }
+          },
+          "colors": ["#f5deb3"],
+          "basePrice": 20.99
+        },
+        {
+          "key": "5oz-water-repellent-bag",
+          "name": "5oz Water Repellent Bag",
+          "template": "/templates/bag/template.png",
+          "printAreas": {
+            "front": {
+              "name": "Front",
+              "x": 200,
+              "y": 200,
+              "width": 400,
+              "height": 400,
+              "maxWidth": 400,
+              "maxHeight": 400
+            }
+          },
+          "colors": ["#000000", "#000080"],
+          "basePrice": 22.99
+        },
+        {
+          "key": "12oz-recycled-canvas-bags",
+          "name": "12oz Recycled Canvas Bags",
+          "template": "/templates/bag/template.png",
+          "printAreas": {
+            "front": {
+              "name": "Front",
+              "x": 200,
+              "y": 200,
+              "width": 400,
+              "height": 400,
+              "maxWidth": 400,
+              "maxHeight": 400
+            }
+          },
+          "colors": ["#f5deb3", "#000000"],
+          "basePrice": 24.99
+        },
+        {
+          "key": "8oz-canvas-bags",
+          "name": "8oz Canvas Bags",
+          "template": "/templates/bag/template.png",
+          "printAreas": {
+            "front": {
+              "name": "Front",
+              "x": 200,
+              "y": 200,
+              "width": 400,
+              "height": 400,
+              "maxWidth": 400,
+              "maxHeight": 400
+            }
+          },
+          "colors": ["#f5deb3", "#000000", "#ffffff"],
+          "basePrice": 22.99
+        },
+        {
+          "key": "5oz-tea-towel",
+          "name": "5oz Tea Towel",
+          "template": "/templates/tshirt/template.png",
+          "printAreas": {
+            "full": {
+              "name": "Full Print",
+              "x": 100,
+              "y": 100,
+              "width": 600,
+              "height": 600,
+              "maxWidth": 600,
+              "maxHeight": 600
+            }
+          },
+          "colors": ["#ffffff"],
+          "basePrice": 14.99
+        }
+      ]
+    },
+    {
+      "name": "Clothing",
+      "products": [
+        {
+          "key": "tshirt",
+          "name": "T-Shirt",
+          "template": "/templates/tshirt/template.png",
+          "printAreas": {
+            "front": {
+              "name": "Front",
+              "x": 250,
+              "y": 200,
+              "width": 300,
+              "height": 350,
+              "maxWidth": 300,
+              "maxHeight": 350
+            },
+            "back": {
+              "name": "Back",
+              "x": 250,
+              "y": 200,
+              "width": 300,
+              "height": 350,
+              "maxWidth": 300,
+              "maxHeight": 350
+            }
+          },
+          "colors": ["#ffffff", "#000000", "#ff0000", "#00ff00", "#0000ff"],
+          "basePrice": 15.99
+        },
+        {
+          "key": "polo",
+          "name": "Polo",
+          "template": "/templates/tshirt/template.png",
+          "printAreas": {
+            "front": {
+              "name": "Front",
+              "x": 250,
+              "y": 200,
+              "width": 300,
+              "height": 350,
+              "maxWidth": 300,
+              "maxHeight": 350
+            },
+            "back": {
+              "name": "Back",
+              "x": 250,
+              "y": 200,
+              "width": 300,
+              "height": 350,
+              "maxWidth": 300,
+              "maxHeight": 350
+            }
+          },
+          "colors": ["#ffffff", "#000000", "#000080", "#ff0000"],
+          "basePrice": 24.99
+        },
+        {
+          "key": "hoodie",
+          "name": "Hoodie",
+          "template": "/templates/hoodie/template.png",
+          "printAreas": {
+            "front": {
+              "name": "Front",
+              "x": 250,
+              "y": 250,
+              "width": 300,
+              "height": 300,
+              "maxWidth": 300,
+              "maxHeight": 300
+            },
+            "back": {
+              "name": "Back",
+              "x": 250,
+              "y": 250,
+              "width": 300,
+              "height": 300,
+              "maxWidth": 300,
+              "maxHeight": 300
+            }
+          },
+          "colors": ["#ffffff", "#000000", "#808080", "#ff0000"],
+          "basePrice": 35.99
+        },
+        {
+          "key": "zhoodie",
+          "name": "Zhoodie",
+          "template": "/templates/hoodie/template.png",
+          "printAreas": {
+            "front": {
+              "name": "Front",
+              "x": 250,
+              "y": 250,
+              "width": 300,
+              "height": 300,
+              "maxWidth": 300,
+              "maxHeight": 300
+            },
+            "back": {
+              "name": "Back",
+              "x": 250,
+              "y": 250,
+              "width": 300,
+              "height": 300,
+              "maxWidth": 300,
+              "maxHeight": 300
+            }
+          },
+          "colors": ["#000000", "#808080", "#000080"],
+          "basePrice": 39.99
+        },
+        {
+          "key": "sweatshirt",
+          "name": "Sweatshirt",
+          "template": "/templates/hoodie/template.png",
+          "printAreas": {
+            "front": {
+              "name": "Front",
+              "x": 250,
+              "y": 250,
+              "width": 300,
+              "height": 300,
+              "maxWidth": 300,
+              "maxHeight": 300
+            },
+            "back": {
+              "name": "Back",
+              "x": 250,
+              "y": 250,
+              "width": 300,
+              "height": 300,
+              "maxWidth": 300,
+              "maxHeight": 300
+            }
+          },
+          "colors": ["#ffffff", "#000000", "#808080", "#000080"],
+          "basePrice": 29.99
+        }
+      ]
+    },
+    {
+      "name": "Hi Vis",
+      "products": [
+        {
+          "key": "hi-vis-vest",
+          "name": "Hi Vis Vest",
+          "template": "/templates/tshirt/template.png",
+          "printAreas": {
+            "front": {
+              "name": "Front",
+              "x": 250,
+              "y": 200,
+              "width": 300,
+              "height": 350,
+              "maxWidth": 300,
+              "maxHeight": 350
+            },
+            "back": {
+              "name": "Back",
+              "x": 250,
+              "y": 200,
+              "width": 300,
+              "height": 350,
+              "maxWidth": 300,
+              "maxHeight": 350
+            }
+          },
+          "colors": ["#ffff00", "#ff6600"],
+          "basePrice": 18.99
+        },
+        {
+          "key": "hi-vis-jackets",
+          "name": "Hi Vis Jackets",
+          "template": "/templates/hoodie/template.png",
+          "printAreas": {
+            "front": {
+              "name": "Front",
+              "x": 250,
+              "y": 250,
+              "width": 300,
+              "height": 300,
+              "maxWidth": 300,
+              "maxHeight": 300
+            },
+            "back": {
+              "name": "Back",
+              "x": 250,
+              "y": 250,
+              "width": 300,
+              "height": 300,
+              "maxWidth": 300,
+              "maxHeight": 300
+            }
+          },
+          "colors": ["#ffff00", "#ff6600"],
+          "basePrice": 44.99
+        }
+      ]
+    },
+    {
+      "name": "Pens",
+      "products": [
+        {
+          "key": "contour-bamboo",
+          "name": "Contour Bamboo",
+          "template": "/templates/sticker/template.png",
+          "printAreas": {
+            "barrel": {
+              "name": "Barrel",
+              "x": 200,
+              "y": 350,
+              "width": 400,
+              "height": 100,
+              "maxWidth": 400,
+              "maxHeight": 100
+            }
+          },
+          "colors": ["#d2b48c", "#8b4513"],
+          "basePrice": 4.99
+        },
+        {
+          "key": "contour-extra",
+          "name": "Contour Extra",
+          "template": "/templates/sticker/template.png",
+          "printAreas": {
+            "barrel": {
+              "name": "Barrel",
+              "x": 200,
+              "y": 350,
+              "width": 400,
+              "height": 100,
+              "maxWidth": 400,
+              "maxHeight": 100
+            }
+          },
+          "colors": ["#000000", "#0000ff", "#ff0000", "#ffffff"],
+          "basePrice": 3.99
+        }
+      ]
+    },
+    {
+      "name": "Notebook",
+      "products": [
+        {
+          "key": "notebook-satin-hard-cover",
+          "name": "Notebook Satin Hard Cover",
+          "template": "/templates/poster/template.png",
+          "printAreas": {
+            "cover": {
+              "name": "Front Cover",
+              "x": 100,
+              "y": 100,
+              "width": 600,
+              "height": 600,
+              "maxWidth": 600,
+              "maxHeight": 600
+            }
+          },
+          "colors": ["#000000", "#000080", "#ff0000", "#ffffff"],
+          "basePrice": 14.99
+        },
+        {
+          "key": "notebook-set",
+          "name": "Notebook Set",
+          "template": "/templates/poster/template.png",
+          "printAreas": {
+            "cover": {
+              "name": "Front Cover",
+              "x": 100,
+              "y": 100,
+              "width": 600,
+              "height": 600,
+              "maxWidth": 600,
+              "maxHeight": 600
+            }
+          },
+          "colors": ["#000000", "#ffffff", "#808080"],
+          "basePrice": 24.99
+        }
+      ]
+    },
+    {
+      "name": "Xoopar Cables",
+      "products": [
+        {
+          "key": "octopus-mini",
+          "name": "Octopus Mini",
+          "template": "/templates/sticker/template.png",
+          "printAreas": {
+            "surface": {
+              "name": "Surface",
+              "x": 300,
+              "y": 350,
+              "width": 200,
+              "height": 100,
+              "maxWidth": 200,
+              "maxHeight": 100
+            }
+          },
+          "colors": ["#000000", "#ffffff", "#ff0000", "#0000ff"],
+          "basePrice": 9.99
+        },
+        {
+          "key": "octopus-ocean",
+          "name": "Octopus Ocean",
+          "template": "/templates/sticker/template.png",
+          "printAreas": {
+            "surface": {
+              "name": "Surface",
+              "x": 300,
+              "y": 350,
+              "width": 200,
+              "height": 100,
+              "maxWidth": 200,
+              "maxHeight": 100
+            }
+          },
+          "colors": ["#0077be", "#00ff00"],
+          "basePrice": 10.99
+        },
+        {
+          "key": "mr-bio-fast",
+          "name": "Mr Bio Fast",
+          "template": "/templates/sticker/template.png",
+          "printAreas": {
+            "surface": {
+              "name": "Surface",
+              "x": 300,
+              "y": 350,
+              "width": 200,
+              "height": 100,
+              "maxWidth": 200,
+              "maxHeight": 100
+            }
+          },
+          "colors": ["#8b4513", "#f5deb3"],
+          "basePrice": 11.99
+        }
+      ]
+    },
+    {
+      "name": "Xoopar Chargers",
+      "products": [
+        {
+          "key": "gamma-lite",
+          "name": "Gamma Lite",
+          "template": "/templates/sticker/template.png",
+          "printAreas": {
+            "surface": {
+              "name": "Surface",
+              "x": 250,
+              "y": 300,
+              "width": 300,
+              "height": 200,
+              "maxWidth": 300,
+              "maxHeight": 200
+            }
+          },
+          "colors": ["#000000", "#ffffff"],
+          "basePrice": 29.99
+        },
+        {
+          "key": "ice-p",
+          "name": "Ice P",
+          "template": "/templates/sticker/template.png",
+          "printAreas": {
+            "surface": {
+              "name": "Surface",
+              "x": 250,
+              "y": 300,
+              "width": 300,
+              "height": 200,
+              "maxWidth": 300,
+              "maxHeight": 200
+            }
+          },
+          "colors": ["#ffffff", "#000000"],
+          "basePrice": 34.99
+        }
+      ]
+    },
+    {
+      "name": "Xoopar Speakers",
+      "products": [
+        {
+          "key": "mr-bio-speaker",
+          "name": "Mr Bio Speaker",
+          "template": "/templates/sticker/template.png",
+          "printAreas": {
+            "surface": {
+              "name": "Surface",
+              "x": 250,
+              "y": 300,
+              "width": 300,
+              "height": 200,
+              "maxWidth": 300,
+              "maxHeight": 200
+            }
+          },
+          "colors": ["#8b4513", "#f5deb3"],
+          "basePrice": 24.99
+        },
+        {
+          "key": "mr-bio-mini-speaker",
+          "name": "Mr Bio Mini Speaker",
+          "template": "/templates/sticker/template.png",
+          "printAreas": {
+            "surface": {
+              "name": "Surface",
+              "x": 300,
+              "y": 350,
+              "width": 200,
+              "height": 100,
+              "maxWidth": 200,
+              "maxHeight": 100
+            }
+          },
+          "colors": ["#8b4513", "#f5deb3"],
+          "basePrice": 19.99
+        }
+      ]
+    }
+  ]
+}

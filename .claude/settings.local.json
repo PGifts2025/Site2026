@@ -1,0 +1,37 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/Users/Admin/pgifts/**)",
+      "Bash(cat:*)",
+      "Bash(npm run dev:*)",
+      "Bash(npx vite --clearScreen false --force)",
+      "Bash(npm run build:*)",
+      "WebSearch",
+      "WebFetch(domain:www.transfersuperstars.com)",
+      "WebFetch(domain:printify.com)",
+      "Bash(node:*)",
+      "Bash(dir /B .env* 2)",
+      "Bash(nul)",
+      "Bash(npm install:*)",
+      "Bash(timeout /t 5 /nobreak)",
+      "Bash(move stripe-server.js stripe-server.cjs)",
+      "Bash(timeout /t 3 /nobreak)",
+      "Bash(npm run dev:full:*)",
+      "Bash(netstat:*)",
+      "Bash(findstr:*)",
+      "Bash(taskkill:*)",
+      "Bash(mkdir:*)",
+      "Bash(if [ -f .env ])",
+      "Bash(then grep -q \"VITE_API_URL\" .env)",
+      "Bash(else echo \".env file does not exist\")",
+      "Bash(fi:*)",
+      "Bash(if [ -d .git ])",
+      "Bash(then rm -rf .git)",
+      "Bash(else echo \"No .git folder found\")",
+      "Bash(git init:*)",
+      "Bash(git add:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

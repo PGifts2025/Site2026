@@ -1,0 +1,308 @@
+
+{
+  "tshirt": {
+    "name": "T-Shirt",
+    "template": "/templates/tshirt/template.png",
+    "printAreas": {
+      "front": {
+        "name": "Front",
+        "x": 250,
+        "y": 200,
+        "width": 300,
+        "height": 350,
+        "maxWidth": 300,
+        "maxHeight": 350
+      },
+      "back": {
+        "name": "Back",
+        "x": 250,
+        "y": 200,
+        "width": 300,
+        "height": 350,
+        "maxWidth": 300,
+        "maxHeight": 350
+      },
+      "left_chest": {
+        "name": "Left Chest",
+        "x": 200,
+        "y": 150,
+        "width": 80,
+        "height": 80,
+        "maxWidth": 80,
+        "maxHeight": 80
+      },
+      "right_chest": {
+        "name": "Right Chest",
+        "x": 520,
+        "y": 150,
+        "width": 80,
+        "height": 80,
+        "maxWidth": 80,
+        "maxHeight": 80
+      }
+    },
+    "colors": ["#ffffff", "#000000", "#ff0000", "#00ff00", "#0000ff", "#ffff00", "#ff00ff", "#00ffff"],
+    "basePrice": 15.99
+  },
+  "hoodie": {
+    "name": "Hoodie",
+    "template": "/templates/hoodie/template.png",
+    "printAreas": {
+      "front": {
+        "name": "Front",
+        "x": 250,
+        "y": 250,
+        "width": 300,
+        "height": 300,
+        "maxWidth": 300,
+        "maxHeight": 300
+      },
+      "back": {
+        "name": "Back",
+        "x": 250,
+        "y": 250,
+        "width": 300,
+        "height": 300,
+        "maxWidth": 300,
+        "maxHeight": 300
+      },
+      "left_sleeve": {
+        "name": "Left Sleeve",
+        "x": 150,
+        "y": 300,
+        "width": 60,
+        "height": 120,
+        "maxWidth": 60,
+        "maxHeight": 120
+      },
+      "right_sleeve": {
+        "name": "Right Sleeve",
+        "x": 590,
+        "y": 300,
+        "width": 60,
+        "height": 120,
+        "maxWidth": 60,
+        "maxHeight": 120
+      }
+    },
+    "colors": ["#ffffff", "#000000", "#808080", "#ff0000", "#000080", "#008000"],
+    "basePrice": 35.99
+  },
+  "mug": {
+    "name": "Mug",
+    "template": "/templates/mug/template.png",
+    "printAreas": {
+      "wrap": {
+        "name": "Wrap Around",
+        "x": 150,
+        "y": 300,
+        "width": 500,
+        "height": 200,
+        "maxWidth": 500,
+        "maxHeight": 200
+      },
+      "handle_side": {
+        "name": "Handle Side",
+        "x": 200,
+        "y": 320,
+        "width": 200,
+        "height": 160,
+        "maxWidth": 200,
+        "maxHeight": 160
+      }
+    },
+    "colors": ["#ffffff", "#000000", "#ff0000", "#0000ff"],
+    "basePrice": 12.99
+  },
+  "bag": {
+    "name": "Tote Bag",
+    "template": "/templates/bag/template.png",
+    "printAreas": {
+      "front": {
+        "name": "Front",
+        "x": 200,
+        "y": 200,
+        "width": 400,
+        "height": 400,
+        "maxWidth": 400,
+        "maxHeight": 400
+      },
+      "back": {
+        "name": "Back",
+        "x": 200,
+        "y": 200,
+        "width": 400,
+        "height": 400,
+        "maxWidth": 400,
+        "maxHeight": 400
+      },
+      "small_front": {
+        "name": "Small Front Logo",
+        "x": 350,
+        "y": 250,
+        "width": 100,
+        "height": 100,
+        "maxWidth": 100,
+        "maxHeight": 100
+      }
+    },
+    "colors": ["#f5deb3", "#8b4513", "#000000", "#ffffff"],
+    "basePrice": 18.99
+  },
+  "cap": {
+    "name": "Baseball Cap",
+    "template": "/templates/cap/template.png",
+    "printAreas": {
+      "front": {
+        "name": "Front Panel",
+        "x": 300,
+        "y": 350,
+        "width": 200,
+        "height": 100,
+        "maxWidth": 200,
+        "maxHeight": 100
+      },
+      "side": {
+        "name": "Side Panel",
+        "x": 520,
+        "y": 370,
+        "width": 80,
+        "height": 60,
+        "maxWidth": 80,
+        "maxHeight": 60
+      },
+      "back": {
+        "name": "Back Panel",
+        "x": 300,
+        "y": 480,
+        "width": 200,
+        "height": 80,
+        "maxWidth": 200,
+        "maxHeight": 80
+      }
+    },
+    "colors": ["#000080", "#ff0000", "#000000", "#ffffff", "#008000"],
+    "basePrice": 16.99
+  },
+  "poster": {
+    "name": "Poster",
+    "template": "/templates/poster/template.png",
+    "printAreas": {
+      "full": {
+        "name": "Full Print",
+        "x": 50,
+        "y": 50,
+        "width": 700,
+        "height": 700,
+        "maxWidth": 700,
+        "maxHeight": 700
+      },
+      "center": {
+        "name": "Center Area",
+        "x": 200,
+        "y": 200,
+        "width": 400,
+        "height": 400,
+        "maxWidth": 400,
+        "maxHeight": 400
+      }
+    },
+    "colors": ["#ffffff"],
+    "basePrice": 9.99
+  },
+  "sticker": {
+    "name": "Sticker",
+    "template": "/templates/sticker/template.png",
+    "printAreas": {
+      "full": {
+        "name": "Full Print",
+        "x": 100,
+        "y": 100,
+        "width": 600,
+        "height": 600,
+        "maxWidth": 600,
+        "maxHeight": 600
+      }
+    },
+    "colors": ["#ffffff", "#ffff00", "#ff0000", "#00ff00", "#0000ff"],
+    "basePrice": 2.99
+  },
+  "phone-case": {
+    "name": "Phone Case",
+    "template": "/templates/phone-case/template.png",
+    "printAreas": {
+      "back": {
+        "name": "Back Panel",
+        "x": 250,
+        "y": 150,
+        "width": 300,
+        "height": 500,
+        "maxWidth": 300,
+        "maxHeight": 500
+      },
+      "camera_area": {
+        "name": "Camera Area",
+        "x": 280,
+        "y": 180,
+        "width": 240,
+        "height": 80,
+        "maxWidth": 240,
+        "maxHeight": 80
+      }
+    },
+    "colors": ["#000000", "#ffffff", "#ff0000", "#0000ff"],
+    "basePrice": 19.99
+  },
+  "laptop-skin": {
+    "name": "Laptop Skin",
+    "template": "/templates/laptop-skin/template.png",
+    "printAreas": {
+      "full": {
+        "name": "Full Coverage",
+        "x": 50,
+        "y": 150,
+        "width": 700,
+        "height": 500,
+        "maxWidth": 700,
+        "maxHeight": 500
+      },
+      "logo_area": {
+        "name": "Logo Area",
+        "x": 300,
+        "y": 350,
+        "width": 200,
+        "height": 100,
+        "maxWidth": 200,
+        "maxHeight": 100
+      }
+    },
+    "colors": ["#c0c0c0", "#000000", "#ffffff"],
+    "basePrice": 24.99
+  },
+  "mousepad": {
+    "name": "Mouse Pad",
+    "template": "/templates/mousepad/template.png",
+    "printAreas": {
+      "surface": {
+        "name": "Surface",
+        "x": 100,
+        "y": 200,
+        "width": 600,
+        "height": 400,
+        "maxWidth": 600,
+        "maxHeight": 400
+      },
+      "corner_logo": {
+        "name": "Corner Logo",
+        "x": 120,
+        "y": 220,
+        "width": 80,
+        "height": 80,
+        "maxWidth": 80,
+        "maxHeight": 80
+      }
+    },
+    "colors": ["#0000ff", "#000000", "#ffffff", "#ff0000"],
+    "basePrice": 14.99
+  }
+}
