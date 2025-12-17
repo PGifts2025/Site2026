@@ -80,6 +80,9 @@ export default async function handler(req, res) {
       success_url: successUrl,
       cancel_url: cancelUrl,
       customer_email: orderData.customer.email,
+      payment_intent_data: {
+        receipt_email: orderData.customer.email,
+      },
       metadata: {
         orderNumber: orderData.orderNumber,
         customerName: orderData.customer.name,
