@@ -317,7 +317,8 @@ const Designer = () => {
       console.log('[loadColorsForProduct] Loading for product ID:', productId);
 
       try {
-        const { data, error } = await supabase
+        // STEP 1: Try loading from product_template_colors (APPAREL products)
+        const { data: apparelData, error: apparelError } = await supabase
           .from('product_template_colors')
           .select(`
             id,
@@ -332,48 +333,89 @@ const Designer = () => {
           .eq('product_template_id', productId)
           .not('apparel_color_id', 'is', null);
 
-        if (error) {
-          console.error('[loadColorsForProduct] Query error:', error);
-          throw error;
+        if (apparelError) {
+          console.error('[loadColorsForProduct] Apparel query error:', apparelError);
+          throw apparelError;
         }
 
-        console.log('[loadColorsForProduct] Raw data:', data);
+        console.log('[loadColorsForProduct] Apparel data:', apparelData);
 
-        if (!data || data.length === 0) {
-          console.warn('[loadColorsForProduct] No colors found for product');
+        // If apparel colors found, use them
+        if (apparelData && apparelData.length > 0) {
+          console.log('[loadColorsForProduct] ✓ Found APPAREL colors');
+
+          // Map to simple color objects
+          const colors = apparelData.map(ptc => {
+            if (!ptc.apparel_colors) {
+              console.warn('[loadColorsForProduct] Missing apparel_colors for:', ptc);
+              return null;
+            }
+            return {
+              id: ptc.apparel_colors.id,
+              color_name: ptc.apparel_colors.color_name,
+              hex_code: ptc.apparel_colors.hex_code,
+              is_apparel: true // Mark as apparel product
+            };
+          });
+
+          // Validate colors
+          const validColors = colors.filter(color => {
+            const isValid = color && color.id && color.color_name && color.hex_code;
+            if (!isValid) {
+              console.warn('[loadColorsForProduct] ⚠️ Invalid apparel color:', color);
+            }
+            return isValid;
+          });
+
+          console.log('[loadColorsForProduct] ✅ Validated', validColors.length, 'apparel colors');
+          return validColors;
+        }
+
+        // STEP 2: No apparel colors, try loading from product_template_variants (GENERIC products)
+        console.log('[loadColorsForProduct] No apparel colors, checking product_template_variants...');
+
+        const { data: variantData, error: variantError } = await supabase
+          .from('product_template_variants')
+          .select('id, color_name, color_code, view_name, template_url')
+          .eq('product_template_id', productId);
+
+        if (variantError) {
+          console.error('[loadColorsForProduct] Variant query error:', variantError);
+          throw variantError;
+        }
+
+        console.log('[loadColorsForProduct] Variant data:', variantData);
+
+        if (!variantData || variantData.length === 0) {
+          console.warn('[loadColorsForProduct] No colors found in either table');
           return [];
         }
 
-        // Map to simple color objects
-        const colors = data.map(ptc => {
-          // Safely handle case where apparel_colors might be null
-          if (!ptc.apparel_colors) {
-            console.warn('[loadColorsForProduct] Missing apparel_colors for:', ptc);
-            return null;
+        console.log('[loadColorsForProduct] ✓ Found GENERIC product variants');
+
+        // Group variants by color (each color has multiple views)
+        const colorMap = new Map();
+        variantData.forEach(variant => {
+          if (!colorMap.has(variant.color_code)) {
+            colorMap.set(variant.color_code, {
+              id: variant.color_code, // Use color_code as unique ID for variants
+              color_name: variant.color_name,
+              hex_code: variant.color_code,
+              is_apparel: false, // Mark as generic product
+              variants: []
+            });
           }
-          return {
-            id: ptc.apparel_colors.id,
-            color_name: ptc.apparel_colors.color_name,
-            hex_code: ptc.apparel_colors.hex_code
-          };
+          // Store all view variants for this color
+          colorMap.get(variant.color_code).variants.push({
+            view_name: variant.view_name,
+            template_url: variant.template_url
+          });
         });
 
-        console.log('[loadColorsForProduct] Mapped', colors.length, 'colors (before validation)');
+        const genericColors = Array.from(colorMap.values());
+        console.log('[loadColorsForProduct] ✅ Loaded', genericColors.length, 'generic colors with variants');
 
-        // ✅ VALIDATE before returning - filter out invalid colors
-        const validColors = colors.filter(color => {
-          const isValid = color && color.id && color.color_name && color.hex_code;
-
-          if (!isValid) {
-            console.warn('[loadColorsForProduct] ⚠️ Invalid color detected:', color);
-          }
-
-          return isValid;
-        });
-
-        console.log('[loadColorsForProduct] ✅ Validated', validColors.length, 'colors:', validColors);
-
-        return validColors;
+        return genericColors;
 
       } catch (err) {
         console.error('[loadColorsForProduct] Exception:', err);
@@ -768,6 +810,7 @@ const Designer = () => {
   }, [selectedProduct, selectedView]); // Load template when product or view changes
 
   // DEDICATED COLOR CHANGE EFFECT - Only updates template image, never touches print areas
+  // Supports BOTH apparel (color overlay) and generic (direct variant images) products
   useEffect(() => {
     // Skip if dependencies not ready
     if (!canvas || !canvasReady.current || !currentProduct || !selectedColorId || !currentColorData) {
@@ -776,6 +819,7 @@ const Designer = () => {
 
     console.log('[Color Change Effect] ═══════════════════════════════════');
     console.log('[Color Change Effect] Color changed to:', currentColorData.color_name);
+    console.log('[Color Change Effect] Is Apparel:', currentColorData.is_apparel);
     console.log('[Color Change Effect] Print areas loaded:', printAreasLoaded);
     console.log('[Color Change Effect] Will NOT change printAreasLoaded state');
     console.log('[Color Change Effect] Will ONLY update canvas image');
@@ -783,6 +827,7 @@ const Designer = () => {
     // This effect is ONLY for swapping the image - never touches print area state!
     // Print areas are managed separately and should remain visible
     // NOTE: Don't block templateRendering here - updateCanvasImage handles state properly
+    // Supports BOTH apparel (color overlay) and generic (direct variant) products
 
     const updateColorOnly = async () => {
       try {
@@ -793,37 +838,56 @@ const Designer = () => {
           return;
         }
 
-        console.log('[Color Change Effect] Checking for uploaded photo...');
-
-        // Check if uploaded photo exists for this color
-        const photoUrl = await getColorPhotoUrl(
-          productKey,
-          currentColorData.color_name,
-          selectedView
-        );
-
         let imageUrl;
 
-        if (photoUrl) {
-          // Use actual uploaded photo
-          console.log('[Color Change Effect] ✅ Using uploaded photo');
-          imageUrl = photoUrl;
-        } else {
-          // Generate overlay from white template
-          console.log('[Color Change Effect] 🎨 Generating color overlay');
+        // GENERIC PRODUCT: Load direct variant image
+        if (currentColorData.is_apparel === false && currentColorData.variants) {
+          console.log('[Color Change Effect] 🎯 GENERIC product - loading variant image');
 
-          const whitePhotoUrl = await getColorPhotoUrl(
-            productKey,
-            'White',
-            selectedView
-          );
+          // Find the variant for the current view
+          const variant = currentColorData.variants.find(v => v.view_name === selectedView);
 
-          if (!whitePhotoUrl) {
-            console.error('[Color Change Effect] ❌ No white template available');
+          if (!variant) {
+            console.error('[Color Change Effect] ❌ No variant found for view:', selectedView);
+            console.log('[Color Change Effect] Available variants:', currentColorData.variants.map(v => v.view_name));
             return;
           }
 
-          imageUrl = await applyStrongColorOverlay(whitePhotoUrl, currentColorData.hex_code);
+          console.log('[Color Change Effect] ✅ Using variant image:', variant.template_url);
+          imageUrl = variant.template_url;
+
+        } else {
+          // APPAREL PRODUCT: Use photo or color overlay
+          console.log('[Color Change Effect] 👕 APPAREL product - checking for uploaded photo...');
+
+          // Check if uploaded photo exists for this color
+          const photoUrl = await getColorPhotoUrl(
+            productKey,
+            currentColorData.color_name,
+            selectedView
+          );
+
+          if (photoUrl) {
+            // Use actual uploaded photo
+            console.log('[Color Change Effect] ✅ Using uploaded photo');
+            imageUrl = photoUrl;
+          } else {
+            // Generate overlay from white template
+            console.log('[Color Change Effect] 🎨 Generating color overlay');
+
+            const whitePhotoUrl = await getColorPhotoUrl(
+              productKey,
+              'White',
+              selectedView
+            );
+
+            if (!whitePhotoUrl) {
+              console.error('[Color Change Effect] ❌ No white template available');
+              return;
+            }
+
+            imageUrl = await applyStrongColorOverlay(whitePhotoUrl, currentColorData.hex_code);
+          }
         }
 
         if (imageUrl) {
@@ -2163,6 +2227,7 @@ const Designer = () => {
 
   /**
    * CRITICAL: Handle color change with proper photo detection
+   * Supports BOTH apparel (color overlay) and generic (direct variant images) products
    * @param {Object} selectedColor - Color object with color_name, hex_code, etc.
    */
   const handleColorChange = async (selectedColor) => {
@@ -2171,6 +2236,7 @@ const Designer = () => {
     console.log('[handleColorChange] Hex:', selectedColor.hex_code);
     console.log('[handleColorChange] Product:', currentProduct?.product_key || selectedProduct);
     console.log('[handleColorChange] View:', selectedView);
+    console.log('[handleColorChange] Is Apparel:', selectedColor.is_apparel);
     console.log('[DEBUG] currentProduct full object:', currentProduct);
     console.log('[DEBUG] Available keys:', currentProduct ? Object.keys(currentProduct) : 'none');
 
@@ -2186,6 +2252,29 @@ const Designer = () => {
         setChangingColor(false);
         return;
       }
+
+      // GENERIC PRODUCT: Load direct variant image
+      if (selectedColor.is_apparel === false && selectedColor.variants) {
+        console.log('[handleColorChange] 🎯 GENERIC product - loading variant image directly');
+
+        // Find the variant for the current view
+        const variant = selectedColor.variants.find(v => v.view_name === selectedView);
+
+        if (!variant) {
+          console.error('[handleColorChange] ❌ No variant found for view:', selectedView);
+          console.log('[handleColorChange] Available variants:', selectedColor.variants.map(v => v.view_name));
+          setChangingColor(false);
+          return;
+        }
+
+        console.log('[handleColorChange] ✅ Loading variant image:', variant.template_url);
+        await updateCanvasImage(variant.template_url);
+        setChangingColor(false);
+        return;
+      }
+
+      // APPAREL PRODUCT: Use color overlay system
+      console.log('[handleColorChange] 👕 APPAREL product - using color overlay system');
 
       // STEP 1: Check if we have an uploaded photo for this color
       const photoUrl = await getColorPhotoUrl(
