@@ -3808,8 +3808,8 @@ const Designer = () => {
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="flex flex-col lg:flex-row gap-6">
-          {/* Left Sidebar - Product Selection + Tools */}
-          <div className="w-full lg:w-80 flex-shrink-0">
+          {/* Left Sidebar Part 1 - Product Selection + Color + Print Location */}
+          <div className="w-full lg:w-80 flex-shrink-0 order-1">
             <div className="bg-white rounded-lg shadow-sm p-6">
               <h3 className="text-lg font-semibold mb-4">Product</h3>
               
@@ -3945,86 +3945,142 @@ const Designer = () => {
                 )}
 
                 {/* View Selector - Show Front/Left/Right/Back buttons */}
-                {useDatabase && currentProduct && (
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Print Location
-                    </label>
-                    <div className="flex flex-wrap gap-2">
-                      {/* Front, Left, Right buttons all load front view but select different print areas */}
-                      <button
-                        onClick={() => handleViewClick('front')}
-                        className={`px-3 py-2 rounded-md border-2 text-sm font-medium flex items-center gap-2 ${
-                          activePrintArea === 'Center Chest' && printAreasVisible
-                            ? 'border-blue-500 bg-blue-50 text-blue-700'
-                            : 'border-gray-300 bg-white text-gray-700 hover:border-gray-400'
-                        }`}
-                        title="Center Chest - Click twice to hide"
-                      >
-                        <span>Front</span>
-                        {getPrintAreaDesignCount('Center Chest') > 0 && (
-                          <span className="inline-block bg-blue-500 text-white text-xs font-bold rounded-full px-2 py-0.5 min-w-[20px] text-center">
-                            {getPrintAreaDesignCount('Center Chest')}
-                          </span>
-                        )}
-                      </button>
-                      <button
-                        onClick={() => handleViewClick('left')}
-                        className={`px-3 py-2 rounded-md border-2 text-sm font-medium flex items-center gap-2 ${
-                          activePrintArea === 'Left Breast Pocket' && printAreasVisible
-                            ? 'border-blue-500 bg-blue-50 text-blue-700'
-                            : 'border-gray-300 bg-white text-gray-700 hover:border-gray-400'
-                        }`}
-                        title="Left Breast Pocket - Click twice to hide"
-                      >
-                        <span>Left</span>
-                        {getPrintAreaDesignCount('Left Breast Pocket') > 0 && (
-                          <span className="inline-block bg-blue-500 text-white text-xs font-bold rounded-full px-2 py-0.5 min-w-[20px] text-center">
-                            {getPrintAreaDesignCount('Left Breast Pocket')}
-                          </span>
-                        )}
-                      </button>
-                      <button
-                        onClick={() => handleViewClick('right')}
-                        className={`px-3 py-2 rounded-md border-2 text-sm font-medium flex items-center gap-2 ${
-                          activePrintArea === 'Right Breast Pocket' && printAreasVisible
-                            ? 'border-blue-500 bg-blue-50 text-blue-700'
-                            : 'border-gray-300 bg-white text-gray-700 hover:border-gray-400'
-                        }`}
-                        title="Right Breast Pocket - Click twice to hide"
-                      >
-                        <span>Right</span>
-                        {getPrintAreaDesignCount('Right Breast Pocket') > 0 && (
-                          <span className="inline-block bg-blue-500 text-white text-xs font-bold rounded-full px-2 py-0.5 min-w-[20px] text-center">
-                            {getPrintAreaDesignCount('Right Breast Pocket')}
-                          </span>
-                        )}
-                      </button>
-                      <button
-                        onClick={() => handleViewClick('back')}
-                        className={`px-3 py-2 rounded-md border-2 text-sm font-medium flex items-center gap-2 ${
-                          activePrintArea === 'Center Back' && printAreasVisible
-                            ? 'border-blue-500 bg-blue-50 text-blue-700'
-                            : 'border-gray-300 bg-white text-gray-700 hover:border-gray-400'
-                        }`}
-                        title="Center Back - Click twice to hide"
-                      >
-                        <span>Back</span>
-                        {getPrintAreaDesignCount('Center Back') > 0 && (
-                          <span className="inline-block bg-blue-500 text-white text-xs font-bold rounded-full px-2 py-0.5 min-w-[20px] text-center">
-                            {getPrintAreaDesignCount('Center Back')}
-                          </span>
-                        )}
-                      </button>
-                    </div>
-                    <p className="text-sm text-blue-600 font-medium mt-2 bg-blue-50 p-2 rounded">
-                      💡 Tip: Each print area has its own independent designs. Click a button to switch areas. Badges show design count per area.
-                    </p>
-                  </div>
-                )}
+                {useDatabase && currentProduct && (() => {
+                  // Determine which views have print areas available
+                  const viewMapping = {
+                    'center_chest': 'front',
+                    'left_breast_pocket': 'left',
+                    'right_breast_pocket': 'right',
+                    'left_sleeve': 'left',
+                    'right_sleeve': 'right',
+                    'center_back': 'back',
+                    'front_print': 'front',
+                    'back_print': 'back',
+                    'left_print': 'left',
+                    'right_print': 'right',
+                    'side_print': 'front',
+                    'top_print': 'front',
+                    'bottom_print': 'back',
+                    'front': 'front',
+                    'back': 'back',
+                    'left': 'left',
+                    'right': 'right'
+                  };
 
-                {/* Zoom Controls */}
-                <div className="mb-4 p-3 bg-gray-50 border border-gray-200 rounded-lg">
+                  const availableViews = printAreas?.map(area =>
+                    viewMapping[area.area_key] || area.view_name || 'front'
+                  ) || [];
+                  const uniqueViews = [...new Set(availableViews)];
+
+                  const hasFront = uniqueViews.includes('front');
+                  const hasLeft = uniqueViews.includes('left');
+                  const hasRight = uniqueViews.includes('right');
+                  const hasBack = uniqueViews.includes('back');
+
+                  return (
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Print Location
+                      </label>
+                      <div className="flex flex-wrap gap-2">
+                        {/* Front button */}
+                        <button
+                          onClick={() => hasFront && handleViewClick('front')}
+                          disabled={!hasFront}
+                          className={`px-3 py-2 rounded-md border-2 text-sm font-medium flex items-center gap-2 transition-all ${
+                            !hasFront
+                              ? 'opacity-40 cursor-not-allowed border-gray-200 bg-gray-50 text-gray-400'
+                              : activePrintArea === 'Center Chest' && printAreasVisible
+                                ? 'border-blue-500 bg-blue-50 text-blue-700'
+                                : 'border-gray-300 bg-white text-gray-700 hover:border-gray-400'
+                          }`}
+                          title={hasFront ? "Center Chest - Click twice to hide" : "No front print area available"}
+                        >
+                          <span>Front</span>
+                          {hasFront && getPrintAreaDesignCount('Center Chest') > 0 && (
+                            <span className="inline-block bg-blue-500 text-white text-xs font-bold rounded-full px-2 py-0.5 min-w-[20px] text-center">
+                              {getPrintAreaDesignCount('Center Chest')}
+                            </span>
+                          )}
+                        </button>
+
+                        {/* Left button */}
+                        <button
+                          onClick={() => hasLeft && handleViewClick('left')}
+                          disabled={!hasLeft}
+                          className={`px-3 py-2 rounded-md border-2 text-sm font-medium flex items-center gap-2 transition-all ${
+                            !hasLeft
+                              ? 'opacity-40 cursor-not-allowed border-gray-200 bg-gray-50 text-gray-400'
+                              : activePrintArea === 'Left Breast Pocket' && printAreasVisible
+                                ? 'border-blue-500 bg-blue-50 text-blue-700'
+                                : 'border-gray-300 bg-white text-gray-700 hover:border-gray-400'
+                          }`}
+                          title={hasLeft ? "Left Breast Pocket - Click twice to hide" : "No left print area available"}
+                        >
+                          <span>Left</span>
+                          {hasLeft && getPrintAreaDesignCount('Left Breast Pocket') > 0 && (
+                            <span className="inline-block bg-blue-500 text-white text-xs font-bold rounded-full px-2 py-0.5 min-w-[20px] text-center">
+                              {getPrintAreaDesignCount('Left Breast Pocket')}
+                            </span>
+                          )}
+                        </button>
+
+                        {/* Right button */}
+                        <button
+                          onClick={() => hasRight && handleViewClick('right')}
+                          disabled={!hasRight}
+                          className={`px-3 py-2 rounded-md border-2 text-sm font-medium flex items-center gap-2 transition-all ${
+                            !hasRight
+                              ? 'opacity-40 cursor-not-allowed border-gray-200 bg-gray-50 text-gray-400'
+                              : activePrintArea === 'Right Breast Pocket' && printAreasVisible
+                                ? 'border-blue-500 bg-blue-50 text-blue-700'
+                                : 'border-gray-300 bg-white text-gray-700 hover:border-gray-400'
+                          }`}
+                          title={hasRight ? "Right Breast Pocket - Click twice to hide" : "No right print area available"}
+                        >
+                          <span>Right</span>
+                          {hasRight && getPrintAreaDesignCount('Right Breast Pocket') > 0 && (
+                            <span className="inline-block bg-blue-500 text-white text-xs font-bold rounded-full px-2 py-0.5 min-w-[20px] text-center">
+                              {getPrintAreaDesignCount('Right Breast Pocket')}
+                            </span>
+                          )}
+                        </button>
+
+                        {/* Back button */}
+                        <button
+                          onClick={() => hasBack && handleViewClick('back')}
+                          disabled={!hasBack}
+                          className={`px-3 py-2 rounded-md border-2 text-sm font-medium flex items-center gap-2 transition-all ${
+                            !hasBack
+                              ? 'opacity-40 cursor-not-allowed border-gray-200 bg-gray-50 text-gray-400'
+                              : activePrintArea === 'Center Back' && printAreasVisible
+                                ? 'border-blue-500 bg-blue-50 text-blue-700'
+                                : 'border-gray-300 bg-white text-gray-700 hover:border-gray-400'
+                          }`}
+                          title={hasBack ? "Center Back - Click twice to hide" : "No back print area available"}
+                        >
+                          <span>Back</span>
+                          {hasBack && getPrintAreaDesignCount('Center Back') > 0 && (
+                            <span className="inline-block bg-blue-500 text-white text-xs font-bold rounded-full px-2 py-0.5 min-w-[20px] text-center">
+                              {getPrintAreaDesignCount('Center Back')}
+                            </span>
+                          )}
+                        </button>
+                      </div>
+                      <p className="text-sm text-blue-600 font-medium mt-2 bg-blue-50 p-2 rounded">
+                        💡 Tip: Each print area has its own independent designs. Click a button to switch areas. Badges show design count per area.
+                      </p>
+                    </div>
+                  );
+                })()}
+              </div>
+            </div>
+          </div>
+
+          {/* Zoom Controls - Separate section for mobile reordering */}
+          <div className="w-full lg:w-80 flex-shrink-0 order-3 lg:order-1">
+            <div className="bg-white rounded-lg shadow-sm p-6">
+              <div className="mb-4 p-3 bg-gray-50 border border-gray-200 rounded-lg">
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Zoom: {Math.round(zoomLevel * 100)}%
                   </label>
@@ -4070,11 +4126,13 @@ const Designer = () => {
                 {/* Print Area dropdown REMOVED - Front/Left/Right/Back buttons handle selection */}
 
                 {/* Print Area Info Display - REMOVED per user request */}
-              </div>
+            </div>
+          </div>
 
-              {/* Tools Section - Moved to Left Sidebar */}
-              <div className="mt-6 pt-6 border-t border-gray-200">
-                <h3 className="text-lg font-semibold mb-4">Tools</h3>
+          {/* Tools Section - Separate section for mobile reordering */}
+          <div className="w-full lg:w-80 flex-shrink-0 order-4 lg:order-1">
+            <div className="bg-white rounded-lg shadow-sm p-6">
+              <h3 className="text-lg font-semibold mb-4">Tools</h3>
               
               <div className="space-y-4">
                 {/* Add Elements */}
@@ -4423,50 +4481,51 @@ const Designer = () => {
           </div>
 
           {/* Canvas Area - Full Width, Mobile Responsive */}
-          <div className="flex-1 flex items-center justify-center bg-gray-100 rounded-lg p-2 sm:p-4 lg:p-8 overflow-auto">
-            <div className="bg-white shadow-lg rounded-lg p-2 sm:p-4 w-full max-w-full">
-              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-2 sm:mb-4 gap-2">
-                <h3 className="text-base sm:text-lg font-semibold">Design Canvas</h3>
-                <div className="text-xs sm:text-sm text-gray-500">
-                  {templateLoaded ? 'Template Loaded' : 'Loading Template...'}
+          <div className="flex-1 flex flex-col bg-gray-100 rounded-lg p-2 sm:p-4 lg:p-8 overflow-auto order-2">
+            {/* Save & Cart Buttons - Top Right Corner */}
+            <div className="flex justify-end items-center gap-2 sm:gap-3 mb-3 sm:mb-4">
+              <button
+                onClick={handleSavePosition}
+                className="px-3 py-2 sm:px-5 sm:py-2.5 bg-blue-500 text-white font-semibold text-xs sm:text-sm rounded-lg shadow-md hover:bg-blue-600 hover:-translate-y-0.5 hover:shadow-lg active:scale-98 transition-all duration-200 flex items-center gap-2"
+                title="Save current designs for this print area"
+              >
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" className="w-3 h-3 sm:w-4 sm:h-4">
+                  <path d="M13.854 3.646a.5.5 0 0 1 0 .708l-7 7a.5.5 0 0 1-.708 0l-3.5-3.5a.5.5 0 1 1 .708-.708L6.5 10.293l6.646-6.647a.5.5 0 0 1 .708 0z"/>
+                </svg>
+                <span className="hidden sm:inline">Save Position</span>
+                <span className="sm:hidden">Save</span>
+              </button>
+
+              <button
+                onClick={handleAddToCart}
+                className="px-3 py-2 sm:px-5 sm:py-2.5 bg-green-500 text-white font-semibold text-xs sm:text-sm rounded-lg shadow-md hover:bg-green-600 hover:-translate-y-0.5 hover:shadow-lg active:scale-98 transition-all duration-200 flex items-center gap-2"
+                title="Add design to shopping cart"
+              >
+                <ShoppingCart className="w-3 h-3 sm:w-4 sm:h-4" />
+                <span className="hidden sm:inline">Add to Cart</span>
+                <span className="sm:hidden">Cart</span>
+              </button>
+
+              {/* Save feedback indicator */}
+              {saveStatus && (
+                <span
+                  className={`text-xs sm:text-sm font-semibold animate-fade-in ${
+                    saveStatus.type === 'success' ? 'text-green-500' : 'text-red-500'
+                  }`}
+                >
+                  {saveStatus.message}
+                </span>
+              )}
+            </div>
+
+            <div className="flex items-center justify-center flex-1">
+              <div className="bg-white shadow-lg rounded-lg p-2 sm:p-4 w-full max-w-full">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-2 sm:mb-4 gap-2">
+                  <h3 className="text-base sm:text-lg font-semibold">Design Canvas</h3>
+                  <div className="text-xs sm:text-sm text-gray-500">
+                    {templateLoaded ? 'Template Loaded' : 'Loading Template...'}
+                  </div>
                 </div>
-              </div>
-
-              {/* Save Position and Add to Cart Buttons */}
-              <div className="flex justify-center items-center gap-2 sm:gap-3 mb-2 sm:mb-3 p-2 flex-wrap">
-                <button
-                  onClick={handleSavePosition}
-                  className="px-3 py-2 sm:px-5 sm:py-2.5 bg-blue-500 text-white font-semibold text-xs sm:text-sm rounded-lg shadow-md hover:bg-blue-600 hover:-translate-y-0.5 hover:shadow-lg active:scale-98 transition-all duration-200 flex items-center gap-2"
-                  title="Save current designs for this print area"
-                >
-                  <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" className="w-3 h-3 sm:w-4 sm:h-4">
-                    <path d="M13.854 3.646a.5.5 0 0 1 0 .708l-7 7a.5.5 0 0 1-.708 0l-3.5-3.5a.5.5 0 1 1 .708-.708L6.5 10.293l6.646-6.647a.5.5 0 0 1 .708 0z"/>
-                  </svg>
-                  <span className="hidden sm:inline">Save Position</span>
-                  <span className="sm:hidden">Save</span>
-                </button>
-
-                <button
-                  onClick={handleAddToCart}
-                  className="px-3 py-2 sm:px-5 sm:py-2.5 bg-green-500 text-white font-semibold text-xs sm:text-sm rounded-lg shadow-md hover:bg-green-600 hover:-translate-y-0.5 hover:shadow-lg active:scale-98 transition-all duration-200 flex items-center gap-2"
-                  title="Add design to shopping cart"
-                >
-                  <ShoppingCart className="w-3 h-3 sm:w-4 sm:h-4" />
-                  <span className="hidden sm:inline">Add to Cart</span>
-                  <span className="sm:hidden">Cart</span>
-                </button>
-
-                {/* Save feedback indicator */}
-                {saveStatus && (
-                  <span
-                    className={`text-xs sm:text-sm font-semibold animate-fade-in ${
-                      saveStatus.type === 'success' ? 'text-green-500' : 'text-red-500'
-                    }`}
-                  >
-                    {saveStatus.message}
-                  </span>
-                )}
-              </div>
 
               {/* Canvas with responsive sizing */}
               <div ref={canvasContainerRef} className="w-full overflow-auto">
