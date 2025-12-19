@@ -1,7 +1,7 @@
 // src/components/HeaderBar.jsx
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Phone, Search, ShoppingCart, User, LogOut } from 'lucide-react';
+import { Phone, Search, ShoppingCart, User, LogOut, Menu, X } from 'lucide-react';
 import { useAuth } from './AuthProvider';
 import { useCart } from '../context/CartContext';
 
@@ -30,6 +30,7 @@ function HeaderBar() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   // Calculate cart count - number of unique items (line items)
   const cartCount = cart.length;
@@ -70,22 +71,24 @@ function HeaderBar() {
       <div className="max-w-7xl mx-auto px-4">
         {/* Top Header */}
         <div className="flex justify-between items-center py-4">
+          {/* Logo */}
           <div className="flex items-center">
-            <div className="bg-red-500 text-white rounded-full w-12 h-12 flex items-center justify-center font-bold text-xl mr-4">
+            <div className="bg-red-500 text-white rounded-full w-10 h-10 md:w-12 md:h-12 flex items-center justify-center font-bold text-lg md:text-xl mr-2 md:mr-4">
               PG
             </div>
             <div>
-              <h1 className="text-2xl font-bold text-gray-900">Promo Gifts</h1>
-              <p className="text-sm text-gray-600">YOUR PROMOTIONAL PARTNER</p>
-              <div className="flex items-center mt-1">
+              <h1 className="text-lg md:text-2xl font-bold text-gray-900">Promo Gifts</h1>
+              <p className="text-xs md:text-sm text-gray-600 hidden sm:block">YOUR PROMOTIONAL PARTNER</p>
+              <div className="items-center mt-1 hidden md:flex">
                 <Phone className="h-4 w-4 text-red-500 mr-2" />
                 <span className="text-sm font-semibold text-gray-700">01844 600900</span>
               </div>
             </div>
           </div>
 
-          <div className="flex-1 max-w-2xl mx-8">
-            <div className="relative">
+          {/* Desktop Search Bar */}
+          <div className="hidden lg:flex flex-1 max-w-2xl mx-8">
+            <div className="relative w-full">
               <input
                 type="text"
                 placeholder="Search product, brand, colour, keyword or code"
@@ -99,27 +102,33 @@ function HeaderBar() {
             </div>
           </div>
 
-          <div className="flex items-center space-x-4">
-            {user ? (
-              <div className="flex items-center space-x-4">
-                <span className="text-sm text-gray-600">{user.email}</span>
+          {/* Right Side Icons */}
+          <div className="flex items-center space-x-2 md:space-x-4">
+            {/* Desktop User Menu */}
+            <div className="hidden md:flex items-center space-x-4">
+              {user ? (
+                <div className="flex items-center space-x-4">
+                  <span className="text-sm text-gray-600 hidden lg:block">{user.email}</span>
+                  <button
+                    onClick={handleSignOut}
+                    className="flex items-center space-x-2 text-gray-700 hover:text-red-500 transition-colors"
+                  >
+                    <LogOut className="h-5 w-5" />
+                    <span className="hidden lg:inline">Sign Out</span>
+                  </button>
+                </div>
+              ) : (
                 <button
-                  onClick={handleSignOut}
+                  onClick={() => setShowAuth(true)}
                   className="flex items-center space-x-2 text-gray-700 hover:text-red-500 transition-colors"
                 >
-                  <LogOut className="h-5 w-5" />
-                  <span>Sign Out</span>
+                  <User className="h-6 w-6" />
+                  <span className="hidden lg:inline">My Account</span>
                 </button>
-              </div>
-            ) : (
-              <button
-                onClick={() => setShowAuth(true)}
-                className="flex items-center space-x-2 text-gray-700 hover:text-red-500 transition-colors"
-              >
-                <User className="h-6 w-6" />
-                <span>My Account</span>
-              </button>
-            )}
+              )}
+            </div>
+
+            {/* Cart Button */}
             <button
               onClick={toggleCart}
               className="flex items-center space-x-2 text-gray-700 hover:text-red-500 transition-colors relative"
@@ -132,22 +141,46 @@ function HeaderBar() {
                   </span>
                 )}
               </div>
-              <span>Basket</span>
+              <span className="hidden md:inline">Basket</span>
+            </button>
+
+            {/* Mobile Menu Button */}
+            <button
+              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+              className="md:hidden p-2 text-gray-700 hover:text-red-500"
+            >
+              {mobileMenuOpen ? <X className="h-6 w-6" /> : <Menu className="h-6 w-6" />}
+            </button>
+          </div>
+        </div>
+
+        {/* Mobile Search Bar */}
+        <div className="lg:hidden pb-4">
+          <div className="relative">
+            <input
+              type="text"
+              placeholder="Search products..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent text-sm"
+            />
+            <button className="absolute right-2 top-1.5 bg-red-500 text-white p-1.5 rounded-md hover:bg-red-600 transition-colors">
+              <Search className="h-4 w-4" />
             </button>
           </div>
         </div>
       </div>
 
-      {/* Navigation */}
-      <nav className="bg-gray-800">
+      {/* Desktop Navigation */}
+      <nav className="bg-gray-800 hidden md:block">
         <div className="max-w-7xl mx-auto px-4">
           <div className="flex items-center h-12">
-            <div className="flex space-x-8">
+            <div className="flex space-x-8 overflow-x-auto">
               {categories.map((category, index) => (
                 <Link
                   key={index}
                   to={category.path}
-                  className="text-white hover:text-red-400 transition-colors text-sm font-medium"
+                  className="text-white hover:text-red-400 transition-colors text-sm font-medium whitespace-nowrap"
                 >
                   {category.name}
                 </Link>
@@ -157,43 +190,81 @@ function HeaderBar() {
         </div>
       </nav>
 
-      {/* Feature Bar */}
-      <div className="bg-gray-100 py-3">
+      {/* Mobile Navigation Menu */}
+      {mobileMenuOpen && (
+        <nav className="md:hidden bg-gray-800 border-t border-gray-700">
+          <div className="max-w-7xl mx-auto px-4 py-2">
+            <div className="flex flex-col space-y-1">
+              {user ? (
+                <button
+                  onClick={handleSignOut}
+                  className="text-white hover:text-red-400 py-2 px-4 text-left transition-colors"
+                >
+                  Sign Out
+                </button>
+              ) : (
+                <button
+                  onClick={() => {
+                    setShowAuth(true);
+                    setMobileMenuOpen(false);
+                  }}
+                  className="text-white hover:text-red-400 py-2 px-4 text-left transition-colors"
+                >
+                  My Account
+                </button>
+              )}
+              {categories.map((category, index) => (
+                <Link
+                  key={index}
+                  to={category.path}
+                  onClick={() => setMobileMenuOpen(false)}
+                  className="text-white hover:text-red-400 py-2 px-4 transition-colors"
+                >
+                  {category.name}
+                </Link>
+              ))}
+            </div>
+          </div>
+        </nav>
+      )}
+
+      {/* Feature Bar - Hidden on mobile, scrollable on tablet */}
+      <div className="bg-gray-100 py-3 hidden md:block">
         <div className="max-w-7xl mx-auto px-4">
-          <div className="flex items-center justify-between text-sm text-gray-600">
-            <div className="flex items-center justify-between w-full space-x-8">
-              <span className="flex items-center space-x-2">
-                <div className="w-6 h-6 bg-yellow-500 rounded-full flex items-center justify-center">
+          <div className="overflow-x-auto">
+            <div className="flex items-center space-x-4 lg:space-x-8 text-sm text-gray-600 min-w-max">
+              <span className="flex items-center space-x-2 whitespace-nowrap">
+                <div className="w-6 h-6 bg-yellow-500 rounded-full flex items-center justify-center flex-shrink-0">
                   <span className="text-white text-sm">⭐</span>
                 </div>
                 <span>Best Sellers</span>
               </span>
-              <span className="flex items-center space-x-2">
-                <div className="w-6 h-6 bg-red-500 rounded-full flex items-center justify-center">
+              <span className="flex items-center space-x-2 whitespace-nowrap">
+                <div className="w-6 h-6 bg-red-500 rounded-full flex items-center justify-center flex-shrink-0">
                   <span className="text-white text-xs font-bold">24</span>
                 </div>
                 <span>Express Delivery</span>
               </span>
-              <span className="flex items-center space-x-2">
-                <div className="w-6 h-6 bg-blue-600 rounded-sm flex items-center justify-center">
+              <span className="flex items-center space-x-2 whitespace-nowrap">
+                <div className="w-6 h-6 bg-blue-600 rounded-sm flex items-center justify-center flex-shrink-0">
                   <span className="text-white text-xs font-bold">UK</span>
                 </div>
                 <span>Made in the UK</span>
               </span>
-              <span className="flex items-center space-x-2">
-                <div className="w-6 h-6 bg-green-500 rounded-full flex items-center justify-center">
+              <span className="flex items-center space-x-2 whitespace-nowrap">
+                <div className="w-6 h-6 bg-green-500 rounded-full flex items-center justify-center flex-shrink-0">
                   <span className="text-white text-sm">♻️</span>
                 </div>
                 <span>Eco-Friendly</span>
               </span>
-              <span className="flex items-center space-x-2">
-                <div className="w-6 h-6 bg-blue-500 rounded-sm flex items-center justify-center">
+              <span className="flex items-center space-x-2 whitespace-nowrap">
+                <div className="w-6 h-6 bg-blue-500 rounded-sm flex items-center justify-center flex-shrink-0">
                   <span className="text-white text-xs">⚙️</span>
                 </div>
                 <span>Real-Time Proof</span>
               </span>
-              <span className="text-orange-500 font-medium flex items-center space-x-1">
-                <div className="w-6 h-6 bg-orange-500 rounded-full flex items-center justify-center">
+              <span className="text-orange-500 font-medium flex items-center space-x-1 whitespace-nowrap">
+                <div className="w-6 h-6 bg-orange-500 rounded-full flex items-center justify-center flex-shrink-0">
                   <span className="text-white text-sm font-bold">🆕</span>
                 </div>
                 <span>New Products</span>

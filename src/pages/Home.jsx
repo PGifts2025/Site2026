@@ -200,25 +200,25 @@ const PromoGiftsApp = () => {
       
       {/* Hero Image Blocks */}
       <section className="max-w-7xl mx-auto px-4 py-6">
-        {/* Top row - Slider left, Static right */}
-        <div className="grid grid-cols-2 gap-4 mb-4 h-64">
+        {/* Top row - Slider left, Static right - Stack on mobile */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4 md:h-64">
           {/* Left - Hero Slider */}
-          <div className="relative overflow-hidden rounded-lg">
+          <div className="relative overflow-hidden rounded-lg h-64">
             {heroSliderContent.map((block, index) => (
               <div
                 key={block.id}
-                className={`absolute inset-0 ${block.bgColor} ${block.textColor} p-8 flex items-center justify-between transition-opacity duration-1000 ${
+                className={`absolute inset-0 ${block.bgColor} ${block.textColor} p-4 sm:p-8 flex items-center justify-between transition-opacity duration-1000 ${
                   index === heroSlide ? 'opacity-100' : 'opacity-0'
                 }`}
               >
                 <div className="z-10">
-                  <h2 className="text-3xl font-bold mb-2">{block.title}</h2>
-                  <p className="text-xl text-yellow-300 font-bold mb-4">{block.subtitle}</p>
-                  <button className="bg-white text-gray-900 px-6 py-3 rounded font-semibold hover:bg-gray-100 transition-colors">
+                  <h2 className="text-xl sm:text-2xl md:text-3xl font-bold mb-2">{block.title}</h2>
+                  <p className="text-base sm:text-xl text-yellow-300 font-bold mb-4">{block.subtitle}</p>
+                  <button className="bg-white text-gray-900 px-4 py-2 sm:px-6 sm:py-3 rounded font-semibold hover:bg-gray-100 transition-colors text-sm sm:text-base">
                     {block.buttonText}
                   </button>
                 </div>
-                <div className="text-8xl opacity-20 absolute right-8">
+                <div className="text-4xl sm:text-6xl md:text-8xl opacity-20 absolute right-4 sm:right-8">
                   {block.image}
                 </div>
               </div>
@@ -239,27 +239,27 @@ const PromoGiftsApp = () => {
           </div>
 
           {/* Right - Static Bags Block */}
-          <div className={`${rightHeroBlock.bgColor} ${rightHeroBlock.textColor} rounded-lg p-8 flex items-center justify-between relative overflow-hidden`}>
+          <div className={`${rightHeroBlock.bgColor} ${rightHeroBlock.textColor} rounded-lg p-4 sm:p-8 flex items-center justify-between relative overflow-hidden h-64`}>
             <div className="z-10">
-              <h2 className="text-3xl font-bold mb-2">{rightHeroBlock.title}</h2>
-              <p className="text-xl text-red-500 font-bold mb-4">{rightHeroBlock.subtitle}</p>
-              <p className="text-sm mb-6 max-w-md">{rightHeroBlock.description}</p>
-              <button className="bg-gray-800 text-white px-6 py-3 rounded font-semibold hover:bg-gray-700 transition-colors">
+              <h2 className="text-xl sm:text-2xl md:text-3xl font-bold mb-2">{rightHeroBlock.title}</h2>
+              <p className="text-base sm:text-xl text-red-500 font-bold mb-4">{rightHeroBlock.subtitle}</p>
+              <p className="text-xs sm:text-sm mb-6 max-w-md">{rightHeroBlock.description}</p>
+              <button className="bg-gray-800 text-white px-4 py-2 sm:px-6 sm:py-3 rounded font-semibold hover:bg-gray-700 transition-colors text-sm sm:text-base">
                 {rightHeroBlock.buttonText}
               </button>
             </div>
-            <div className="text-8xl opacity-10 absolute right-8">
+            <div className="text-4xl sm:text-6xl md:text-8xl opacity-10 absolute right-4 sm:right-8">
               {rightHeroBlock.image}
             </div>
           </div>
         </div>
 
-        {/* Bottom row - 4 tool blocks */}
-        <div className="grid grid-cols-4 gap-4 h-32">
+        {/* Bottom row - 4 tool blocks - 2x2 on mobile, 4x1 on desktop */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 h-auto md:h-32">
           {smallBlocks.map((block) => (
-            <div 
-              key={block.id} 
-              className={`${block.bgColor} ${block.textColor} rounded-lg p-4 flex flex-col items-center justify-center text-center relative overflow-hidden hover:scale-105 transition-transform cursor-pointer group`}
+            <div
+              key={block.id}
+              className={`${block.bgColor} ${block.textColor} rounded-lg p-3 sm:p-4 min-h-[120px] md:min-h-0 flex flex-col items-center justify-center text-center relative overflow-hidden hover:scale-105 transition-transform cursor-pointer group`}
               onClick={() => {
                 document.querySelector('[data-tools-section]')?.scrollIntoView({ behavior: 'smooth' });
               }}
@@ -269,9 +269,9 @@ const PromoGiftsApp = () => {
                   {block.badge}
                 </div>
               )}
-              <div className="text-3xl mb-2 opacity-20 group-hover:opacity-100 group-hover:scale-110 transition-all duration-300">{block.image}</div>
-              <h4 className="font-bold text-xs leading-tight group-hover:font-extrabold transition-all duration-300">{block.title}</h4>
-              
+              <div className="text-2xl sm:text-3xl mb-2 opacity-20 group-hover:opacity-100 group-hover:scale-110 transition-all duration-300">{block.image}</div>
+              <h4 className="font-bold text-[10px] sm:text-xs leading-tight group-hover:font-extrabold transition-all duration-300">{block.title}</h4>
+
               <div className="absolute inset-0 bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
             </div>
           ))}
@@ -310,8 +310,8 @@ const PromoGiftsApp = () => {
                 }}
               >
                 {Array.from({ length: Math.ceil(bestSellers.length / 4) }).map((_, slideIndex) => (
-                  <div key={slideIndex} className="w-full flex-shrink-0 px-6">
-                    <div className="grid grid-cols-4 gap-6">
+                  <div key={slideIndex} className="w-full flex-shrink-0 px-2 sm:px-6">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-6">
                       {bestSellers.slice(slideIndex * 4, slideIndex * 4 + 4).map((product, index) => (
                         <div 
                           key={index} 
@@ -373,30 +373,30 @@ const PromoGiftsApp = () => {
       </section>
 
       {/* Hot Products Section - Equal Height Cards */}
-      <section className="py-12 bg-gradient-to-br from-gray-50 via-blue-50/30 to-purple-50/20">
+      <section className="py-6 sm:py-8 lg:py-12 bg-gradient-to-br from-gray-50 via-blue-50/30 to-purple-50/20">
         <div className="max-w-7xl mx-auto px-4">
-          <h2 className="text-4xl font-bold text-gray-600 text-center mb-12 tracking-wider">
+          <h2 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-gray-600 text-center mb-8 sm:mb-10 lg:mb-12 tracking-wider">
             HOT PRODUCTS
           </h2>
-          
-          <div className="grid grid-cols-4 gap-6">
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-6">
             {hotProducts.map((product, index) => (
-              <div 
-                key={index} 
+              <div
+                key={index}
                 className="group cursor-pointer transform transition-all duration-700 hover:scale-105 h-full"
               >
-                <div className="bg-white/95 rounded-2xl shadow-lg hover:shadow-2xl border border-gray-200/50 p-6 relative overflow-hidden transition-all duration-700 group-hover:shadow-blue-500/20 group-hover:-translate-y-6 h-full flex flex-col">
-                  
-                  <div className="absolute top-4 right-4 z-20 transform transition-all duration-500 group-hover:scale-125">
+                <div className="bg-white/95 rounded-2xl shadow-lg hover:shadow-2xl border border-gray-200/50 p-3 sm:p-4 lg:p-6 relative overflow-hidden transition-all duration-700 group-hover:shadow-blue-500/20 group-hover:-translate-y-6 h-full flex flex-col">
+
+                  <div className="absolute top-2 right-2 sm:top-4 sm:right-4 z-20 transform transition-all duration-500 group-hover:scale-125">
                     {product.badge === "★" ? (
-                      <Star className="h-6 w-6 text-red-500 fill-current drop-shadow-lg" />
+                      <Star className="h-5 w-5 sm:h-6 sm:w-6 text-red-500 fill-current drop-shadow-lg" />
                     ) : (
-                      <span className="text-green-500 text-xl drop-shadow-lg">{product.badge}</span>
+                      <span className="text-green-500 text-lg sm:text-xl drop-shadow-lg">{product.badge}</span>
                     )}
                   </div>
 
-                  <div className="text-center mb-4">
-                    <div className="text-6xl mb-3 transform transition-all duration-700 group-hover:scale-125 group-hover:rotate-12">
+                  <div className="text-center mb-3 sm:mb-4">
+                    <div className="text-4xl sm:text-5xl lg:text-6xl mb-2 sm:mb-3 transform transition-all duration-700 group-hover:scale-125 group-hover:rotate-12">
                       {product.image}
                     </div>
                   </div>
@@ -428,30 +428,30 @@ const PromoGiftsApp = () => {
       </section>
 
       {/* Helpful Tools Section - 3D Enhanced */}
-      <section className="py-16 bg-gradient-to-br from-blue-50 via-purple-50/50 to-pink-50/30 relative overflow-hidden" data-tools-section>
+      <section className="py-8 sm:py-12 lg:py-16 bg-gradient-to-br from-blue-50 via-purple-50/50 to-pink-50/30 relative overflow-hidden" data-tools-section>
         <div className="absolute inset-0 overflow-hidden pointer-events-none">
           <div className="absolute -top-40 -right-40 w-80 h-80 bg-gradient-to-br from-blue-300/20 via-purple-300/20 to-pink-300/20 rounded-full blur-3xl"></div>
           <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-gradient-to-br from-purple-300/20 via-pink-300/20 to-orange-300/20 rounded-full blur-3xl"></div>
         </div>
 
         <div className="max-w-7xl mx-auto px-4 relative z-10">
-          <div className="text-center mb-12">
-            <h2 className="text-4xl font-bold text-gray-900 mb-4 drop-shadow-lg">Helpful Tools</h2>
-            <p className="text-xl text-gray-600 drop-shadow-sm">Free resources to make your promotional campaigns successful</p>
+          <div className="text-center mb-8 sm:mb-10 lg:mb-12">
+            <h2 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-gray-900 mb-3 sm:mb-4 drop-shadow-lg">Helpful Tools</h2>
+            <p className="text-base sm:text-lg lg:text-xl text-gray-600 drop-shadow-sm">Free resources to make your promotional campaigns successful</p>
           </div>
-          
+
           {/* Top Row - Main Tools */}
-          <div className="grid grid-cols-2 gap-8 mb-12">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6 lg:gap-8 mb-8 lg:mb-12">
             {/* Tool 1: Product Proposal Generator */}
-            <div className="group bg-white/95 backdrop-blur-sm rounded-3xl shadow-2xl hover:shadow-blue-500/25 transition-all duration-700 p-8 transform hover:scale-105 hover:-translate-y-8 relative overflow-hidden border border-white/50">
+            <div className="group bg-white/95 backdrop-blur-sm rounded-3xl shadow-2xl hover:shadow-blue-500/25 transition-all duration-700 p-4 sm:p-6 lg:p-8 transform hover:scale-105 hover:-translate-y-8 relative overflow-hidden border border-white/50">
               <div className="absolute -inset-2 bg-gradient-to-br from-blue-500/20 via-purple-500/20 to-pink-500/20 rounded-3xl blur-xl opacity-0 group-hover:opacity-100 transition-all duration-700"></div>
-              
-              <div className="text-center mb-6 relative z-10">
-                <div className="bg-gradient-to-br from-blue-500 via-purple-600 to-blue-700 w-20 h-20 rounded-3xl flex items-center justify-center mx-auto mb-6 shadow-2xl transform transition-all duration-700 group-hover:scale-125 group-hover:rotate-12">
-                  <span className="text-4xl text-white drop-shadow-lg">📊</span>
+
+              <div className="text-center mb-4 sm:mb-6 relative z-10">
+                <div className="bg-gradient-to-br from-blue-500 via-purple-600 to-blue-700 w-16 h-16 sm:w-20 sm:h-20 rounded-3xl flex items-center justify-center mx-auto mb-4 sm:mb-6 shadow-2xl transform transition-all duration-700 group-hover:scale-125 group-hover:rotate-12">
+                  <span className="text-3xl sm:text-4xl text-white drop-shadow-lg">📊</span>
                 </div>
-                <h3 className="text-2xl font-bold text-gray-900 mb-3 drop-shadow-md">Product Proposal Generator</h3>
-                <p className="text-gray-600 drop-shadow-sm">Create professional slideshow presentations with your chosen products for client meetings</p>
+                <h3 className="text-lg sm:text-xl lg:text-2xl font-bold text-gray-900 mb-2 sm:mb-3 drop-shadow-md">Product Proposal Generator</h3>
+                <p className="text-sm sm:text-base text-gray-600 drop-shadow-sm">Create professional slideshow presentations with your chosen products for client meetings</p>
               </div>
               
               <div className="space-y-4 mb-8 relative z-10">
@@ -480,15 +480,15 @@ const PromoGiftsApp = () => {
             </div>
 
             {/* Tool 2: Campaign Timeline Builder */}
-            <div className="group bg-white/95 backdrop-blur-sm rounded-3xl shadow-2xl hover:shadow-emerald-500/25 transition-all duration-700 p-8 transform hover:scale-105 hover:-translate-y-8 relative overflow-hidden border border-white/50">
+            <div className="group bg-white/95 backdrop-blur-sm rounded-3xl shadow-2xl hover:shadow-emerald-500/25 transition-all duration-700 p-4 sm:p-6 lg:p-8 transform hover:scale-105 hover:-translate-y-8 relative overflow-hidden border border-white/50">
               <div className="absolute -inset-2 bg-gradient-to-br from-green-500/20 via-emerald-500/20 to-teal-500/20 rounded-3xl blur-xl opacity-0 group-hover:opacity-100 transition-all duration-700"></div>
-              
-              <div className="text-center mb-6 relative z-10">
-                <div className="bg-gradient-to-br from-green-500 via-emerald-600 to-green-700 w-20 h-20 rounded-3xl flex items-center justify-center mx-auto mb-6 shadow-2xl transform transition-all duration-700 group-hover:scale-125 group-hover:rotate-12">
-                  <span className="text-4xl text-white drop-shadow-lg">⏰</span>
+
+              <div className="text-center mb-4 sm:mb-6 relative z-10">
+                <div className="bg-gradient-to-br from-green-500 via-emerald-600 to-green-700 w-16 h-16 sm:w-20 sm:h-20 rounded-3xl flex items-center justify-center mx-auto mb-4 sm:mb-6 shadow-2xl transform transition-all duration-700 group-hover:scale-125 group-hover:rotate-12">
+                  <span className="text-3xl sm:text-4xl text-white drop-shadow-lg">⏰</span>
                 </div>
-                <h3 className="text-2xl font-bold text-gray-900 mb-3 drop-shadow-md">Campaign Timeline Builder</h3>
-                <p className="text-gray-600 drop-shadow-sm">Never miss a deadline again! Auto-generates timelines with calendar integration and approval reminders</p>
+                <h3 className="text-lg sm:text-xl lg:text-2xl font-bold text-gray-900 mb-2 sm:mb-3 drop-shadow-md">Campaign Timeline Builder</h3>
+                <p className="text-sm sm:text-base text-gray-600 drop-shadow-sm">Never miss a deadline again! Auto-generates timelines with calendar integration and approval reminders</p>
               </div>
               
               <div className="space-y-4 mb-8 relative z-10">
@@ -514,17 +514,17 @@ const PromoGiftsApp = () => {
           </div>
 
           {/* Second Row - Additional Tools */}
-          <div className="grid grid-cols-3 gap-8 mb-12">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 lg:gap-8 mb-8 lg:mb-12">
             {/* Tool 3: Live Logo Placement */}
-            <div className="group bg-white/95 backdrop-blur-sm rounded-3xl shadow-2xl hover:shadow-purple-500/25 transition-all duration-700 p-8 transform hover:scale-105 hover:-translate-y-6 relative overflow-hidden border border-white/50">
+            <div className="group bg-white/95 backdrop-blur-sm rounded-3xl shadow-2xl hover:shadow-purple-500/25 transition-all duration-700 p-4 sm:p-6 lg:p-8 transform hover:scale-105 hover:-translate-y-6 relative overflow-hidden border border-white/50">
               <div className="absolute -inset-2 bg-gradient-to-br from-purple-500/20 via-pink-500/20 to-purple-500/20 rounded-3xl blur-xl opacity-0 group-hover:opacity-100 transition-all duration-700"></div>
-              
-              <div className="text-center mb-6 relative z-10">
-                <div className="bg-gradient-to-br from-purple-500 to-pink-600 w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-xl transform transition-all duration-500 group-hover:scale-125 group-hover:rotate-12">
-                  <span className="text-3xl text-white drop-shadow-lg">🎨</span>
+
+              <div className="text-center mb-4 sm:mb-6 relative z-10">
+                <div className="bg-gradient-to-br from-purple-500 to-pink-600 w-14 h-14 sm:w-16 sm:h-16 rounded-2xl flex items-center justify-center mx-auto mb-3 sm:mb-4 shadow-xl transform transition-all duration-500 group-hover:scale-125 group-hover:rotate-12">
+                  <span className="text-2xl sm:text-3xl text-white drop-shadow-lg">🎨</span>
                 </div>
-                <h3 className="text-2xl font-bold text-gray-900 mb-2">Live Logo Placement</h3>
-                <p className="text-gray-600">See your logo on ANY product in real-time. AI-powered background removal and positioning</p>
+                <h3 className="text-lg sm:text-xl lg:text-2xl font-bold text-gray-900 mb-2">Live Logo Placement</h3>
+                <p className="text-sm sm:text-base text-gray-600">See your logo on ANY product in real-time. AI-powered background removal and positioning</p>
               </div>
               
               <div className="space-y-4 mb-6">
@@ -548,15 +548,15 @@ const PromoGiftsApp = () => {
             </div>
 
             {/* Tool 4: ROI Calculator */}
-            <div className="group bg-white/95 backdrop-blur-sm rounded-3xl shadow-2xl hover:shadow-orange-500/25 transition-all duration-700 p-8 transform hover:scale-105 hover:-translate-y-6 relative overflow-hidden border border-white/50">
+            <div className="group bg-white/95 backdrop-blur-sm rounded-3xl shadow-2xl hover:shadow-orange-500/25 transition-all duration-700 p-4 sm:p-6 lg:p-8 transform hover:scale-105 hover:-translate-y-6 relative overflow-hidden border border-white/50">
               <div className="absolute -inset-2 bg-gradient-to-br from-orange-500/20 via-red-500/20 to-orange-500/20 rounded-3xl blur-xl opacity-0 group-hover:opacity-100 transition-all duration-700"></div>
-              
-              <div className="text-center mb-6 relative z-10">
-                <div className="bg-gradient-to-br from-orange-500 to-red-600 w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-xl transform transition-all duration-500 group-hover:scale-125 group-hover:rotate-12">
-                  <span className="text-3xl text-white drop-shadow-lg">💰</span>
+
+              <div className="text-center mb-4 sm:mb-6 relative z-10">
+                <div className="bg-gradient-to-br from-orange-500 to-red-600 w-14 h-14 sm:w-16 sm:h-16 rounded-2xl flex items-center justify-center mx-auto mb-3 sm:mb-4 shadow-xl transform transition-all duration-500 group-hover:scale-125 group-hover:rotate-12">
+                  <span className="text-2xl sm:text-3xl text-white drop-shadow-lg">💰</span>
                 </div>
-                <h3 className="text-2xl font-bold text-gray-900 mb-2">ROI Calculator</h3>
-                <p className="text-gray-600">Calculate return on investment and generate professional reports for stakeholders</p>
+                <h3 className="text-lg sm:text-xl lg:text-2xl font-bold text-gray-900 mb-2">ROI Calculator</h3>
+                <p className="text-sm sm:text-base text-gray-600">Calculate return on investment and generate professional reports for stakeholders</p>
               </div>
               
               <div className="space-y-4 mb-6">
@@ -576,15 +576,15 @@ const PromoGiftsApp = () => {
             </div>
 
             {/* Tool 5: Industry Benchmarks */}
-            <div className="group bg-white/95 backdrop-blur-sm rounded-3xl shadow-2xl hover:shadow-indigo-500/25 transition-all duration-700 p-8 transform hover:scale-105 hover:-translate-y-6 relative overflow-hidden border border-white/50">
+            <div className="group bg-white/95 backdrop-blur-sm rounded-3xl shadow-2xl hover:shadow-indigo-500/25 transition-all duration-700 p-4 sm:p-6 lg:p-8 transform hover:scale-105 hover:-translate-y-6 relative overflow-hidden border border-white/50">
               <div className="absolute -inset-2 bg-gradient-to-br from-indigo-500/20 via-blue-500/20 to-indigo-500/20 rounded-3xl blur-xl opacity-0 group-hover:opacity-100 transition-all duration-700"></div>
-              
-              <div className="text-center mb-6 relative z-10">
-                <div className="bg-gradient-to-br from-indigo-500 to-blue-600 w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-xl transform transition-all duration-500 group-hover:scale-125 group-hover:rotate-12">
-                  <span className="text-3xl text-white drop-shadow-lg">📊</span>
+
+              <div className="text-center mb-4 sm:mb-6 relative z-10">
+                <div className="bg-gradient-to-br from-indigo-500 to-blue-600 w-14 h-14 sm:w-16 sm:h-16 rounded-2xl flex items-center justify-center mx-auto mb-3 sm:mb-4 shadow-xl transform transition-all duration-500 group-hover:scale-125 group-hover:rotate-12">
+                  <span className="text-2xl sm:text-3xl text-white drop-shadow-lg">📊</span>
                 </div>
-                <h3 className="text-2xl font-bold text-gray-900 mb-2">Industry Benchmarks</h3>
-                <p className="text-gray-600">Compare your promotional spend against industry standards and competitors</p>
+                <h3 className="text-lg sm:text-xl lg:text-2xl font-bold text-gray-900 mb-2">Industry Benchmarks</h3>
+                <p className="text-sm sm:text-base text-gray-600">Compare your promotional spend against industry standards and competitors</p>
               </div>
               
               <div className="space-y-4 mb-6">
@@ -606,16 +606,16 @@ const PromoGiftsApp = () => {
 
           {/* Bottom CTA */}
           <div className="text-center">
-            <div className="bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 rounded-3xl p-8 text-white shadow-2xl transform hover:scale-105 transition-all duration-500 relative overflow-hidden border border-gray-700/50">
+            <div className="bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 rounded-3xl p-4 sm:p-6 lg:p-8 text-white shadow-2xl transform hover:scale-105 transition-all duration-500 relative overflow-hidden border border-gray-700/50">
               <div className="absolute inset-0 bg-gradient-to-br from-gray-800/50 to-gray-900/50 backdrop-blur-sm"></div>
               <div className="relative z-10">
-                <h3 className="text-2xl font-bold mb-4 drop-shadow-lg">Need More Help?</h3>
-                <p className="text-gray-300 mb-6 drop-shadow-sm">Our promotional product experts are here to help you create the perfect campaign</p>
-                <div className="flex justify-center space-x-4">
-                  <button className="bg-white text-gray-900 px-6 py-3 rounded-lg font-semibold hover:bg-gray-100 transition-all duration-300 shadow-xl hover:shadow-white/25 transform hover:scale-105">
+                <h3 className="text-lg sm:text-xl lg:text-2xl font-bold mb-3 sm:mb-4 drop-shadow-lg">Need More Help?</h3>
+                <p className="text-sm sm:text-base text-gray-300 mb-4 sm:mb-6 drop-shadow-sm">Our promotional product experts are here to help you create the perfect campaign</p>
+                <div className="flex flex-col sm:flex-row justify-center gap-3 sm:gap-4">
+                  <button className="bg-white text-gray-900 px-4 py-2 sm:px-6 sm:py-3 rounded-lg font-semibold hover:bg-gray-100 transition-all duration-300 shadow-xl hover:shadow-white/25 transform hover:scale-105 text-sm sm:text-base">
                     📞 Call Expert
                   </button>
-                  <button className="border border-white text-white px-6 py-3 rounded-lg font-semibold hover:bg-white hover:text-gray-900 transition-all duration-300 shadow-xl hover:shadow-white/25 transform hover:scale-105">
+                  <button className="border border-white text-white px-4 py-2 sm:px-6 sm:py-3 rounded-lg font-semibold hover:bg-white hover:text-gray-900 transition-all duration-300 shadow-xl hover:shadow-white/25 transform hover:scale-105 text-sm sm:text-base">
                     💬 Live Chat
                   </button>
                 </div>
@@ -626,15 +626,15 @@ const PromoGiftsApp = () => {
       </section>
 
       {/* Blog Section */}
-      <section className="py-12 bg-white">
+      <section className="py-6 sm:py-8 lg:py-12 bg-white">
         <div className="max-w-7xl mx-auto px-4">
-          <div className="text-center mb-10">
-            <h2 className="text-3xl font-bold text-gray-700 mb-2">The Latest From Our Blog</h2>
+          <div className="text-center mb-8 sm:mb-10">
+            <h2 className="text-2xl sm:text-3xl font-bold text-gray-700 mb-2">The Latest From Our Blog</h2>
           </div>
-          
-          <div className="flex gap-6 justify-center">
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
             {/* Blog Post 1 */}
-            <article className="flex-1 max-w-sm bg-white rounded-lg overflow-hidden group cursor-pointer shadow-sm hover:shadow-md transition-shadow duration-300">
+            <article className="bg-white rounded-lg overflow-hidden group cursor-pointer shadow-sm hover:shadow-md transition-shadow duration-300">
               <div className="h-48 bg-gradient-to-br from-cyan-400 to-blue-500 flex items-center justify-center relative overflow-hidden">
                 <div className="absolute inset-0 bg-cyan-400"></div>
                 <div className="relative z-10 text-center">
@@ -656,7 +656,7 @@ const PromoGiftsApp = () => {
             </article>
 
             {/* Blog Post 2 */}
-            <article className="flex-1 max-w-sm bg-white rounded-lg overflow-hidden group cursor-pointer shadow-sm hover:shadow-md transition-shadow duration-300">
+            <article className="bg-white rounded-lg overflow-hidden group cursor-pointer shadow-sm hover:shadow-md transition-shadow duration-300">
               <div className="h-48 bg-gradient-to-br from-purple-300 to-blue-400 flex items-center justify-center relative overflow-hidden">
                 <div className="absolute inset-0 bg-gradient-to-br from-gray-300 via-purple-200 to-blue-300"></div>
                 <div className="relative z-10 text-center">
@@ -682,7 +682,7 @@ const PromoGiftsApp = () => {
             </article>
 
             {/* Blog Post 3 */}
-            <article className="flex-1 max-w-sm bg-white rounded-lg overflow-hidden group cursor-pointer shadow-sm hover:shadow-md transition-shadow duration-300">
+            <article className="bg-white rounded-lg overflow-hidden group cursor-pointer shadow-sm hover:shadow-md transition-shadow duration-300">
               <div className="h-48 bg-gradient-to-br from-teal-300 to-cyan-400 flex items-center justify-center relative overflow-hidden">
                 <div className="absolute inset-0 bg-gradient-to-br from-teal-300 to-cyan-400"></div>
                 <div className="relative z-10">
@@ -714,9 +714,9 @@ const PromoGiftsApp = () => {
       </section>
 
       {/* Footer */}
-      <footer className="bg-gray-800 text-white py-12">
+      <footer className="bg-gray-800 text-white py-6 sm:py-8 lg:py-12">
         <div className="max-w-7xl mx-auto px-4">
-          <div className="grid grid-cols-3 gap-8">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 sm:gap-8">
             <div>
               <div className="flex items-center mb-6">
                 <div className="bg-red-500 text-white rounded-full w-10 h-10 flex items-center justify-center font-bold text-lg mr-3">
