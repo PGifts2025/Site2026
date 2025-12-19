@@ -4078,7 +4078,7 @@ const Designer = () => {
           </div>
 
           {/* Zoom Controls - Separate section for mobile reordering */}
-          <div className="w-full lg:w-80 flex-shrink-0 order-3 lg:order-1">
+          <div className="w-full lg:w-80 flex-shrink-0 order-4 lg:order-1">
             <div className="bg-white rounded-lg shadow-sm p-6">
               <div className="mb-4 p-3 bg-gray-50 border border-gray-200 rounded-lg">
                   <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -4130,7 +4130,7 @@ const Designer = () => {
           </div>
 
           {/* Tools Section - Separate section for mobile reordering */}
-          <div className="w-full lg:w-80 flex-shrink-0 order-4 lg:order-1">
+          <div className="w-full lg:w-80 flex-shrink-0 order-6 lg:order-1">
             <div className="bg-white rounded-lg shadow-sm p-6">
               <h3 className="text-lg font-semibold mb-4">Tools</h3>
               
@@ -4481,51 +4481,51 @@ const Designer = () => {
           </div>
 
           {/* Canvas Area - Full Width, Mobile Responsive */}
-          <div className="flex-1 flex flex-col bg-gray-100 rounded-lg p-2 sm:p-4 lg:p-8 overflow-auto order-2">
-            {/* Save & Cart Buttons - Top Right Corner */}
-            <div className="flex justify-end items-center gap-2 sm:gap-3 mb-3 sm:mb-4">
-              <button
-                onClick={handleSavePosition}
-                className="px-3 py-2 sm:px-5 sm:py-2.5 bg-blue-500 text-white font-semibold text-xs sm:text-sm rounded-lg shadow-md hover:bg-blue-600 hover:-translate-y-0.5 hover:shadow-lg active:scale-98 transition-all duration-200 flex items-center gap-2"
-                title="Save current designs for this print area"
-              >
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" className="w-3 h-3 sm:w-4 sm:h-4">
-                  <path d="M13.854 3.646a.5.5 0 0 1 0 .708l-7 7a.5.5 0 0 1-.708 0l-3.5-3.5a.5.5 0 1 1 .708-.708L6.5 10.293l6.646-6.647a.5.5 0 0 1 .708 0z"/>
-                </svg>
-                <span className="hidden sm:inline">Save Position</span>
-                <span className="sm:hidden">Save</span>
-              </button>
-
-              <button
-                onClick={handleAddToCart}
-                className="px-3 py-2 sm:px-5 sm:py-2.5 bg-green-500 text-white font-semibold text-xs sm:text-sm rounded-lg shadow-md hover:bg-green-600 hover:-translate-y-0.5 hover:shadow-lg active:scale-98 transition-all duration-200 flex items-center gap-2"
-                title="Add design to shopping cart"
-              >
-                <ShoppingCart className="w-3 h-3 sm:w-4 sm:h-4" />
-                <span className="hidden sm:inline">Add to Cart</span>
-                <span className="sm:hidden">Cart</span>
-              </button>
-
-              {/* Save feedback indicator */}
-              {saveStatus && (
-                <span
-                  className={`text-xs sm:text-sm font-semibold animate-fade-in ${
-                    saveStatus.type === 'success' ? 'text-green-500' : 'text-red-500'
-                  }`}
-                >
-                  {saveStatus.message}
-                </span>
-              )}
-            </div>
-
-            <div className="flex items-center justify-center flex-1">
-              <div className="bg-white shadow-lg rounded-lg p-2 sm:p-4 w-full max-w-full">
-                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-2 sm:mb-4 gap-2">
+          <div className="flex-1 flex items-center justify-center bg-gray-100 rounded-lg p-2 sm:p-4 lg:p-8 overflow-auto order-5 lg:order-2">
+            <div className="bg-white shadow-lg rounded-lg p-2 sm:p-4 w-full max-w-full">
+              {/* Card Header with Title and Action Buttons */}
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-2 sm:mb-4 gap-2">
+                <div className="flex flex-col gap-1">
                   <h3 className="text-base sm:text-lg font-semibold">Design Canvas</h3>
                   <div className="text-xs sm:text-sm text-gray-500">
                     {templateLoaded ? 'Template Loaded' : 'Loading Template...'}
                   </div>
                 </div>
+
+                {/* Save & Cart Buttons - Compact in Header */}
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handleSavePosition}
+                    className="px-2 py-1.5 sm:px-3 sm:py-2 bg-blue-500 text-white font-semibold text-xs rounded-md shadow hover:bg-blue-600 transition-all flex items-center gap-1.5"
+                    title="Save current designs for this print area"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" className="w-3 h-3">
+                      <path d="M13.854 3.646a.5.5 0 0 1 0 .708l-7 7a.5.5 0 0 1-.708 0l-3.5-3.5a.5.5 0 1 1 .708-.708L6.5 10.293l6.646-6.647a.5.5 0 0 1 .708 0z"/>
+                    </svg>
+                    <span>Save</span>
+                  </button>
+
+                  <button
+                    onClick={handleAddToCart}
+                    className="px-2 py-1.5 sm:px-3 sm:py-2 bg-green-500 text-white font-semibold text-xs rounded-md shadow hover:bg-green-600 transition-all flex items-center gap-1.5"
+                    title="Add design to shopping cart"
+                  >
+                    <ShoppingCart className="w-3 h-3" />
+                    <span>Cart</span>
+                  </button>
+
+                  {/* Save feedback indicator */}
+                  {saveStatus && (
+                    <span
+                      className={`text-xs font-semibold animate-fade-in ${
+                        saveStatus.type === 'success' ? 'text-green-500' : 'text-red-500'
+                      }`}
+                    >
+                      {saveStatus.message}
+                    </span>
+                  )}
+                </div>
+              </div>
 
               {/* Canvas with responsive sizing */}
               <div ref={canvasContainerRef} className="w-full overflow-auto">
