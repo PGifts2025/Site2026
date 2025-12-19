@@ -475,45 +475,62 @@ const Designer = () => {
   // Calculate responsive canvas size based on container width
   useEffect(() => {
     const updateCanvasSize = () => {
-      if (canvasContainerRef.current) {
-        const containerWidth = canvasContainerRef.current.clientWidth;
+      // Use a default size if container not available yet
+      if (!canvasContainerRef.current) {
+        console.log('[Designer] Container ref not available yet, using default size 800');
         const isMobile = window.innerWidth < 768;
-
-        // On mobile, use container width minus padding
-        // On desktop, use max 800px
-        let newSize;
-        if (isMobile) {
-          newSize = Math.min(containerWidth - 40, 600); // Max 600px on mobile with padding
-        } else {
-          newSize = Math.min(containerWidth - 40, 800); // Max 800px on desktop
-        }
-
-        console.log('[Designer] Calculated canvas size:', {
-          containerWidth,
-          isMobile,
-          newSize
-        });
-
-        setCanvasSize(newSize);
+        const defaultSize = isMobile ? 600 : 800;
+        setCanvasSize(defaultSize);
+        return;
       }
+
+      const containerWidth = canvasContainerRef.current.clientWidth;
+      const isMobile = window.innerWidth < 768;
+
+      // On mobile, use container width minus padding
+      // On desktop, use max 800px
+      let newSize;
+      if (isMobile) {
+        newSize = Math.min(containerWidth - 40, 600); // Max 600px on mobile with padding
+      } else {
+        newSize = Math.min(containerWidth - 40, 800); // Max 800px on desktop
+      }
+
+      console.log('[Designer] Calculated canvas size:', {
+        containerWidth,
+        isMobile,
+        newSize
+      });
+
+      setCanvasSize(newSize);
     };
 
-    updateCanvasSize();
+    // Use setTimeout to ensure DOM is ready
+    const timer = setTimeout(updateCanvasSize, 0);
     window.addEventListener('resize', updateCanvasSize);
 
-    return () => window.removeEventListener('resize', updateCanvasSize);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('resize', updateCanvasSize);
+    };
   }, []);
 
   // Initialize canvas - ONLY ONCE on mount
   useEffect(() => {
     console.log('[Designer] Component mounted - Initializing canvas');
+    console.log('[Designer] Canvas size for initialization:', canvasSize);
 
     // Clear any saved designs from previous sessions
     console.log('[Designer] Clearing saved designs from localStorage');
     localStorage.removeItem('userDesigns');
 
-    if (!canvasRef.current || canvasSize === 0) {
-      console.error('[Designer] Canvas ref not available or size not calculated');
+    if (!canvasRef.current) {
+      console.error('[Designer] Canvas ref not available');
+      return;
+    }
+
+    if (canvasSize === 0) {
+      console.error('[Designer] Canvas size not calculated yet, waiting...');
       return;
     }
 
