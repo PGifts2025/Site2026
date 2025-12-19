@@ -100,6 +100,7 @@ const Designer = () => {
   const [currentColorData, setCurrentColorData] = useState(null);
   const [currentVariant, setCurrentVariant] = useState(null);
   const [printAreas, setPrintAreas] = useState([]);
+  const [allProductPrintAreas, setAllProductPrintAreas] = useState([]); // All print areas for the product (before filtering by view)
   const [printAreasLoaded, setPrintAreasLoaded] = useState(false);  // Track if print areas have loaded from DB
   const [imageScale, setImageScale] = useState(1);  // Track template image scale
   const [showPrintAreaGuide, setShowPrintAreaGuide] = useState(true);  // Toggle print area guide visibility
@@ -723,6 +724,9 @@ const Designer = () => {
           console.log('Query returned:', allAreas?.length || 0, 'print areas');
           console.log('Print areas data (full):', JSON.stringify(allAreas, null, 2));
 
+          // Store ALL print areas for this product (before filtering)
+          setAllProductPrintAreas(allAreas || []);
+
           if (allAreas && allAreas.length > 0) {
             console.log('Area keys found:', allAreas.map(a => a.area_key));
             console.log('Area names found:', allAreas.map(a => a.name));
@@ -743,21 +747,23 @@ const Designer = () => {
             console.error('[loadPrintAreasForView] ❌ Query error:', checkError);
           }
 
-          // Map area_key to views (client-side filtering)
-          const viewMapping = {
+          // View filter mapping: Maps area_keys to which VIEW they should be loaded/displayed on
+          const viewFilterMapping = {
             // Apparel print areas
             'center_chest': 'front',
-            'left_breast_pocket': 'front',
-            'right_breast_pocket': 'front',
-            'left_sleeve': 'front',
-            'right_sleeve': 'front',
+            'left_breast_pocket': 'front',     // Loads on FRONT view (same image as center_chest)
+            'right_breast_pocket': 'front',    // Loads on FRONT view (same image as center_chest)
+            'left_sleeve': 'left',
+            'right_sleeve': 'right',
             'center_back': 'back',
             // Generic print areas (for non-apparel products)
             'front_print': 'front',
             'back_print': 'back',
-            'side_print': 'front',
+            'side_print': 'left',
             'top_print': 'front',
             'bottom_print': 'back',
+            'left_print': 'left',
+            'right_print': 'right',
             // Legacy mappings
             'front': 'front',
             'back': 'back',
@@ -765,11 +771,11 @@ const Designer = () => {
             'right': 'right'
           };
 
-          console.log('View mapping:', viewMapping);
+          console.log('View filter mapping:', viewFilterMapping);
 
           // Filter for current view based on area_key mapping
           const areas = allAreas?.filter(area => {
-            const mappedView = viewMapping[area.area_key] || area.area_key;
+            const mappedView = viewFilterMapping[area.area_key] || area.area_key;
             const matches = mappedView === selectedView;
             console.log(`  Filtering ${area.area_key}: mapped to '${mappedView}', current view '${selectedView}', matches: ${matches}`);
             return matches;
@@ -3745,6 +3751,7 @@ const Designer = () => {
                         onChange={(e) => {
                           console.log('[Designer] Dropdown changed to:', e.target.value);
                           setSelectedProduct(e.target.value);
+                          setAllProductPrintAreas([]); // Clear all print areas when product changes
                           const newProduct = useDatabase ? products[e.target.value] : productsConfig[e.target.value];
                           // Set default view to 'front' when product changes
                           setSelectedView('front');
@@ -3864,18 +3871,20 @@ const Designer = () => {
 
                 {/* View Selector - Show Front/Left/Right/Back buttons (dynamic based on print areas) */}
                 {useDatabase && currentProduct && (() => {
-                  // Get available views from printAreas
+                  // Get available views from ALL print areas (not filtered by view)
                   const getAvailableViews = () => {
-                    if (!printAreas || printAreas.length === 0) {
+                    // Use ALL print areas, not the filtered ones
+                    if (!allProductPrintAreas || allProductPrintAreas.length === 0) {
                       // Default all enabled while loading
                       return ['front', 'left', 'right', 'back'];
                     }
 
-                    const viewMapping = {
+                    // Button mapping: Maps area_keys to which BUTTON they should enable
+                    const buttonMapping = {
                       // Apparel print areas
                       'center_chest': 'front',
-                      'left_breast_pocket': 'front',
-                      'right_breast_pocket': 'front',
+                      'left_breast_pocket': 'left',      // Enables Left button
+                      'right_breast_pocket': 'right',    // Enables Right button
                       'left_sleeve': 'left',
                       'right_sleeve': 'right',
                       'center_back': 'back',
@@ -3889,7 +3898,7 @@ const Designer = () => {
                       'bottom_print': 'back',
                     };
 
-                    const views = printAreas.map(area => viewMapping[area.area_key] || 'front');
+                    const views = allProductPrintAreas.map(area => buttonMapping[area.area_key] || 'front');
                     return [...new Set(views)]; // Unique views
                   };
 
@@ -4107,7 +4116,7 @@ const Designer = () => {
             <div className="bg-gray-100 rounded-lg p-2 sm:p-4 lg:p-8">
               <div className="bg-white shadow-lg rounded-lg p-2 sm:p-4 w-full h-full">
                 {/* Card Header with Title and Action Buttons */}
-                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-2 sm:mb-4 gap-2">
+                <div className="flex flex-row justify-between items-center mb-2 sm:mb-4 gap-2">
                   <div className="flex flex-col gap-1">
                     <h3 className="text-base sm:text-lg font-semibold">Design Canvas</h3>
                     <div className="text-xs sm:text-sm text-gray-500">
@@ -4116,7 +4125,7 @@ const Designer = () => {
                   </div>
 
                   {/* Save & Cart Buttons - Compact in Header */}
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-shrink-0">
                     <button
                       onClick={handleSavePosition}
                       className="px-2 py-1.5 sm:px-3 sm:py-2 bg-blue-500 text-white font-semibold text-xs rounded-md shadow hover:bg-blue-600 transition-all flex items-center gap-1.5"
@@ -4151,7 +4160,7 @@ const Designer = () => {
                 </div>
 
                 {/* Canvas with responsive sizing */}
-                <div ref={canvasContainerRef} className="w-full overflow-auto">
+                <div ref={canvasContainerRef} className="w-full flex justify-center items-center overflow-auto">
                   <canvas
                     ref={canvasRef}
                     width={canvasSize}
