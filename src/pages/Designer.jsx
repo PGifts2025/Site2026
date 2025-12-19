@@ -998,7 +998,15 @@ const Designer = () => {
 
       canvas.add(watermark);
       canvas.bringToFront(watermark);
-      canvas.renderAll();
+
+      // Guard renderAll call
+      try {
+        if (canvas.getContext && canvas.getContext()) {
+          canvas.renderAll();
+        }
+      } catch (error) {
+        console.error('[Designer] Error rendering watermark:', error);
+      }
     }
   }, [user, watermarkVisible]); // Removed canvas from dependencies
 
@@ -1016,10 +1024,10 @@ const Designer = () => {
     const checkPrintAreas = async () => {
       if (!selectedProduct || !useDatabase) return;
 
-      console.log('[DIAGNOSTIC] ═══════════════════════════════════');
-      console.log('[DIAGNOSTIC] Checking print areas for product:', selectedProduct);
-
       try {
+        console.log('[DIAGNOSTIC] ═══════════════════════════════════');
+        console.log('[DIAGNOSTIC] Checking print areas for product:', selectedProduct);
+
         // Get product template
         const { data: product, error: productError } = await supabase
           .from('product_templates')
@@ -1028,7 +1036,8 @@ const Designer = () => {
           .single();
 
         if (productError) {
-          console.error('[DIAGNOSTIC] Error fetching product:', productError);
+          console.warn('[DIAGNOSTIC] Could not fetch product (non-critical):', productError.message);
+          console.log('[DIAGNOSTIC] ═══════════════════════════════════');
           return;
         }
 
@@ -1042,7 +1051,8 @@ const Designer = () => {
             .eq('product_template_id', product.id);
 
           if (areasError) {
-            console.error('[DIAGNOSTIC] Error fetching print areas:', areasError);
+            console.warn('[DIAGNOSTIC] Could not fetch print areas (non-critical):', areasError.message);
+            console.log('[DIAGNOSTIC] ═══════════════════════════════════');
             return;
           }
 
@@ -1080,13 +1090,17 @@ const Designer = () => {
           }
         }
       } catch (error) {
-        console.error('[DIAGNOSTIC] Error in diagnostic check:', error);
+        console.warn('[DIAGNOSTIC] Error in diagnostic check (non-critical):', error.message || error);
+        console.log('[DIAGNOSTIC] ═══════════════════════════════════');
       }
-
-      console.log('[DIAGNOSTIC] ═══════════════════════════════════');
     };
 
-    checkPrintAreas();
+    // Wrap the async call in try-catch to prevent any errors from bubbling up
+    try {
+      checkPrintAreas();
+    } catch (error) {
+      console.warn('[DIAGNOSTIC] Failed to start diagnostic check (non-critical):', error.message || error);
+    }
   }, [selectedProduct, useDatabase]);
 
   // Track selection changes and update text controls
@@ -1343,8 +1357,15 @@ const Designer = () => {
       canvas.bringToFront(label);
     }
 
-    canvas.renderAll();
-    console.log('[Designer] ✅ Rendered active print area:', area.name);
+    // Guard renderAll call
+    try {
+      if (canvas && canvas.getContext && canvas.getContext()) {
+        canvas.renderAll();
+        console.log('[Designer] ✅ Rendered active print area:', area.name);
+      }
+    } catch (error) {
+      console.error('[Designer] Error during renderAll in print area render:', error);
+    }
 
     renderingRef.current = false;
   }, [printAreas, imageScale, showPrintAreaGuide, activePrintArea, printAreasVisible, templateRendering]); // Trigger when relevant state changes
@@ -2685,8 +2706,27 @@ const Designer = () => {
   };
 
   const clearPrintAreaGuides = () => {
+    // CRITICAL: Check canvas and context are valid before any operations
     if (!canvas) {
       console.log('[Designer] Cannot clear - no canvas');
+      return;
+    }
+
+    // Check if canvas has a valid context
+    try {
+      const ctx = canvas.getContext();
+      if (!ctx) {
+        console.log('[Designer] Cannot clear - canvas context is null');
+        return;
+      }
+    } catch (error) {
+      console.error('[Designer] Error checking canvas context:', error);
+      return;
+    }
+
+    // Check if canvas is disposed
+    if (!canvas.getObjects) {
+      console.log('[Designer] Cannot clear - canvas appears disposed');
       return;
     }
 
@@ -2744,7 +2784,17 @@ const Designer = () => {
       canvas.remove(obj);
     });
 
-    canvas.renderAll();
+    // CRITICAL: Verify canvas is still valid before renderAll
+    try {
+      const ctx = canvas.getContext();
+      if (ctx && canvas.renderAll) {
+        canvas.renderAll();
+      } else {
+        console.log('[Designer] Skipping renderAll - canvas context invalid');
+      }
+    } catch (error) {
+      console.error('[Designer] Error during renderAll in clearPrintAreaGuides:', error);
+    }
   };
 
   /**
