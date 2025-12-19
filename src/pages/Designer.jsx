@@ -3867,10 +3867,10 @@ const Designer = () => {
                   // Determine which views have print areas available
                   const viewMapping = {
                     'center_chest': 'front',
-                    'left_breast_pocket': 'left',
-                    'right_breast_pocket': 'right',
-                    'left_sleeve': 'left',
-                    'right_sleeve': 'right',
+                    'left_breast_pocket': 'front',  // Fixed: was 'left', should be 'front'
+                    'right_breast_pocket': 'front', // Fixed: was 'right', should be 'front'
+                    'left_sleeve': 'front',
+                    'right_sleeve': 'front',
                     'center_back': 'back',
                     'front_print': 'front',
                     'back_print': 'back',
@@ -3993,10 +3993,56 @@ const Designer = () => {
                 })()}
               </div>
             </div>
+
+            {/* Zoom Controls - Desktop only (inside left sidebar) */}
+            <div className="hidden lg:block bg-white rounded-lg shadow-sm p-6">
+              <div className="p-3 bg-gray-50 border border-gray-200 rounded-lg">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Zoom: {Math.round(zoomLevel * 100)}%
+                </label>
+                <div className="flex gap-2 items-center justify-center">
+                  <button
+                    onClick={handleZoomOut}
+                    disabled={zoomLevel <= MIN_ZOOM}
+                    className="flex items-center justify-center w-9 h-9 border border-gray-300 bg-white rounded-md cursor-pointer transition-all hover:bg-gray-100 hover:border-blue-500 hover:text-blue-500 active:translate-y-0 disabled:opacity-40 disabled:cursor-not-allowed"
+                    title="Zoom Out (Mouse Wheel)"
+                  >
+                    <svg width="20" height="20" viewBox="0 0 20 20">
+                      <circle cx="10" cy="10" r="7" stroke="currentColor" strokeWidth="2" fill="none"/>
+                      <line x1="6" y1="10" x2="14" y2="10" stroke="currentColor" strokeWidth="2"/>
+                    </svg>
+                  </button>
+
+                  <button
+                    onClick={handleZoomReset}
+                    className="flex items-center justify-center w-9 h-9 border border-gray-300 bg-white rounded-md cursor-pointer transition-all hover:bg-gray-100 hover:border-blue-500 hover:text-blue-500 active:translate-y-0"
+                    title="Reset Zoom (100%)"
+                  >
+                    <span className="text-xs font-bold">100%</span>
+                  </button>
+
+                  <button
+                    onClick={handleZoomIn}
+                    disabled={zoomLevel >= MAX_ZOOM}
+                    className="flex items-center justify-center w-9 h-9 border border-gray-300 bg-white rounded-md cursor-pointer transition-all hover:bg-gray-100 hover:border-blue-500 hover:text-blue-500 active:translate-y-0 disabled:opacity-40 disabled:cursor-not-allowed"
+                    title="Zoom In (Mouse Wheel)"
+                  >
+                    <svg width="20" height="20" viewBox="0 0 20 20">
+                      <circle cx="10" cy="10" r="7" stroke="currentColor" strokeWidth="2" fill="none"/>
+                      <line x1="6" y1="10" x2="14" y2="10" stroke="currentColor" strokeWidth="2"/>
+                      <line x1="10" y1="6" x2="10" y2="14" stroke="currentColor" strokeWidth="2"/>
+                    </svg>
+                  </button>
+                </div>
+                <p className="text-xs text-gray-600 text-center mt-2 italic">
+                  💡 Use mouse wheel to zoom
+                </p>
+              </div>
+            </div>
           </div>
 
-          {/* Zoom Controls - Mobile order-2, Desktop right sidebar */}
-          <div className="w-full lg:w-72 flex-shrink-0 order-2 lg:order-last">
+          {/* Zoom Controls - Mobile only (order-2, between sidebar and canvas) */}
+          <div className="w-full lg:hidden order-2">
             <div className="bg-white rounded-lg shadow-sm p-6">
               <div className="mb-4 p-3 bg-gray-50 border border-gray-200 rounded-lg">
                   <label className="block text-sm font-medium text-gray-700 mb-2">
