@@ -1019,89 +1019,7 @@ const Designer = () => {
     });
   }, [userDesigns]);
 
-  // DIAGNOSTIC: Check print areas for selected product
-  useEffect(() => {
-    const checkPrintAreas = async () => {
-      if (!selectedProduct || !useDatabase) return;
-
-      try {
-        console.log('[DIAGNOSTIC] ═══════════════════════════════════');
-        console.log('[DIAGNOSTIC] Checking print areas for product:', selectedProduct);
-
-        // Get product template
-        const { data: product, error: productError } = await supabase
-          .from('product_templates')
-          .select('id, product_key, name')
-          .eq('product_key', selectedProduct)
-          .single();
-
-        if (productError) {
-          console.warn('[DIAGNOSTIC] Could not fetch product (non-critical):', productError.message);
-          console.log('[DIAGNOSTIC] ═══════════════════════════════════');
-          return;
-        }
-
-        console.log('[DIAGNOSTIC] Product found:', product);
-
-        if (product) {
-          // Get print areas for this product
-          const { data: areas, error: areasError } = await supabase
-            .from('print_areas')
-            .select('*')
-            .eq('product_template_id', product.id);
-
-          if (areasError) {
-            console.warn('[DIAGNOSTIC] Could not fetch print areas (non-critical):', areasError.message);
-            console.log('[DIAGNOSTIC] ═══════════════════════════════════');
-            return;
-          }
-
-          console.log('[DIAGNOSTIC] Print areas found:', areas?.length || 0);
-          if (areas && areas.length > 0) {
-            console.log('[DIAGNOSTIC] Print areas details:');
-            // Map area_key to views for diagnostic display
-            const viewMapping = {
-              // Apparel print areas
-              'center_chest': 'front',
-              'left_breast_pocket': 'front',
-              'right_breast_pocket': 'front',
-              'left_sleeve': 'front',
-              'right_sleeve': 'front',
-              'center_back': 'back',
-              // Generic print areas (for non-apparel products)
-              'front_print': 'front',
-              'back_print': 'back',
-              'side_print': 'front',
-              'top_print': 'front',
-              'bottom_print': 'back',
-              // Legacy mappings
-              'front': 'front',
-              'back': 'back',
-              'left': 'left',
-              'right': 'right'
-            };
-            areas.forEach(area => {
-              const mappedView = viewMapping[area.area_key] || area.area_key;
-              console.log(`  - ${area.name} [${mappedView}]: ${area.area_key}`);
-              console.log(`    Position: (${area.x}, ${area.y}), Size: ${area.width}x${area.height}`);
-            });
-          } else {
-            console.warn('[DIAGNOSTIC] ⚠️ No print areas found! Add them in Product Manager.');
-          }
-        }
-      } catch (error) {
-        console.warn('[DIAGNOSTIC] Error in diagnostic check (non-critical):', error.message || error);
-        console.log('[DIAGNOSTIC] ═══════════════════════════════════');
-      }
-    };
-
-    // Wrap the async call in try-catch to prevent any errors from bubbling up
-    try {
-      checkPrintAreas();
-    } catch (error) {
-      console.warn('[DIAGNOSTIC] Failed to start diagnostic check (non-critical):', error.message || error);
-    }
-  }, [selectedProduct, useDatabase]);
+  // DIAGNOSTIC CODE REMOVED - was causing console errors for non-existent products
 
   // Track selection changes and update text controls
   useEffect(() => {
@@ -3808,8 +3726,8 @@ const Designer = () => {
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="flex flex-col lg:flex-row gap-6">
-          {/* Left Sidebar Part 1 - Product Selection + Color + Print Location */}
-          <div className="w-full lg:w-80 flex-shrink-0 order-1">
+          {/* Left Sidebar - Product Selection + Color + Print Location */}
+          <div className="w-full lg:w-80 flex-shrink-0 order-1 lg:order-none space-y-6">
             <div className="bg-white rounded-lg shadow-sm p-6">
               <h3 className="text-lg font-semibold mb-4">Product</h3>
               
@@ -4077,8 +3995,8 @@ const Designer = () => {
             </div>
           </div>
 
-          {/* Zoom Controls - Separate section for mobile reordering */}
-          <div className="w-full lg:w-80 flex-shrink-0 order-4 lg:order-1">
+          {/* Zoom Controls - Mobile order-2, Desktop right sidebar */}
+          <div className="w-full lg:w-72 flex-shrink-0 order-2 lg:order-last">
             <div className="bg-white rounded-lg shadow-sm p-6">
               <div className="mb-4 p-3 bg-gray-50 border border-gray-200 rounded-lg">
                   <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -4122,15 +4040,73 @@ const Designer = () => {
                     💡 Use mouse wheel to zoom
                   </p>
                 </div>
-
-                {/* Print Area dropdown REMOVED - Front/Left/Right/Back buttons handle selection */}
-
-                {/* Print Area Info Display - REMOVED per user request */}
             </div>
           </div>
 
-          {/* Tools Section - Separate section for mobile reordering */}
-          <div className="w-full lg:w-80 flex-shrink-0 order-6 lg:order-1">
+          {/* Canvas Area - Mobile order-3, Desktop center (flex-1) */}
+          <div className="w-full lg:flex-1 order-3 lg:order-2">
+            <div className="bg-gray-100 rounded-lg p-2 sm:p-4 lg:p-8">
+              <div className="bg-white shadow-lg rounded-lg p-2 sm:p-4 w-full h-full">
+                {/* Card Header with Title and Action Buttons */}
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-2 sm:mb-4 gap-2">
+                  <div className="flex flex-col gap-1">
+                    <h3 className="text-base sm:text-lg font-semibold">Design Canvas</h3>
+                    <div className="text-xs sm:text-sm text-gray-500">
+                      {templateLoaded ? 'Template Loaded' : 'Loading Template...'}
+                    </div>
+                  </div>
+
+                  {/* Save & Cart Buttons - Compact in Header */}
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={handleSavePosition}
+                      className="px-2 py-1.5 sm:px-3 sm:py-2 bg-blue-500 text-white font-semibold text-xs rounded-md shadow hover:bg-blue-600 transition-all flex items-center gap-1.5"
+                      title="Save current designs for this print area"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" className="w-3 h-3">
+                        <path d="M13.854 3.646a.5.5 0 0 1 0 .708l-7 7a.5.5 0 0 1-.708 0l-3.5-3.5a.5.5 0 1 1 .708-.708L6.5 10.293l6.646-6.647a.5.5 0 0 1 .708 0z"/>
+                      </svg>
+                      <span>Save</span>
+                    </button>
+
+                    <button
+                      onClick={handleAddToCart}
+                      className="px-2 py-1.5 sm:px-3 sm:py-2 bg-green-500 text-white font-semibold text-xs rounded-md shadow hover:bg-green-600 transition-all flex items-center gap-1.5"
+                      title="Add design to shopping cart"
+                    >
+                      <ShoppingCart className="w-3 h-3" />
+                      <span>Cart</span>
+                    </button>
+
+                    {/* Save feedback indicator */}
+                    {saveStatus && (
+                      <span
+                        className={`text-xs font-semibold animate-fade-in ${
+                          saveStatus.type === 'success' ? 'text-green-500' : 'text-red-500'
+                        }`}
+                      >
+                        {saveStatus.message}
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Canvas with responsive sizing */}
+                <div ref={canvasContainerRef} className="w-full overflow-auto">
+                  <canvas
+                    ref={canvasRef}
+                    width={canvasSize}
+                    height={canvasSize}
+                    className="max-w-full h-auto"
+                    style={{ display: 'block', margin: '0 auto' }}
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Tools Section - Mobile order-4, Desktop right sidebar */}
+          <div className="w-full lg:w-72 flex-shrink-0 order-4 lg:order-last">
             <div className="bg-white rounded-lg shadow-sm p-6">
               <h3 className="text-lg font-semibold mb-4">Tools</h3>
               
@@ -4475,66 +4451,6 @@ const Designer = () => {
                     <span>{watermarkVisible ? 'Hide' : 'Show'} Watermark</span>
                   </button>
                 </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Canvas Area - Full Width, Mobile Responsive */}
-          <div className="flex-1 flex items-center justify-center bg-gray-100 rounded-lg p-2 sm:p-4 lg:p-8 overflow-auto order-5 lg:order-2">
-            <div className="bg-white shadow-lg rounded-lg p-2 sm:p-4 w-full max-w-full">
-              {/* Card Header with Title and Action Buttons */}
-              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-2 sm:mb-4 gap-2">
-                <div className="flex flex-col gap-1">
-                  <h3 className="text-base sm:text-lg font-semibold">Design Canvas</h3>
-                  <div className="text-xs sm:text-sm text-gray-500">
-                    {templateLoaded ? 'Template Loaded' : 'Loading Template...'}
-                  </div>
-                </div>
-
-                {/* Save & Cart Buttons - Compact in Header */}
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={handleSavePosition}
-                    className="px-2 py-1.5 sm:px-3 sm:py-2 bg-blue-500 text-white font-semibold text-xs rounded-md shadow hover:bg-blue-600 transition-all flex items-center gap-1.5"
-                    title="Save current designs for this print area"
-                  >
-                    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" className="w-3 h-3">
-                      <path d="M13.854 3.646a.5.5 0 0 1 0 .708l-7 7a.5.5 0 0 1-.708 0l-3.5-3.5a.5.5 0 1 1 .708-.708L6.5 10.293l6.646-6.647a.5.5 0 0 1 .708 0z"/>
-                    </svg>
-                    <span>Save</span>
-                  </button>
-
-                  <button
-                    onClick={handleAddToCart}
-                    className="px-2 py-1.5 sm:px-3 sm:py-2 bg-green-500 text-white font-semibold text-xs rounded-md shadow hover:bg-green-600 transition-all flex items-center gap-1.5"
-                    title="Add design to shopping cart"
-                  >
-                    <ShoppingCart className="w-3 h-3" />
-                    <span>Cart</span>
-                  </button>
-
-                  {/* Save feedback indicator */}
-                  {saveStatus && (
-                    <span
-                      className={`text-xs font-semibold animate-fade-in ${
-                        saveStatus.type === 'success' ? 'text-green-500' : 'text-red-500'
-                      }`}
-                    >
-                      {saveStatus.message}
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              {/* Canvas with responsive sizing */}
-              <div ref={canvasContainerRef} className="w-full overflow-auto">
-                <canvas
-                  ref={canvasRef}
-                  width={canvasSize}
-                  height={canvasSize}
-                  className="max-w-full h-auto"
-                  style={{ display: 'block', margin: '0 auto' }}
-                />
               </div>
             </div>
           </div>
