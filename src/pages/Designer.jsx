@@ -4477,7 +4477,6 @@ const Designer = () => {
                 </div>
               </div>
             </div>
-            </div>
           </div>
 
           {/* Canvas Area - Full Width, Mobile Responsive */}
