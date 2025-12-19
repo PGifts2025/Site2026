@@ -3862,135 +3862,90 @@ const Designer = () => {
                   </div>
                 )}
 
-                {/* View Selector - Show Front/Left/Right/Back buttons */}
-                {useDatabase && currentProduct && (() => {
-                  // Determine which views have print areas available
-                  const viewMapping = {
-                    'center_chest': 'front',
-                    'left_breast_pocket': 'front',  // Fixed: was 'left', should be 'front'
-                    'right_breast_pocket': 'front', // Fixed: was 'right', should be 'front'
-                    'left_sleeve': 'front',
-                    'right_sleeve': 'front',
-                    'center_back': 'back',
-                    'front_print': 'front',
-                    'back_print': 'back',
-                    'left_print': 'left',
-                    'right_print': 'right',
-                    'side_print': 'front',
-                    'top_print': 'front',
-                    'bottom_print': 'back',
-                    'front': 'front',
-                    'back': 'back',
-                    'left': 'left',
-                    'right': 'right'
-                  };
+                {/* View Selector - Show Front/Left/Right/Back buttons (always enabled) */}
+                {useDatabase && currentProduct && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Print Location
+                    </label>
+                    <div className="flex flex-wrap gap-2">
+                      {/* Front button */}
+                      <button
+                        onClick={() => handleViewClick('front')}
+                        className={`px-3 py-2 rounded-md border-2 text-sm font-medium flex items-center gap-2 transition-all ${
+                          activePrintArea === 'Center Chest' && printAreasVisible
+                            ? 'border-blue-500 bg-blue-50 text-blue-700'
+                            : 'border-gray-300 bg-white text-gray-700 hover:border-gray-400'
+                        }`}
+                        title="Center Chest - Click twice to hide"
+                      >
+                        <span>Front</span>
+                        {getPrintAreaDesignCount('Center Chest') > 0 && (
+                          <span className="inline-block bg-blue-500 text-white text-xs font-bold rounded-full px-2 py-0.5 min-w-[20px] text-center">
+                            {getPrintAreaDesignCount('Center Chest')}
+                          </span>
+                        )}
+                      </button>
 
-                  const availableViews = printAreas?.map(area =>
-                    viewMapping[area.area_key] || area.view_name || 'front'
-                  ) || [];
-                  const uniqueViews = [...new Set(availableViews)];
+                      {/* Left button */}
+                      <button
+                        onClick={() => handleViewClick('left')}
+                        className={`px-3 py-2 rounded-md border-2 text-sm font-medium flex items-center gap-2 transition-all ${
+                          activePrintArea === 'Left Breast Pocket' && printAreasVisible
+                            ? 'border-blue-500 bg-blue-50 text-blue-700'
+                            : 'border-gray-300 bg-white text-gray-700 hover:border-gray-400'
+                        }`}
+                        title="Left Breast Pocket - Click twice to hide"
+                      >
+                        <span>Left</span>
+                        {getPrintAreaDesignCount('Left Breast Pocket') > 0 && (
+                          <span className="inline-block bg-blue-500 text-white text-xs font-bold rounded-full px-2 py-0.5 min-w-[20px] text-center">
+                            {getPrintAreaDesignCount('Left Breast Pocket')}
+                          </span>
+                        )}
+                      </button>
 
-                  const hasFront = uniqueViews.includes('front');
-                  const hasLeft = uniqueViews.includes('left');
-                  const hasRight = uniqueViews.includes('right');
-                  const hasBack = uniqueViews.includes('back');
+                      {/* Right button */}
+                      <button
+                        onClick={() => handleViewClick('right')}
+                        className={`px-3 py-2 rounded-md border-2 text-sm font-medium flex items-center gap-2 transition-all ${
+                          activePrintArea === 'Right Breast Pocket' && printAreasVisible
+                            ? 'border-blue-500 bg-blue-50 text-blue-700'
+                            : 'border-gray-300 bg-white text-gray-700 hover:border-gray-400'
+                        }`}
+                        title="Right Breast Pocket - Click twice to hide"
+                      >
+                        <span>Right</span>
+                        {getPrintAreaDesignCount('Right Breast Pocket') > 0 && (
+                          <span className="inline-block bg-blue-500 text-white text-xs font-bold rounded-full px-2 py-0.5 min-w-[20px] text-center">
+                            {getPrintAreaDesignCount('Right Breast Pocket')}
+                          </span>
+                        )}
+                      </button>
 
-                  return (
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Print Location
-                      </label>
-                      <div className="flex flex-wrap gap-2">
-                        {/* Front button */}
-                        <button
-                          onClick={() => hasFront && handleViewClick('front')}
-                          disabled={!hasFront}
-                          className={`px-3 py-2 rounded-md border-2 text-sm font-medium flex items-center gap-2 transition-all ${
-                            !hasFront
-                              ? 'opacity-40 cursor-not-allowed border-gray-200 bg-gray-50 text-gray-400'
-                              : activePrintArea === 'Center Chest' && printAreasVisible
-                                ? 'border-blue-500 bg-blue-50 text-blue-700'
-                                : 'border-gray-300 bg-white text-gray-700 hover:border-gray-400'
-                          }`}
-                          title={hasFront ? "Center Chest - Click twice to hide" : "No front print area available"}
-                        >
-                          <span>Front</span>
-                          {hasFront && getPrintAreaDesignCount('Center Chest') > 0 && (
-                            <span className="inline-block bg-blue-500 text-white text-xs font-bold rounded-full px-2 py-0.5 min-w-[20px] text-center">
-                              {getPrintAreaDesignCount('Center Chest')}
-                            </span>
-                          )}
-                        </button>
-
-                        {/* Left button */}
-                        <button
-                          onClick={() => hasLeft && handleViewClick('left')}
-                          disabled={!hasLeft}
-                          className={`px-3 py-2 rounded-md border-2 text-sm font-medium flex items-center gap-2 transition-all ${
-                            !hasLeft
-                              ? 'opacity-40 cursor-not-allowed border-gray-200 bg-gray-50 text-gray-400'
-                              : activePrintArea === 'Left Breast Pocket' && printAreasVisible
-                                ? 'border-blue-500 bg-blue-50 text-blue-700'
-                                : 'border-gray-300 bg-white text-gray-700 hover:border-gray-400'
-                          }`}
-                          title={hasLeft ? "Left Breast Pocket - Click twice to hide" : "No left print area available"}
-                        >
-                          <span>Left</span>
-                          {hasLeft && getPrintAreaDesignCount('Left Breast Pocket') > 0 && (
-                            <span className="inline-block bg-blue-500 text-white text-xs font-bold rounded-full px-2 py-0.5 min-w-[20px] text-center">
-                              {getPrintAreaDesignCount('Left Breast Pocket')}
-                            </span>
-                          )}
-                        </button>
-
-                        {/* Right button */}
-                        <button
-                          onClick={() => hasRight && handleViewClick('right')}
-                          disabled={!hasRight}
-                          className={`px-3 py-2 rounded-md border-2 text-sm font-medium flex items-center gap-2 transition-all ${
-                            !hasRight
-                              ? 'opacity-40 cursor-not-allowed border-gray-200 bg-gray-50 text-gray-400'
-                              : activePrintArea === 'Right Breast Pocket' && printAreasVisible
-                                ? 'border-blue-500 bg-blue-50 text-blue-700'
-                                : 'border-gray-300 bg-white text-gray-700 hover:border-gray-400'
-                          }`}
-                          title={hasRight ? "Right Breast Pocket - Click twice to hide" : "No right print area available"}
-                        >
-                          <span>Right</span>
-                          {hasRight && getPrintAreaDesignCount('Right Breast Pocket') > 0 && (
-                            <span className="inline-block bg-blue-500 text-white text-xs font-bold rounded-full px-2 py-0.5 min-w-[20px] text-center">
-                              {getPrintAreaDesignCount('Right Breast Pocket')}
-                            </span>
-                          )}
-                        </button>
-
-                        {/* Back button */}
-                        <button
-                          onClick={() => hasBack && handleViewClick('back')}
-                          disabled={!hasBack}
-                          className={`px-3 py-2 rounded-md border-2 text-sm font-medium flex items-center gap-2 transition-all ${
-                            !hasBack
-                              ? 'opacity-40 cursor-not-allowed border-gray-200 bg-gray-50 text-gray-400'
-                              : activePrintArea === 'Center Back' && printAreasVisible
-                                ? 'border-blue-500 bg-blue-50 text-blue-700'
-                                : 'border-gray-300 bg-white text-gray-700 hover:border-gray-400'
-                          }`}
-                          title={hasBack ? "Center Back - Click twice to hide" : "No back print area available"}
-                        >
-                          <span>Back</span>
-                          {hasBack && getPrintAreaDesignCount('Center Back') > 0 && (
-                            <span className="inline-block bg-blue-500 text-white text-xs font-bold rounded-full px-2 py-0.5 min-w-[20px] text-center">
-                              {getPrintAreaDesignCount('Center Back')}
-                            </span>
-                          )}
-                        </button>
-                      </div>
-                      <p className="text-sm text-blue-600 font-medium mt-2 bg-blue-50 p-2 rounded">
-                        💡 Tip: Each print area has its own independent designs. Click a button to switch areas. Badges show design count per area.
-                      </p>
+                      {/* Back button */}
+                      <button
+                        onClick={() => handleViewClick('back')}
+                        className={`px-3 py-2 rounded-md border-2 text-sm font-medium flex items-center gap-2 transition-all ${
+                          activePrintArea === 'Center Back' && printAreasVisible
+                            ? 'border-blue-500 bg-blue-50 text-blue-700'
+                            : 'border-gray-300 bg-white text-gray-700 hover:border-gray-400'
+                        }`}
+                        title="Center Back - Click twice to hide"
+                      >
+                        <span>Back</span>
+                        {getPrintAreaDesignCount('Center Back') > 0 && (
+                          <span className="inline-block bg-blue-500 text-white text-xs font-bold rounded-full px-2 py-0.5 min-w-[20px] text-center">
+                            {getPrintAreaDesignCount('Center Back')}
+                          </span>
+                        )}
+                      </button>
                     </div>
-                  );
-                })()}
+                    <p className="text-sm text-blue-600 font-medium mt-2 bg-blue-50 p-2 rounded">
+                      💡 Tip: Each print area has its own independent designs. Click a button to switch areas. Badges show design count per area.
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
 
