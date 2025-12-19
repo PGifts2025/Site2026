@@ -3895,6 +3895,19 @@ const Designer = () => {
 
                   const availableViews = getAvailableViews();
 
+                  // Add this just before the Print Location buttons JSX
+                  console.log('═══ PRINT LOCATION DEBUG ═══');
+                  console.log('printAreas state:', printAreas);
+                  console.log('printAreas count:', printAreas?.length);
+                  if (printAreas && printAreas.length > 0) {
+                    console.log('Print area details:');
+                    printAreas.forEach((area, i) => {
+                      console.log(`  [${i}] area_key: "${area.area_key}", name: "${area.name}"`);
+                    });
+                  }
+                  console.log('getAvailableViews() returns:', getAvailableViews());
+                  console.log('═══════════════════════════');
+
                   return (
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-2">
