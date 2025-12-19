@@ -7,6 +7,7 @@ const PromoGiftsApp = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [isSliderPaused, setIsSliderPaused] = useState(false);
   const [heroSlide, setHeroSlide] = useState(0);
+  const [productsPerSlide, setProductsPerSlide] = useState(4);
 
   // Hero slider content
   const heroSliderContent = [
@@ -169,15 +170,33 @@ const PromoGiftsApp = () => {
     { name: 'Tea Towels', icon: '🍽️' }
   ];
 
+  // Update products per slide based on screen width
+  useEffect(() => {
+    const updateProductsPerSlide = () => {
+      const width = window.innerWidth;
+      if (width < 640) {
+        setProductsPerSlide(1); // Mobile: 1 product per slide
+      } else if (width < 1024) {
+        setProductsPerSlide(2); // Tablet: 2 products per slide
+      } else {
+        setProductsPerSlide(4); // Desktop: 4 products per slide
+      }
+    };
+
+    updateProductsPerSlide();
+    window.addEventListener('resize', updateProductsPerSlide);
+    return () => window.removeEventListener('resize', updateProductsPerSlide);
+  }, []);
+
   // Auto-slider for best sellers
   useEffect(() => {
     if (isSliderPaused) return;
-    
+
     const timer = setInterval(() => {
-      setBestSellersSlide((prev) => (prev + 1) % Math.ceil(bestSellers.length / 4));
+      setBestSellersSlide((prev) => (prev + 1) % Math.ceil(bestSellers.length / productsPerSlide));
     }, 4000);
     return () => clearInterval(timer);
-  }, [bestSellers.length, isSliderPaused]);
+  }, [bestSellers.length, isSliderPaused, productsPerSlide]);
 
   // Auto-slider for hero section
   useEffect(() => {
@@ -188,11 +207,11 @@ const PromoGiftsApp = () => {
   }, [heroSliderContent.length]);
 
   const nextBestSellers = () => {
-    setBestSellersSlide((prev) => (prev + 1) % Math.ceil(bestSellers.length / 4));
+    setBestSellersSlide((prev) => (prev + 1) % Math.ceil(bestSellers.length / productsPerSlide));
   };
 
   const prevBestSellers = () => {
-    setBestSellersSlide((prev) => (prev - 1 + Math.ceil(bestSellers.length / 4)) % Math.ceil(bestSellers.length / 4));
+    setBestSellersSlide((prev) => (prev - 1 + Math.ceil(bestSellers.length / productsPerSlide)) % Math.ceil(bestSellers.length / productsPerSlide));
   };
 
   return (
@@ -303,16 +322,16 @@ const PromoGiftsApp = () => {
             </button>
 
             <div className="relative h-52 overflow-hidden mx-12">
-              <div 
+              <div
                 className="flex transition-all duration-1000 ease-out absolute inset-0"
-                style={{ 
+                style={{
                   transform: `translateX(-${bestSellersSlide * 100}%)`
                 }}
               >
-                {Array.from({ length: Math.ceil(bestSellers.length / 4) }).map((_, slideIndex) => (
+                {Array.from({ length: Math.ceil(bestSellers.length / productsPerSlide) }).map((_, slideIndex) => (
                   <div key={slideIndex} className="w-full flex-shrink-0 px-2 sm:px-6">
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-6">
-                      {bestSellers.slice(slideIndex * 4, slideIndex * 4 + 4).map((product, index) => (
+                      {bestSellers.slice(slideIndex * productsPerSlide, slideIndex * productsPerSlide + productsPerSlide).map((product, index) => (
                         <div 
                           key={index} 
                           className="group relative transition-all duration-700 cursor-pointer"
@@ -357,13 +376,13 @@ const PromoGiftsApp = () => {
           </div>
 
           <div className="flex justify-center mt-6 space-x-3">
-            {Array.from({ length: Math.ceil(bestSellers.length / 4) }).map((_, index) => (
+            {Array.from({ length: Math.ceil(bestSellers.length / productsPerSlide) }).map((_, index) => (
               <button
                 key={index}
                 onClick={() => setBestSellersSlide(index)}
                 className={`transition-all duration-500 rounded-full ${
-                  index === bestSellersSlide 
-                    ? 'w-10 h-3 bg-gradient-to-r from-blue-500 to-purple-500 shadow-lg' 
+                  index === bestSellersSlide
+                    ? 'w-10 h-3 bg-gradient-to-r from-blue-500 to-purple-500 shadow-lg'
                     : 'w-3 h-3 bg-gray-400/60 hover:bg-gray-500/80 shadow-md'
                 }`}
               />

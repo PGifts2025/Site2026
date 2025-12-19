@@ -61,10 +61,12 @@ const supabase = isMockAuth ? createMockSupabase() : supabaseClient;
 
 const Designer = () => {
   const canvasRef = useRef(null);
+  const canvasContainerRef = useRef(null);
   const fileInputRef = useRef(null);
   const canvasReady = useRef(false);
   const renderingRef = useRef(false);
   const [canvas, setCanvas] = useState(null);
+  const [canvasSize, setCanvasSize] = useState(800);
   const [selectedProduct, setSelectedProduct] = useState('tshirt');
   const [selectedColor, setSelectedColor] = useState('#ffffff');
   const [selectedView, setSelectedView] = useState('front'); // Actual view loaded ('front' or 'back')
@@ -470,6 +472,38 @@ const Designer = () => {
     loadProductColorsFromDatabase();
   }, [useDatabase, currentProduct?.id]);
 
+  // Calculate responsive canvas size based on container width
+  useEffect(() => {
+    const updateCanvasSize = () => {
+      if (canvasContainerRef.current) {
+        const containerWidth = canvasContainerRef.current.clientWidth;
+        const isMobile = window.innerWidth < 768;
+
+        // On mobile, use container width minus padding
+        // On desktop, use max 800px
+        let newSize;
+        if (isMobile) {
+          newSize = Math.min(containerWidth - 40, 600); // Max 600px on mobile with padding
+        } else {
+          newSize = Math.min(containerWidth - 40, 800); // Max 800px on desktop
+        }
+
+        console.log('[Designer] Calculated canvas size:', {
+          containerWidth,
+          isMobile,
+          newSize
+        });
+
+        setCanvasSize(newSize);
+      }
+    };
+
+    updateCanvasSize();
+    window.addEventListener('resize', updateCanvasSize);
+
+    return () => window.removeEventListener('resize', updateCanvasSize);
+  }, []);
+
   // Initialize canvas - ONLY ONCE on mount
   useEffect(() => {
     console.log('[Designer] Component mounted - Initializing canvas');
@@ -478,8 +512,8 @@ const Designer = () => {
     console.log('[Designer] Clearing saved designs from localStorage');
     localStorage.removeItem('userDesigns');
 
-    if (!canvasRef.current) {
-      console.error('[Designer] Canvas ref not available');
+    if (!canvasRef.current || canvasSize === 0) {
+      console.error('[Designer] Canvas ref not available or size not calculated');
       return;
     }
 
@@ -504,8 +538,8 @@ const Designer = () => {
 
     try {
       const fabricCanvas = new fabric.Canvas(canvasRef.current, {
-        width: 800,
-        height: 800,
+        width: canvasSize,
+        height: canvasSize,
         backgroundColor: '#f8f9fa',
         selection: true
       });
@@ -524,7 +558,7 @@ const Designer = () => {
     } catch (error) {
       console.error('[Designer] Error initializing Fabric canvas:', error);
     }
-  }, []); // Empty array = only runs once on mount
+  }, [canvasSize]); // Re-initialize when canvas size changes
 
   // Mouse wheel zoom listener
   useEffect(() => {
@@ -4368,11 +4402,11 @@ const Designer = () => {
               </div>
 
               {/* Canvas with responsive sizing */}
-              <div className="w-full overflow-auto">
+              <div ref={canvasContainerRef} className="w-full overflow-auto">
                 <canvas
                   ref={canvasRef}
-                  width="800"
-                  height="800"
+                  width={canvasSize}
+                  height={canvasSize}
                   className="max-w-full h-auto"
                   style={{ display: 'block', margin: '0 auto' }}
                 />
