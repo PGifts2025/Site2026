@@ -597,10 +597,46 @@ const ProductManager = () => {
     setExpandedVariants(expandedVariants.filter(vid => vid !== id));
   };
 
-  const updateColorVariant = (id, field, value) => {
+  const updateColorVariant = async (id, field, value) => {
+    if (field === 'colorCode') {
+      console.log('[ColorPicker] Color changed:', value);
+    }
+
+    // Find the variant being updated
+    const variant = colorVariants.find(v => v.id === id);
+
+    // Update local state
     setColorVariants(colorVariants.map(v =>
       v.id === id ? { ...v, [field]: value } : v
     ));
+
+    // If updating color code and editing existing product with uploaded images, update database
+    if (field === 'colorCode' && editingProductId && variant) {
+      const hasUploadedImages = variant.viewUrls && Object.keys(variant.viewUrls).length > 0;
+
+      if (hasUploadedImages) {
+        console.log('[ColorPicker] Updating database with new color:', value);
+
+        try {
+          // Update all view records for this color variant
+          const { error } = await supabase
+            .from('product_template_variants')
+            .update({ color_code: value })
+            .eq('product_template_id', editingProductId)
+            .eq('color_name', variant.name);
+
+          if (error) {
+            console.error('[ColorPicker] Failed to update database:', error);
+            showMessage('warning', `Color updated locally but database update failed: ${error.message}`);
+          } else {
+            console.log('[ColorPicker] ✅ Database updated with color:', value);
+            showMessage('success', 'Color updated successfully');
+          }
+        } catch (err) {
+          console.error('[ColorPicker] Database update error:', err);
+        }
+      }
+    }
   };
 
   const toggleView = (variantId, view) => {
@@ -635,11 +671,13 @@ const ProductManager = () => {
     console.log('[Upload] Starting upload:', {
       variantId,
       colorName: variant.name,
+      colorCode: variant.colorCode,
       view,
       productKey: tempKey,
       fileName: file.name,
       size: `${(file.size / 1024).toFixed(2)} KB`
     });
+    console.log('[Upload] Using color code:', variant.colorCode);
 
     setUploadingColor(uploadKey);
     try {
@@ -726,26 +764,30 @@ const ProductManager = () => {
 
           if (existing) {
             // Update existing record
+            const updateData = {
+              template_url: imageUrl,
+              color_code: variant.colorCode || '#000000'
+            };
+            console.log('[Upload] Updating with data:', updateData);
             const { error } = await supabase
               .from('product_template_variants')
-              .update({
-                template_url: imageUrl,
-                color_code: variant.colorCode || '#000000'
-              })
+              .update(updateData)
               .eq('id', existing.id);
             dbError = error;
             if (!error) console.log('[Upload] ✅ Updated existing variant in database');
           } else {
             // Insert new record
+            const insertData = {
+              product_template_id: editingProductId,
+              color_name: variant.name,
+              color_code: variant.colorCode || '#000000',
+              view_name: view,
+              template_url: imageUrl
+            };
+            console.log('[Upload] Inserting with data:', insertData);
             const { error } = await supabase
               .from('product_template_variants')
-              .insert({
-                product_template_id: editingProductId,
-                color_name: variant.name,
-                color_code: variant.colorCode || '#000000',
-                view_name: view,
-                template_url: imageUrl
-              });
+              .insert(insertData);
             dbError = error;
             if (!error) console.log('[Upload] ✅ Inserted new variant into database');
           }
