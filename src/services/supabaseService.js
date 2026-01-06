@@ -1069,11 +1069,14 @@ export const createPrintAreaForView = async (productTemplateId, viewName, printA
 
   try {
     const client = getSupabaseClient();
+    const areaKey = printArea.areaKey || printArea.area_key || viewName;
+
+    // Use upsert to prevent duplicates
     const { data, error} = await client
       .from('print_areas')
-      .insert({
+      .upsert({
         product_template_id: productTemplateId,
-        area_key: printArea.areaKey || printArea.area_key || viewName,
+        area_key: areaKey,
         name: printArea.name,
         x: printArea.x,
         y: printArea.y,
@@ -1084,15 +1087,17 @@ export const createPrintAreaForView = async (productTemplateId, viewName, printA
         width_mm: printArea.width_mm || null,
         height_mm: printArea.height_mm || null,
         shape: printArea.shape || 'rectangle'
+      }, {
+        onConflict: 'product_template_id,area_key'  // Unique constraint
       })
       .select()
       .single();
 
     if (error) throw error;
-    console.log('[createPrintAreaForView] Created print area:', data);
+    console.log('[createPrintAreaForView] Upserted print area:', data);
     return data;
   } catch (error) {
-    console.error('Error creating print area for view:', error);
+    console.error('Error upserting print area for view:', error);
     throw error;
   }
 };

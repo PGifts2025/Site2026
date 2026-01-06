@@ -316,8 +316,8 @@ const Designer = () => {
 
   // Load product colors from database when product changes
   useEffect(() => {
-    const loadColorsForProduct = async (productId) => {
-      console.log('[loadColorsForProduct] Loading for product ID:', productId);
+    const loadColorsForProduct = async (productId, productKey) => {
+      console.log('[loadColorsForProduct] Loading for product ID:', productId, 'productKey:', productKey);
 
       try {
         // STEP 1: Try loading from product_template_colors (APPAREL products)
@@ -396,6 +396,10 @@ const Designer = () => {
 
         console.log('[loadColorsForProduct] ✓ Found GENERIC product variants');
 
+        // CRITICAL FIX: Use folder structure URLs instead of malformed template_url from database
+        // Construct URLs using the pattern: {productKey}/{colorName}-{view}.png
+        const SUPABASE_URL = supabase.storage.from('product-templates').getPublicUrl('').data.publicUrl.replace(/\/$/, '').replace(/\/[^\/]*$/, '');
+
         // Group variants by color (each color has multiple views)
         const colorMap = new Map();
         variantData.forEach(variant => {
@@ -408,15 +412,22 @@ const Designer = () => {
               variants: []
             });
           }
-          // Store all view variants for this color
+
+          // Construct URL from folder structure pattern (same as apparel)
+          const colorSlug = variant.color_name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+          const folderStructureUrl = `${SUPABASE_URL}/product-templates/${productKey}/${colorSlug}-${variant.view_name}.png`;
+
+          console.log('[loadColorsForProduct] 🔧 Constructed URL:', folderStructureUrl);
+
+          // Store view variant with folder structure URL
           colorMap.get(variant.color_code).variants.push({
             view_name: variant.view_name,
-            template_url: variant.template_url
+            template_url: folderStructureUrl // Use folder structure URL, not database URL
           });
         });
 
         const genericColors = Array.from(colorMap.values());
-        console.log('[loadColorsForProduct] ✅ Loaded', genericColors.length, 'generic colors with variants');
+        console.log('[loadColorsForProduct] ✅ Loaded', genericColors.length, 'generic colors with folder-structure URLs');
 
         return genericColors;
 
@@ -436,7 +447,7 @@ const Designer = () => {
       setLoadingColors(true);
 
       try {
-        const colors = await loadColorsForProduct(currentProduct.id);
+        const colors = await loadColorsForProduct(currentProduct.id, currentProduct.product_key);
 
         if (colors.length > 0) {
           setProductColors(colors);

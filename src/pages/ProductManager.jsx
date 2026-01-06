@@ -702,6 +702,67 @@ const ProductManager = () => {
       const imageUrl = urlData.publicUrl;
       console.log('[Upload] ✅ Uploaded successfully:', imageUrl);
 
+      // If editing existing product, insert variant into database immediately
+      if (editingProductId) {
+        console.log('[Upload] Inserting variant into database...', {
+          productId: editingProductId,
+          colorName: variant.name,
+          viewName: view
+        });
+
+        try {
+          // First check if it already exists
+          const { data: existing } = await supabase
+            .from('product_template_variants')
+            .select('id')
+            .eq('product_template_id', editingProductId)
+            .eq('color_name', variant.name)
+            .eq('view_name', view)
+            .maybeSingle();
+
+          console.log('[Upload] Existing record check:', existing ? 'FOUND' : 'NOT FOUND', existing);
+
+          let dbError = null;
+
+          if (existing) {
+            // Update existing record
+            const { error } = await supabase
+              .from('product_template_variants')
+              .update({
+                template_url: imageUrl,
+                color_code: variant.colorCode || '#000000'
+              })
+              .eq('id', existing.id);
+            dbError = error;
+            if (!error) console.log('[Upload] ✅ Updated existing variant in database');
+          } else {
+            // Insert new record
+            const { error } = await supabase
+              .from('product_template_variants')
+              .insert({
+                product_template_id: editingProductId,
+                color_name: variant.name,
+                color_code: variant.colorCode || '#000000',
+                view_name: view,
+                template_url: imageUrl
+              });
+            dbError = error;
+            if (!error) console.log('[Upload] ✅ Inserted new variant into database');
+          }
+
+          if (dbError) {
+            console.error('[Upload] ❌ Database save failed:', JSON.stringify(dbError, null, 2));
+            showMessage('warning', `Image uploaded but database update failed: ${dbError.message}`);
+          } else {
+            console.log('[Upload] ✅ Saved to database:', variant.name, view);
+          }
+        } catch (dbErr) {
+          console.error('[Upload] Database error:', dbErr);
+        }
+      } else {
+        console.log('[Upload] Skipping database insert (new product - will be saved on final save)');
+      }
+
       // Update variant with view-specific URL
       setColorVariants(prev => prev.map(v => {
         if (v.id === variantId) {
@@ -1837,43 +1898,83 @@ const ProductManager = () => {
 
   /**
    * Get template URL from Supabase folder structure for print area configuration
-   * CRITICAL: Always uses WHITE template as reference for consistency
+   * Tries WHITE template first (apparel), then falls back to selected color variant (generic products)
    * @param {string} productKey - Product key (e.g., 't-shirts')
    * @param {string} view - View name ('front', 'back', etc.)
-   * @returns {string} Public URL to template image
+   * @param {Array} variants - Color variants array (for fallback)
+   * @param {number} variantIndex - Currently selected variant index
+   * @returns {Promise<string|null>} Public URL to template image
    */
-  const getConfigTemplateUrl = (productKey, view) => {
+  const getConfigTemplateUrl = async (productKey, view, variants = [], variantIndex = 0) => {
     if (!productKey) return null;
 
-    // CRITICAL: Always use WHITE as reference for print area configuration
-    // This ensures consistency across all colors
-    const fileName = `white-${view}.png`;
-    const path = `${productKey}/${fileName}`;
+    // Try 1: Load white template (for apparel products)
+    const whiteFileName = `white-${view}.png`;
+    const whitePath = `${productKey}/${whiteFileName}`;
 
-    console.log('[Config Template] Building URL for:', path);
+    console.log('[Config Template] Trying white template:', whitePath);
 
-    const { data } = supabase.storage
+    const { data: whiteData } = supabase.storage
       .from('product-templates')
-      .getPublicUrl(path);
+      .getPublicUrl(whitePath);
 
-    console.log('[Config Template] URL:', data.publicUrl);
-    return data.publicUrl;
+    // Check if white template exists
+    try {
+      const response = await fetch(whiteData.publicUrl, { method: 'HEAD' });
+      if (response.ok) {
+        console.log('[Config Template] ✅ Using white template:', whiteData.publicUrl);
+        return whiteData.publicUrl;
+      }
+    } catch (e) {
+      console.log('[Config Template] White template not found, trying fallback...');
+    }
+
+    // Try 2: Fallback to selected color variant (for generic products like bags)
+    if (variants && variants.length > 0 && variantIndex < variants.length) {
+      const selectedVariant = variants[variantIndex];
+
+      // Try using viewUrls first (if available)
+      if (selectedVariant.viewUrls && selectedVariant.viewUrls[view]) {
+        console.log('[Config Template] ✅ Using variant viewUrl:', selectedVariant.viewUrls[view]);
+        return selectedVariant.viewUrls[view];
+      }
+
+      // Build URL from variant name
+      if (selectedVariant.name) {
+        const variantFileName = `${selectedVariant.name.toLowerCase().replace(/\s+/g, '-')}-${view}.png`;
+        const variantPath = `${productKey}/${variantFileName}`;
+
+        const { data: variantData } = supabase.storage
+          .from('product-templates')
+          .getPublicUrl(variantPath);
+
+        console.log('[Config Template] ✅ Using variant template:', variantData.publicUrl);
+        return variantData.publicUrl;
+      }
+    }
+
+    console.warn('[Config Template] ❌ No template found for:', productKey, view);
+    return null;
   };
 
   // Load template when variant or view changes
   useEffect(() => {
-    if (currentStep === 3 && fabricCanvasRef.current && productKey) {
-      // UPDATED: Use Supabase folder structure instead of variant.templateUrl
-      const templateUrl = getConfigTemplateUrl(productKey, currentView);
+    const loadTemplate = async () => {
+      if (currentStep === 3 && fabricCanvasRef.current && productKey) {
+        // Try white template first, fallback to selected color variant
+        const templateUrl = await getConfigTemplateUrl(productKey, currentView, colorVariants, currentVariantIndex);
 
-      if (templateUrl) {
-        console.log('[Config] Loading white template for view:', currentView);
-        loadTemplateOnCanvas(templateUrl);
-      } else {
-        console.warn('[Config] No template URL available for:', productKey, currentView);
+        if (templateUrl) {
+          console.log('[Config] Loading template for view:', currentView, 'variant:', currentVariantIndex);
+          loadTemplateOnCanvas(templateUrl);
+        } else {
+          console.warn('[Config] No template URL available for:', productKey, currentView);
+        }
       }
-    }
-  }, [currentStep, currentView, productKey]); // UPDATED: Removed currentVariantIndex and colorVariants dependencies
+    };
+
+    loadTemplate();
+  }, [currentStep, currentView, productKey, colorVariants, currentVariantIndex]);
 
   // Update grid when settings change
   useEffect(() => {
@@ -2131,6 +2232,9 @@ const ProductManager = () => {
 
       for (const variant of colorVariants) {
         for (const view of variant.views) {
+          // Get view-specific URL if available, fallback to general templateUrl
+          const viewSpecificUrl = variant.viewUrls?.[view] || variant.templateUrl;
+
           // Upsert variant
           const variantData = await upsertProductVariant(
             template.id,
@@ -2138,11 +2242,11 @@ const ProductManager = () => {
             view,
             {
               colorName: variant.name,
-              templateUrl: variant.templateUrl
+              templateUrl: viewSpecificUrl  // Use view-specific URL
             }
           );
 
-          console.log('[saveProduct] Variant saved:', variantData);
+          console.log('[saveProduct] Variant saved:', variantData, 'URL:', viewSpecificUrl);
         }
       }
 
