@@ -789,7 +789,7 @@ export const upsertProductVariant = async (productTemplateId, colorCode, viewNam
         color_name: variantData.colorName,
         template_url: variantData.templateUrl
       }, {
-        onConflict: 'product_template_id,color_code,view_name'
+        onConflict: 'product_template_id,color_name,view_name'  // Fixed: use color_name instead of color_code
       })
       .select()
       .single();

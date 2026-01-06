@@ -2210,8 +2210,10 @@ const ProductManager = () => {
         .eq('product_template_id', editingProductId);
 
       // Convert printAreas object to array and insert new print areas
-      const printAreasArray = Object.entries(printAreas).flatMap(([view, areas]) =>
-        areas.map(area => ({
+      const printAreasArray = Object.entries(printAreas).flatMap(([view, areas]) => {
+        // Ensure areas is always an array (it might be an object)
+        const areasArray = Array.isArray(areas) ? areas : (areas ? [areas] : []);
+        return areasArray.map(area => ({
           product_template_id: editingProductId,
           area_key: area.area_key,
           name: area.name,
@@ -2224,8 +2226,8 @@ const ProductManager = () => {
           shape: area.shape,
           width_mm: area.width_mm,
           height_mm: area.height_mm
-        }))
-      );
+        }));
+      });
 
       if (printAreasArray.length > 0) {
         const { error } = await supabase
