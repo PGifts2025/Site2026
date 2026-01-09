@@ -104,6 +104,7 @@ const Designer = () => {
   const [printAreasLoaded, setPrintAreasLoaded] = useState(false);  // Track if print areas have loaded from DB
   const [imageScale, setImageScale] = useState(1);  // Track template image scale
   const [showPrintAreaGuide, setShowPrintAreaGuide] = useState(true);  // Toggle print area guide visibility
+  const [showPrintArea, setShowPrintArea] = useState(true);  // Toggle print area rectangle visibility
   const [userDesigns, setUserDesigns] = useState({});  // Track designs per product-color-view combination
 
   // Zoom controls
@@ -1148,7 +1149,7 @@ const Designer = () => {
     clearPrintAreaGuides();
 
     // If guides are hidden or print areas are explicitly hidden, stop here after clearing
-    if (!showPrintAreaGuide || !printAreasVisible) {
+    if (!showPrintAreaGuide || !printAreasVisible || !showPrintArea) {
       console.log('[RENDER] Print areas hidden - not rendering');
       return;
     }
@@ -1304,7 +1305,7 @@ const Designer = () => {
     }
 
     renderingRef.current = false;
-  }, [printAreas, imageScale, showPrintAreaGuide, activePrintArea, printAreasVisible, templateRendering]); // Trigger when relevant state changes
+  }, [printAreas, imageScale, showPrintAreaGuide, activePrintArea, printAreasVisible, templateRendering, showPrintArea]); // Trigger when relevant state changes
 
   // Track print area guide visibility changes
   useEffect(() => {
@@ -4064,6 +4065,33 @@ const Designer = () => {
                     </div>
                   );
                 })()}
+              </div>
+            </div>
+
+            {/* Print Area Visibility Control */}
+            <div className="bg-white rounded-lg shadow-sm p-6">
+              <h3 className="text-lg font-semibold mb-4">Print Area</h3>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setShowPrintArea(true)}
+                  className={`flex-1 px-4 py-2 rounded-md border-2 text-sm font-medium transition-all ${
+                    showPrintArea
+                      ? 'border-blue-500 bg-blue-50 text-blue-700'
+                      : 'border-gray-300 bg-white text-gray-700 hover:border-gray-400'
+                  }`}
+                >
+                  Show
+                </button>
+                <button
+                  onClick={() => setShowPrintArea(false)}
+                  className={`flex-1 px-4 py-2 rounded-md border-2 text-sm font-medium transition-all ${
+                    !showPrintArea
+                      ? 'border-blue-500 bg-blue-50 text-blue-700'
+                      : 'border-gray-300 bg-white text-gray-700 hover:border-gray-400'
+                  }`}
+                >
+                  Hide
+                </button>
               </div>
             </div>
 
