@@ -69,7 +69,7 @@ const PRODUCT_TYPES = [
 
 // Updated to only include physical views that require separate images
 // Left/Right breast pockets are now PRINT AREAS on the front view, not separate views
-const AVAILABLE_VIEWS = ['front', 'back'];
+const AVAILABLE_VIEWS = ['front', 'back', 'top'];
 const STANDARD_TEMPLATE_SIZE = { width: 800, height: 1200 }; // Standard size for all templates
 
 // Overlay types for product customization (cords, collars, pockets, etc.)
@@ -2035,7 +2035,7 @@ const ProductManager = () => {
       return colorVariants.every(v =>
         v.name &&
         v.colorCode &&
-        (v.viewUrls?.front || v.viewUrls?.back)
+        (v.viewUrls?.front || v.viewUrls?.back || v.viewUrls?.top)
       );
     }
     return true;
@@ -2830,101 +2830,54 @@ const ProductManager = () => {
                                 Template Images *
                               </label>
                               <div className="grid grid-cols-2 gap-4">
-                                {/* Front View Upload */}
-                                <div>
-                                  <label className="block text-xs font-medium text-gray-700 mb-1">
-                                    Front View
-                                  </label>
-                                  {variant.viewUrls?.front ? (
-                                    <div className="relative group">
-                                      <img
-                                        src={variant.viewUrls.front}
-                                        alt="Front view"
-                                        className="w-full h-32 object-contain border border-gray-300 rounded-lg bg-gray-50"
-                                      />
-                                      <label className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center opacity-0 group-hover:opacity-100 cursor-pointer transition-opacity rounded-lg">
-                                        <Upload className="w-5 h-5 text-white" />
+                                {variant.views.map(view => (
+                                  <div key={view}>
+                                    <label className="block text-xs font-medium text-gray-700 mb-1">
+                                      {view.charAt(0).toUpperCase() + view.slice(1)} View
+                                    </label>
+                                    {variant.viewUrls?.[view] ? (
+                                      <div className="relative group">
+                                        <img
+                                          src={variant.viewUrls[view]}
+                                          alt={`${view} view`}
+                                          className="w-full h-32 object-contain border border-gray-300 rounded-lg bg-gray-50"
+                                        />
+                                        <label className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center opacity-0 group-hover:opacity-100 cursor-pointer transition-opacity rounded-lg">
+                                          <Upload className="w-5 h-5 text-white" />
+                                          <input
+                                            type="file"
+                                            accept="image/*"
+                                            className="hidden"
+                                            onChange={(e) => {
+                                              const file = e.target.files?.[0];
+                                              if (file) handleColorImageUpload(variant.id, view, file);
+                                            }}
+                                          />
+                                        </label>
+                                      </div>
+                                    ) : (
+                                      <label className="flex flex-col items-center justify-center h-32 border-2 border-dashed border-gray-300 rounded-lg cursor-pointer hover:border-blue-500 hover:bg-blue-50">
+                                        {uploadingColor === `${variant.id}-${view}` ? (
+                                          <Loader className="w-5 h-5 animate-spin text-blue-600" />
+                                        ) : (
+                                          <>
+                                            <Upload className="w-5 h-5 text-gray-400" />
+                                            <span className="text-xs text-gray-500 mt-1">Upload {view.charAt(0).toUpperCase() + view.slice(1)}</span>
+                                          </>
+                                        )}
                                         <input
                                           type="file"
                                           accept="image/*"
                                           className="hidden"
                                           onChange={(e) => {
                                             const file = e.target.files?.[0];
-                                            if (file) handleColorImageUpload(variant.id, 'front', file);
+                                            if (file) handleColorImageUpload(variant.id, view, file);
                                           }}
                                         />
                                       </label>
-                                    </div>
-                                  ) : (
-                                    <label className="flex flex-col items-center justify-center h-32 border-2 border-dashed border-gray-300 rounded-lg cursor-pointer hover:border-blue-500 hover:bg-blue-50">
-                                      {uploadingColor === `${variant.id}-front` ? (
-                                        <Loader className="w-5 h-5 animate-spin text-blue-600" />
-                                      ) : (
-                                        <>
-                                          <Upload className="w-5 h-5 text-gray-400" />
-                                          <span className="text-xs text-gray-500 mt-1">Upload Front</span>
-                                        </>
-                                      )}
-                                      <input
-                                        type="file"
-                                        accept="image/*"
-                                        className="hidden"
-                                        onChange={(e) => {
-                                          const file = e.target.files?.[0];
-                                          if (file) handleColorImageUpload(variant.id, 'front', file);
-                                        }}
-                                      />
-                                    </label>
-                                  )}
-                                </div>
-
-                                {/* Back View Upload */}
-                                <div>
-                                  <label className="block text-xs font-medium text-gray-700 mb-1">
-                                    Back View
-                                  </label>
-                                  {variant.viewUrls?.back ? (
-                                    <div className="relative group">
-                                      <img
-                                        src={variant.viewUrls.back}
-                                        alt="Back view"
-                                        className="w-full h-32 object-contain border border-gray-300 rounded-lg bg-gray-50"
-                                      />
-                                      <label className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center opacity-0 group-hover:opacity-100 cursor-pointer transition-opacity rounded-lg">
-                                        <Upload className="w-5 h-5 text-white" />
-                                        <input
-                                          type="file"
-                                          accept="image/*"
-                                          className="hidden"
-                                          onChange={(e) => {
-                                            const file = e.target.files?.[0];
-                                            if (file) handleColorImageUpload(variant.id, 'back', file);
-                                          }}
-                                        />
-                                      </label>
-                                    </div>
-                                  ) : (
-                                    <label className="flex flex-col items-center justify-center h-32 border-2 border-dashed border-gray-300 rounded-lg cursor-pointer hover:border-blue-500 hover:bg-blue-50">
-                                      {uploadingColor === `${variant.id}-back` ? (
-                                        <Loader className="w-5 h-5 animate-spin text-blue-600" />
-                                      ) : (
-                                        <>
-                                          <Upload className="w-5 h-5 text-gray-400" />
-                                          <span className="text-xs text-gray-500 mt-1">Upload Back</span>
-                                        </>
-                                      )}
-                                      <input
-                                        type="file"
-                                        accept="image/*"
-                                        className="hidden"
-                                        onChange={(e) => {
-                                          const file = e.target.files?.[0];
-                                          if (file) handleColorImageUpload(variant.id, 'back', file);
-                                        }}
-                                      />
-                                    </label>
-                                  )}
-                                </div>
+                                    )}
+                                  </div>
+                                ))}
                               </div>
                               <p className="text-xs text-gray-500 mt-2">
                                 Upload PNG with transparency for best results. Max 5MB.

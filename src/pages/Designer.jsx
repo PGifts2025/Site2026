@@ -69,8 +69,8 @@ const Designer = () => {
   const [canvasSize, setCanvasSize] = useState(800);
   const [selectedProduct, setSelectedProduct] = useState('tshirt');
   const [selectedColor, setSelectedColor] = useState('#ffffff');
-  const [selectedView, setSelectedView] = useState('front'); // Actual view loaded ('front' or 'back')
-  const [selectedViewButton, setSelectedViewButton] = useState('front'); // Which button is active ('front', 'left', 'right', 'back')
+  const [selectedView, setSelectedView] = useState('front'); // Actual view loaded ('front', 'back', or 'top')
+  const [selectedViewButton, setSelectedViewButton] = useState('front'); // Which button is active ('front', 'left', 'right', 'back', 'top')
   const [activePrintArea, setActivePrintArea] = useState('Center Chest'); // Which print area is active
   const [printAreasVisible, setPrintAreasVisible] = useState(true); // Whether print areas are visible (toggle with double-click)
   const [printArea, setPrintArea] = useState('front');
@@ -771,7 +771,7 @@ const Designer = () => {
             'front_print': 'front',
             'back_print': 'back',
             'side_print': 'left',
-            'top_print': 'front',
+            'top_print': 'top',
             'bottom_print': 'back',
             'left_print': 'left',
             'right_print': 'right',
@@ -779,7 +779,8 @@ const Designer = () => {
             'front': 'front',
             'back': 'back',
             'left': 'left',
-            'right': 'right'
+            'right': 'right',
+            'top': 'top'
           };
 
           console.log('View filter mapping:', viewFilterMapping);
@@ -1471,7 +1472,7 @@ const Designer = () => {
    * CRITICAL: Check if an uploaded photo exists in storage (DIRECT STORAGE CHECK)
    * @param {Object|string} product - Product object or product key string
    * @param {string} colorName - Color name (e.g., 'Black', 'Carolina Blue')
-   * @param {string} view - View name ('front' or 'back')
+   * @param {string} view - View name ('front', 'back', or 'top')
    * @returns {Promise<string|null>} Photo URL if exists, null otherwise
    */
   const getColorPhotoUrl = async (product, colorName, view) => {
@@ -1535,7 +1536,7 @@ const Designer = () => {
    * Check if an uploaded photo exists for the selected color and view (DATABASE FALLBACK)
    * @param {string} productId - Product template ID
    * @param {string} colorId - Apparel color ID
-   * @param {string} view - View name ('front' or 'back')
+   * @param {string} view - View name ('front', 'back', or 'top')
    * @returns {string|null} Photo URL if exists, null otherwise
    */
   const checkIfPhotoExists = (productId, colorId, view) => {
@@ -1556,6 +1557,11 @@ const Designer = () => {
     if (view === 'back' && colorAssignment.has_back_photo && colorAssignment.back_photo_url) {
       console.log('[Designer] ✅ Photo exists for', colorAssignment.apparel_colors?.color_name, 'back');
       return colorAssignment.back_photo_url;
+    }
+
+    if (view === 'top' && colorAssignment.has_top_photo && colorAssignment.top_photo_url) {
+      console.log('[Designer] ✅ Photo exists for', colorAssignment.apparel_colors?.color_name, 'top');
+      return colorAssignment.top_photo_url;
     }
 
     console.log('[Designer] ℹ️ No photo for', colorAssignment.apparel_colors?.color_name, view, '- will use overlay');
@@ -2391,6 +2397,10 @@ const Designer = () => {
             templateUrl = colorAssignment.back_photo_url;
             source = 'color-specific-photo-db';
             console.log('[Designer] ✅ Using actual color photo from database');
+          } else if (selectedView === 'top' && colorAssignment.has_top_photo && colorAssignment.top_photo_url) {
+            templateUrl = colorAssignment.top_photo_url;
+            source = 'color-specific-photo-db';
+            console.log('[Designer] ✅ Using actual color photo from database');
           }
         }
       }
@@ -2889,7 +2899,8 @@ const Designer = () => {
       'front': 'Center Chest',
       'left': 'Left Breast Pocket',
       'right': 'Right Breast Pocket',
-      'back': 'Center Back'
+      'back': 'Center Back',
+      'top': 'Top Print'
     };
 
     const targetPrintArea = buttonToPrintAreaMap[buttonPressed];
@@ -2915,8 +2926,16 @@ const Designer = () => {
       return;
     }
 
-    // STEP 2: Determine which view to load (front or back)
-    const viewToLoad = buttonPressed === 'back' ? 'back' : 'front';
+    // STEP 2: Determine which view to load (front, back, or top)
+    let viewToLoad;
+    if (buttonPressed === 'back') {
+      viewToLoad = 'back';
+    } else if (buttonPressed === 'top') {
+      viewToLoad = 'top';
+    } else {
+      // front, left, right all use 'front' view
+      viewToLoad = 'front';
+    }
     const viewChanging = selectedView !== viewToLoad;
 
     console.log('[handleViewClick] View changing:', viewChanging, '(', selectedView, '->', viewToLoad, ')');
@@ -2940,7 +2959,7 @@ const Designer = () => {
       // Change view (this triggers template load)
       setSelectedView(viewToLoad);
 
-      // FIX: Force print area visibility after view changes (especially for back view)
+      // FIX: Force print area visibility after view changes
       setTimeout(() => {
         console.log('[handleViewClick] setTimeout: Forcing print area visibility for:', targetPrintArea);
         setPrintAreasVisible(true);
@@ -3880,14 +3899,14 @@ const Designer = () => {
                   </div>
                 )}
 
-                {/* View Selector - Show Front/Left/Right/Back buttons (dynamic based on print areas) */}
+                {/* View Selector - Show Front/Left/Right/Back/Top buttons (dynamic based on print areas) */}
                 {useDatabase && currentProduct && (() => {
                   // Get available views from ALL print areas (not filtered by view)
                   const getAvailableViews = () => {
                     // Use ALL print areas, not the filtered ones
                     if (!allProductPrintAreas || allProductPrintAreas.length === 0) {
                       // Default all enabled while loading
-                      return ['front', 'left', 'right', 'back'];
+                      return ['front', 'left', 'right', 'back', 'top'];
                     }
 
                     // Button mapping: Maps area_keys to which BUTTON they should enable
@@ -3905,7 +3924,7 @@ const Designer = () => {
                       'left_print': 'left',
                       'right_print': 'right',
                       'side_print': 'left',
-                      'top_print': 'front',
+                      'top_print': 'top',
                       'bottom_print': 'back',
                     };
 
@@ -4014,6 +4033,27 @@ const Designer = () => {
                           {availableViews.includes('back') && getPrintAreaDesignCount('Center Back') > 0 && (
                             <span className="inline-block bg-blue-500 text-white text-xs font-bold rounded-full px-2 py-0.5 min-w-[20px] text-center">
                               {getPrintAreaDesignCount('Center Back')}
+                            </span>
+                          )}
+                        </button>
+
+                        {/* Top button */}
+                        <button
+                          onClick={() => handleViewClick('top')}
+                          disabled={!availableViews.includes('top')}
+                          className={`px-3 py-2 rounded-md border-2 text-sm font-medium flex items-center gap-2 transition-all ${
+                            !availableViews.includes('top')
+                              ? 'opacity-40 cursor-not-allowed border-gray-200 bg-gray-50 text-gray-400'
+                              : activePrintArea === 'Top Print' && printAreasVisible
+                                ? 'border-blue-500 bg-blue-50 text-blue-700'
+                                : 'border-gray-300 bg-white text-gray-700 hover:border-gray-400'
+                          }`}
+                          title={availableViews.includes('top') ? "Top Print - Click twice to hide" : "No top print area"}
+                        >
+                          <span>Top</span>
+                          {availableViews.includes('top') && getPrintAreaDesignCount('Top Print') > 0 && (
+                            <span className="inline-block bg-blue-500 text-white text-xs font-bold rounded-full px-2 py-0.5 min-w-[20px] text-center">
+                              {getPrintAreaDesignCount('Top Print')}
                             </span>
                           )}
                         </button>
