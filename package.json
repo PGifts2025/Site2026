@@ -9,10 +9,13 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "stripe-server": "node server/stripe-server.cjs",
-    "dev:full": "concurrently \"npm run dev\" \"npm run stripe-server\""
+    "dev:full": "concurrently \"npm run dev\" \"npm run stripe-server\"",
+    "seed-catalog": "node src/scripts/seedCatalogData.js"
   },
   "dependencies": {
     "@heroicons/react": "^2.2.0",
+    "@react-three/drei": "^10.7.7",
+    "@react-three/fiber": "^9.5.0",
     "@stripe/react-stripe-js": "^5.4.1",
     "@stripe/stripe-js": "^8.6.0",
     "@supabase/auth-ui-react": "^0.4.7",
@@ -26,7 +29,8 @@
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-router-dom": "^7.6.3",
-    "stripe": "^20.0.0"
+    "stripe": "^20.0.0",
+    "three": "^0.182.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.29.0",

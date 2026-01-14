@@ -8,6 +8,7 @@ import productsConfig from '../config/products.json';
 import { applyColorOverlay, needsColorOverlay, getOptimalIntensity } from '../utils/colorOverlay';
 import { cacheColoredImage, getCachedImage } from '../utils/imageCache';
 import { useCart } from '../context/CartContext';
+import WaterBottle3DPreview from '../components/WaterBottle3DPreview';
 import {
   getProductTemplates,
   getPrintAreasByProductView,
@@ -106,6 +107,8 @@ const Designer = () => {
   const [showPrintAreaGuide, setShowPrintAreaGuide] = useState(true);  // Toggle print area guide visibility
   const [showPrintArea, setShowPrintArea] = useState(true);  // Toggle print area rectangle visibility
   const [userDesigns, setUserDesigns] = useState({});  // Track designs per product-color-view combination
+  const [show3DPreview, setShow3DPreview] = useState(false);  // Toggle 3D preview modal
+  const [designTexture, setDesignTexture] = useState(null);  // Current design as texture for 3D preview
 
   // Zoom controls
   const [zoomLevel, setZoomLevel] = useState(1.0);  // 1.0 = 100%
@@ -3524,6 +3527,107 @@ const Designer = () => {
     canvas.renderAll();
   };
 
+  // Generate 3D preview texture from canvas design elements
+  const generate3DPreviewTexture = () => {
+    console.log('[3D Preview] Starting texture generation');
+    console.log('[3D Preview] Canvas exists:', !!canvas);
+
+    if (!canvas) {
+      console.error('[3D Preview] No canvas available');
+      return null;
+    }
+
+    // Get all objects on the canvas
+    const allObjects = canvas.getObjects();
+    console.log('[3D Preview] Total objects on canvas:', allObjects.length);
+
+    // Identify which objects to hide (non-design elements)
+    const objectsToHide = [];
+    const userDesignObjects = [];
+
+    allObjects.forEach(obj => {
+      // Check if this is a non-design object that should be hidden
+      if (
+        obj.id === 'template-image' ||           // Template image
+        obj.name === 'template-image' ||         // Template image (alternate check)
+        obj.id === 'template' ||                 // Template
+        obj.id === 'printAreaOverlay' ||         // Print area overlay
+        obj.id === 'watermark' ||                // Watermark
+        obj.isPrintAreaGuide ||                  // Print area guide flag
+        obj.isLabel ||                           // Label flag
+        obj.name === 'printAreaRect' ||          // Print area rectangle by name
+        obj.name === 'printAreaLabel' ||         // Print area label by name
+        (obj.id && obj.id.startsWith('printArea-')) // Print area elements by ID prefix
+      ) {
+        objectsToHide.push(obj);
+      } else {
+        // This is a user design element
+        userDesignObjects.push(obj);
+      }
+    });
+
+    console.log('[3D Preview] User design objects found:', userDesignObjects.length);
+    console.log('[3D Preview] Objects to hide:', objectsToHide.length);
+    console.log('[3D Preview] Objects being hidden:', objectsToHide.map(obj => obj.id || obj.name || 'unnamed'));
+
+    // Store original visibility states
+    const originalStates = objectsToHide.map(obj => ({
+      obj: obj,
+      visible: obj.visible
+    }));
+
+    // Temporarily hide all non-design objects
+    objectsToHide.forEach(obj => {
+      obj.visible = false;
+    });
+
+    // Set canvas background to transparent
+    const originalBg = canvas.backgroundColor;
+    canvas.backgroundColor = 'transparent';
+
+    canvas.renderAll();
+
+    console.log('[3D Preview] Exporting only user design elements with transparent background');
+
+    // Export only the visible (user design) objects
+    const designDataUrl = canvas.toDataURL({
+      format: 'png',
+      quality: 1,
+      multiplier: 2 // Higher resolution for 3D texture
+    });
+
+    console.log('[3D Preview] Design texture generated, length:', designDataUrl.length);
+    console.log('[3D Preview] Texture preview (first 100 chars):', designDataUrl.substring(0, 100));
+
+    // Store in window for debugging
+    window.designTextureDebug = designDataUrl;
+    console.log('[3D Preview] Texture stored in window.designTextureDebug');
+
+    // Restore canvas background
+    canvas.backgroundColor = originalBg;
+
+    // Restore visibility of all hidden objects
+    originalStates.forEach(({ obj, visible }) => {
+      obj.visible = visible;
+    });
+
+    canvas.renderAll();
+
+    console.log('[3D Preview] Canvas state restored');
+    return designDataUrl;
+  };
+
+  // Open 3D preview modal
+  const open3DPreview = () => {
+    const texture = generate3DPreviewTexture();
+    if (texture) {
+      setDesignTexture(texture);
+      setShow3DPreview(true);
+    } else {
+      alert('Unable to generate 3D preview. Please try again.');
+    }
+  };
+
   // TEMPORARILY DISABLED: Design persistence functions
   // const saveDesign = async () => {
   //   if (!canvas) {
@@ -4094,6 +4198,26 @@ const Designer = () => {
                 </button>
               </div>
             </div>
+
+            {/* 3D Preview (only show for water bottles) */}
+            {selectedProduct === 'water-bottle' && (
+              <div className="bg-white rounded-lg shadow-sm p-6">
+                <h3 className="text-lg font-semibold mb-4">3D Preview</h3>
+                <button
+                  onClick={open3DPreview}
+                  className="w-full px-4 py-3 rounded-md border-2 border-blue-500 bg-blue-50 text-blue-700 text-sm font-medium hover:bg-blue-100 hover:border-blue-600 transition-all flex items-center justify-center gap-2"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                  </svg>
+                  View in 3D
+                </button>
+                <p className="text-xs text-gray-600 text-center mt-2 italic">
+                  See your design on a rotating 3D water bottle
+                </p>
+              </div>
+            )}
 
             {/* Zoom Controls - Desktop only (inside left sidebar) */}
             <div className="hidden lg:block bg-white rounded-lg shadow-sm p-6">
@@ -4682,6 +4806,13 @@ const Designer = () => {
         These will be re-implemented properly in a future update.
         See git history or PROJECT_HANDOVER_COMPLETE.md for the original code.
       */}
+
+      {/* 3D Water Bottle Preview Modal */}
+      <WaterBottle3DPreview
+        designTexture={designTexture}
+        isOpen={show3DPreview}
+        onClose={() => setShow3DPreview(false)}
+      />
     </div>
   );
 };
