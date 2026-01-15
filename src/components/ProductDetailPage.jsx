@@ -22,6 +22,8 @@ import {
   Shield,
   Truck,
   ChevronLeft,
+  ChevronDown,
+  ChevronUp,
   Plus,
   Minus,
   AlertCircle,
@@ -104,6 +106,7 @@ const ProductDetailPage = ({ productSlug }) => {
   const [selectedColor, setSelectedColor] = useState('');
   const [selectedImage, setSelectedImage] = useState(0);
   const [quantity, setQuantity] = useState(48);
+  const [quantityInput, setQuantityInput] = useState('48'); // Display value for input
   const [activeTab, setActiveTab] = useState('details');
   const [isLiked, setIsLiked] = useState(false);
   const [animatePrice, setAnimatePrice] = useState(false);
@@ -116,6 +119,9 @@ const ProductDetailPage = ({ productSlug }) => {
   const [viewingGallery, setViewingGallery] = useState(false);
   const [selectedGalleryImage, setSelectedGalleryImage] = useState(null);
   const [selectedGalleryIndex, setSelectedGalleryIndex] = useState(null);
+
+  // Color Swatches State
+  const [colorsExpanded, setColorsExpanded] = useState(false);
 
   // Data State
   const [loading, setLoading] = useState(true);
@@ -214,6 +220,7 @@ const ProductDetailPage = ({ productSlug }) => {
       // Set initial quantity to min order quantity
       if (data.min_order_quantity) {
         setQuantity(data.min_order_quantity);
+        setQuantityInput(data.min_order_quantity.toString());
       }
 
       setLoading(false);
@@ -262,13 +269,51 @@ const ProductDetailPage = ({ productSlug }) => {
     setSelectedImage(0);
   }, [selectedColor]);
 
+  // Sync quantityInput when quantity changes (from +/- buttons)
+  useEffect(() => {
+    setQuantityInput(quantity.toString());
+  }, [quantity]);
+
   /**
-   * Handle quantity change
+   * Handle quantity change from +/- buttons
    */
   const handleQuantityChange = (value) => {
     const minQty = product?.min_order_quantity || 25;
     const newQuantity = Math.max(minQty, Math.min(10000, value));
     setQuantity(newQuantity);
+  };
+
+  /**
+   * Handle manual input change - allow any value while typing
+   */
+  const handleQuantityInputChange = (e) => {
+    setQuantityInput(e.target.value); // Allow any input while typing
+  };
+
+  /**
+   * Handle blur - validate and enforce minimum
+   */
+  const handleQuantityBlur = () => {
+    const value = parseInt(quantityInput, 10);
+    const minQty = product?.min_order_quantity || 25;
+
+    if (isNaN(value) || value < minQty) {
+      setQuantity(minQty);
+      setQuantityInput(minQty.toString());
+    } else {
+      const validValue = Math.min(10000, value);
+      setQuantity(validValue);
+      setQuantityInput(validValue.toString());
+    }
+  };
+
+  /**
+   * Handle Enter key - same as blur
+   */
+  const handleQuantityKeyDown = (e) => {
+    if (e.key === 'Enter') {
+      e.target.blur(); // Trigger blur to validate
+    }
   };
 
   /**
@@ -677,25 +722,62 @@ const ProductDetailPage = ({ productSlug }) => {
               <div>
                 <h3 className="text-lg font-semibold text-gray-900 mb-4">Choose Color</h3>
                 <div className="flex flex-wrap gap-3">
-                  {colors.map((color) => (
-                    <button
-                      key={color.id}
-                      onClick={() => handleColorSelect(color.color_code)}
-                      disabled={isApplyingOverlay}
-                      className={`relative w-12 h-12 rounded-full border-2 transition-all duration-300 flex items-center justify-center ${
-                        selectedColor === color.color_code
-                          ? 'border-gray-900 shadow-lg scale-110 ring-2 ring-blue-500 ring-offset-2'
-                          : 'border-gray-300 hover:border-gray-400 hover:scale-105'
-                      } ${isApplyingOverlay ? 'opacity-50 cursor-not-allowed' : ''}`}
-                      style={{ backgroundColor: color.hex_value }}
-                      title={color.color_name}
-                    >
-                      {selectedColor === color.color_code && (
-                        <Check className="h-6 w-6 text-white drop-shadow-lg" strokeWidth={3} />
-                      )}
-                    </button>
-                  ))}
+                  {(() => {
+                    const MAX_COLORS_COLLAPSED = 12; // 2 rows of 6
+                    const hasMoreColors = colors.length > MAX_COLORS_COLLAPSED;
+                    const visibleColors = colorsExpanded
+                      ? colors
+                      : colors.slice(0, MAX_COLORS_COLLAPSED);
+
+                    return visibleColors.map((color) => (
+                      <button
+                        key={color.id}
+                        onClick={() => handleColorSelect(color.color_code)}
+                        disabled={isApplyingOverlay}
+                        className={`relative w-12 h-12 rounded-full border-2 transition-all duration-300 flex items-center justify-center ${
+                          selectedColor === color.color_code
+                            ? 'border-gray-900 shadow-lg scale-110 ring-2 ring-blue-500 ring-offset-2'
+                            : 'border-gray-300 hover:border-gray-400 hover:scale-105'
+                        } ${isApplyingOverlay ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        style={{ backgroundColor: color.hex_value }}
+                        title={color.color_name}
+                      >
+                        {selectedColor === color.color_code && (
+                          <Check className="h-6 w-6 text-white drop-shadow-lg" strokeWidth={3} />
+                        )}
+                      </button>
+                    ));
+                  })()}
                 </div>
+
+                {/* See more/less colors button */}
+                {(() => {
+                  const MAX_COLORS_COLLAPSED = 12;
+                  const hasMoreColors = colors.length > MAX_COLORS_COLLAPSED;
+
+                  if (hasMoreColors) {
+                    return (
+                      <button
+                        onClick={() => setColorsExpanded(!colorsExpanded)}
+                        className="text-sm text-blue-600 hover:text-blue-800 mt-3 flex items-center gap-1 font-medium transition-colors"
+                      >
+                        {colorsExpanded ? (
+                          <>
+                            See less colors
+                            <ChevronUp className="w-4 h-4" />
+                          </>
+                        ) : (
+                          <>
+                            See more colors ({colors.length - MAX_COLORS_COLLAPSED} more)
+                            <ChevronDown className="w-4 h-4" />
+                          </>
+                        )}
+                      </button>
+                    );
+                  }
+                  return null;
+                })()}
+
                 <p className="text-sm text-gray-600 mt-3 font-medium">
                   Selected: <span className="text-gray-900">{getSelectedColorObj().color_name || 'N/A'}</span>
                   {isApplyingOverlay && <span className="ml-2 text-blue-600">(Applying color...)</span>}
@@ -795,28 +877,30 @@ const ProductDetailPage = ({ productSlug }) => {
                   {/* Quantity Selector */}
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-3">Quantity</label>
-                    <div className="flex items-center space-x-4">
+                    <div className="flex items-center justify-center gap-2">
                       <button
                         onClick={() => handleQuantityChange(quantity - 1)}
-                        className="p-2 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
+                        className="w-9 h-9 flex items-center justify-center bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors border border-gray-200"
                       >
                         <Minus className="h-4 w-4" />
                       </button>
                       <input
-                        type="number"
-                        value={quantity}
-                        onChange={(e) => handleQuantityChange(parseInt(e.target.value) || product.min_order_quantity)}
-                        className="flex-1 text-center py-3 px-4 border border-gray-300 rounded-lg font-semibold text-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                        min={product.min_order_quantity}
+                        type="text"
+                        value={quantityInput}
+                        onChange={handleQuantityInputChange}
+                        onBlur={handleQuantityBlur}
+                        onKeyDown={handleQuantityKeyDown}
+                        className="w-20 h-9 text-center border border-gray-300 rounded-lg font-semibold text-base focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        placeholder={product?.min_order_quantity?.toString() || '25'}
                       />
                       <button
                         onClick={() => handleQuantityChange(quantity + 1)}
-                        className="p-2 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
+                        className="w-9 h-9 flex items-center justify-center bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors border border-gray-200"
                       >
                         <Plus className="h-4 w-4" />
                       </button>
                     </div>
-                    <p className="text-xs text-gray-500 mt-1">Minimum order: {product.min_order_quantity} units</p>
+                    <p className="text-xs text-gray-500 mt-2 text-center">Minimum order: {product.min_order_quantity} units</p>
                   </div>
 
                   {/* Price Display */}
