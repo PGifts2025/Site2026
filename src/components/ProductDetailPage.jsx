@@ -34,9 +34,71 @@ import {
   checkProductCustomizable,
   getDesignerUrl
 } from '../services/productCatalogService';
-
 const ProductDetailPage = ({ productSlug }) => {
   const navigate = useNavigate();
+
+  /**
+   * Apply STRONG color overlay with 95% intensity for vibrant colors
+   * Copied from Designer.jsx for consistent color rendering
+   * @param {string} imageUrl - URL of white/light template
+   * @param {string} hexColor - Target hex color
+   * @returns {Promise<string>} Blob URL of colored image
+   */
+  const applyStrongColorOverlay = async (imageUrl, hexColor) => {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d', { alpha: true });
+
+        canvas.width = img.width;
+        canvas.height = img.height;
+
+        ctx.drawImage(img, 0, 0);
+
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const data = imageData.data;
+
+        // Parse target color
+        const targetR = parseInt(hexColor.slice(1, 3), 16);
+        const targetG = parseInt(hexColor.slice(3, 5), 16);
+        const targetB = parseInt(hexColor.slice(5, 7), 16);
+
+        console.log('[StrongOverlay] Target RGB:', targetR, targetG, targetB);
+
+        // MUCH MORE AGGRESSIVE COLOR APPLICATION (95% intensity)
+        for (let i = 0; i < data.length; i += 4) {
+          const alpha = data[i + 3];
+
+          if (alpha > 10) {
+            // Calculate luminosity (brightness)
+            const lum = (data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114) / 255;
+
+            // Apply color at 95% intensity (much stronger!)
+            const intensity = 0.95;
+
+            // Blend original with target color
+            data[i] = targetR * lum * intensity + data[i] * (1 - intensity);
+            data[i + 1] = targetG * lum * intensity + data[i + 1] * (1 - intensity);
+            data[i + 2] = targetB * lum * intensity + data[i + 2] * (1 - intensity);
+          }
+        }
+
+        ctx.putImageData(imageData, 0, 0);
+
+        canvas.toBlob((blob) => {
+          const url = URL.createObjectURL(blob);
+          console.log('[StrongOverlay] ✅ Strong overlay complete (95% intensity)');
+          resolve(url);
+        }, 'image/png');
+      };
+
+      img.onerror = reject;
+      img.src = imageUrl;
+    });
+  };
 
   // UI State
   const [selectedColor, setSelectedColor] = useState('');
@@ -46,6 +108,15 @@ const ProductDetailPage = ({ productSlug }) => {
   const [isLiked, setIsLiked] = useState(false);
   const [animatePrice, setAnimatePrice] = useState(false);
 
+  // Color Overlay State (for apparel products)
+  const [overlayImageUrl, setOverlayImageUrl] = useState(null);
+  const [isApplyingOverlay, setIsApplyingOverlay] = useState(false);
+
+  // Gallery Viewing State
+  const [viewingGallery, setViewingGallery] = useState(false);
+  const [selectedGalleryImage, setSelectedGalleryImage] = useState(null);
+  const [selectedGalleryIndex, setSelectedGalleryIndex] = useState(null);
+
   // Data State
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -53,6 +124,8 @@ const ProductDetailPage = ({ productSlug }) => {
   const [pricingTiers, setPricingTiers] = useState([]);
   const [colors, setColors] = useState([]);
   const [images, setImages] = useState([]);
+  const [galleryImages, setGalleryImages] = useState([]);
+  const [productImages, setProductImages] = useState([]);
   const [features, setFeatures] = useState([]);
   const [specifications, setSpecifications] = useState({});
   const [currentPrice, setCurrentPrice] = useState(null);
@@ -93,9 +166,49 @@ const ProductDetailPage = ({ productSlug }) => {
       setFeatures(data.features?.map(f => f.feature_text) || []);
       setSpecifications(data.specifications?.specifications || {});
 
-      // Set initial selected color to first available color
+      // Separate gallery images from product images
+      const gallery = (data.images || [])
+        .filter(img => img.image_type === 'gallery')
+        .sort((a, b) => a.sort_order - b.sort_order);
+
+      const productImgs = (data.images || [])
+        .filter(img => img.image_type === 'product' || !img.image_type);
+
+      setGalleryImages(gallery);
+      setProductImages(productImgs);
+
+      console.log('[ProductDetail] Gallery images:', gallery.length);
+      console.log('[ProductDetail] Product images:', productImgs.length);
+
+      // Set initial selected color - WHITE for apparel, first color for others
+      const apparelSlugs = ['hoodie', 't-shirts', 'polo', 'sweatshirts'];
+      const isApparel = data.category?.slug === 'clothing' || apparelSlugs.includes(data.slug);
+
       if (data.colors && data.colors.length > 0) {
-        setSelectedColor(data.colors[0].color_code);
+        if (isApparel) {
+          // For apparel, default to WHITE color
+          const whiteColor = data.colors.find(c =>
+            c.color_name?.toLowerCase() === 'white' ||
+            c.color_code?.toLowerCase() === 'white'
+          );
+
+          if (whiteColor) {
+            console.log('[ProductDetail] 🎯 APPAREL: Setting white as default color');
+            setSelectedColor(whiteColor.color_code);
+
+            // Set white template URL directly (no overlay needed for white)
+            const whiteTemplateUrl = `https://cbcevjhvgmxrxeeyldza.supabase.co/storage/v1/object/public/product-templates/${data.slug}/white-front.png`;
+            console.log('[ProductDetail] 🎯 Setting white template URL:', whiteTemplateUrl);
+            setOverlayImageUrl(whiteTemplateUrl);
+          } else {
+            console.log('[ProductDetail] ⚠️ White color not found, using first color');
+            setSelectedColor(data.colors[0].color_code);
+          }
+        } else {
+          // For non-apparel, use first color
+          console.log('[ProductDetail] Non-apparel: Setting first color');
+          setSelectedColor(data.colors[0].color_code);
+        }
       }
 
       // Set initial quantity to min order quantity
@@ -144,6 +257,11 @@ const ProductDetailPage = ({ productSlug }) => {
     return () => clearTimeout(timer);
   }, [quantity]);
 
+  // Reset image selection when color changes
+  useEffect(() => {
+    setSelectedImage(0);
+  }, [selectedColor]);
+
   /**
    * Handle quantity change
    */
@@ -188,6 +306,105 @@ const ProductDetailPage = ({ productSlug }) => {
   };
 
   /**
+   * Check if product is apparel (needs color overlay)
+   */
+  const isApparelProduct = () => {
+    if (!product) return false;
+
+    const apparelSlugs = ['hoodie', 't-shirts', 'polo', 'sweatshirts'];
+    return product.category?.slug === 'clothing' || apparelSlugs.includes(product.slug);
+  };
+
+  /**
+   * Get white template URL for apparel products
+   */
+  const getWhiteTemplateUrl = (slug) => {
+    // White templates follow pattern: product-templates/{slug}/white-front.png
+    return `https://cbcevjhvgmxrxeeyldza.supabase.co/storage/v1/object/public/product-templates/${slug}/white-front.png`;
+  };
+
+  /**
+   * Handle gallery thumbnail click
+   */
+  const handleGalleryClick = (image, index) => {
+    setViewingGallery(true);
+    setSelectedGalleryImage(image.medium_url || image.image_url);
+    setSelectedGalleryIndex(index);
+    console.log('[ProductDetail] Viewing gallery image:', image.alt_text || index);
+  };
+
+  /**
+   * Handle color selection - applies overlay for apparel, filters images for generic products
+   */
+  const handleColorSelect = async (colorCode) => {
+    console.log('[handleColorSelect] 🎨 Color changed to:', colorCode);
+    setSelectedColor(colorCode);
+
+    // Reset gallery view when color is selected
+    setViewingGallery(false);
+    setSelectedGalleryImage(null);
+    setSelectedGalleryIndex(null);
+
+    // Find the color object
+    const selectedColorObj = colors.find(c => c.color_code === colorCode);
+    if (!selectedColorObj) {
+      console.log('[handleColorSelect] ⚠️ Color not found:', colorCode);
+      return;
+    }
+
+    console.log('[handleColorSelect] Color object:', selectedColorObj.color_name, selectedColorObj.hex_value);
+
+    // Check if this is an apparel product
+    if (isApparelProduct() && selectedColorObj.hex_value) {
+      const whiteTemplateUrl = getWhiteTemplateUrl(product.slug);
+
+      // Check if selected color is white - skip overlay for white
+      const isWhite = selectedColorObj.color_name?.toLowerCase() === 'white' ||
+                     selectedColorObj.color_code?.toLowerCase() === 'white';
+
+      if (isWhite) {
+        console.log('[handleColorSelect] ✅ WHITE selected - using template directly');
+        console.log('[handleColorSelect] White template URL:', whiteTemplateUrl);
+        setOverlayImageUrl(whiteTemplateUrl);
+        setIsApplyingOverlay(false);
+        return;
+      }
+
+      // For non-white colors, apply overlay
+      setIsApplyingOverlay(true);
+      setOverlayImageUrl(null); // Clear previous overlay
+
+      try {
+        console.log('[ProductDetail] Applying color overlay:', {
+          color: selectedColorObj.color_name,
+          hex: selectedColorObj.hex_value,
+          template: whiteTemplateUrl
+        });
+
+        // Apply strong color overlay (same as Designer)
+        const coloredImageUrl = await applyStrongColorOverlay(
+          whiteTemplateUrl,
+          selectedColorObj.hex_value
+        );
+
+        setOverlayImageUrl(coloredImageUrl);
+
+        console.log('[ProductDetail] ✅ Color overlay applied successfully');
+      } catch (error) {
+        console.error('[ProductDetail] Failed to apply color overlay:', error);
+        // Fallback: clear overlay and show default image
+        setOverlayImageUrl(null);
+      } finally {
+        setIsApplyingOverlay(false);
+      }
+    } else {
+      // Non-apparel: clear overlay (existing image filtering logic will handle it)
+      setOverlayImageUrl(null);
+      setIsApplyingOverlay(false);
+    }
+  };
+
+  /**
    * Get placeholder emoji based on category
    */
   const getPlaceholderEmoji = () => {
@@ -211,9 +428,27 @@ const ProductDetailPage = ({ productSlug }) => {
     return emojiMap[categorySlug] || '📦';
   };
 
+  /**
+   * Get images filtered by selected color
+   * Returns color-specific images if available, otherwise returns all images
+   */
+  const getFilteredImages = () => {
+    if (!images || images.length === 0) return [];
+
+    const selectedColorObj = getSelectedColorObj();
+    if (!selectedColorObj?.id) return images;
+
+    // Filter images for the selected color
+    const colorImages = images.filter(img => img.color_id === selectedColorObj.id);
+
+    // If color-specific images exist, use them; otherwise fall back to all images
+    return colorImages.length > 0 ? colorImages : images;
+  };
+
   const currentTier = getCurrentTier();
   const totalPrice = currentPrice ? currentPrice.total.toFixed(2) : (currentTier.price_per_unit * quantity).toFixed(2);
   const isCustomizable = product ? checkProductCustomizable(product) : false;
+  const filteredImages = getFilteredImages();
 
   // Loading State
   if (loading) {
@@ -312,10 +547,24 @@ const ProductDetailPage = ({ productSlug }) => {
               {/* Main Image */}
               <div className="bg-gradient-to-br from-gray-100 to-gray-200 rounded-3xl p-12 mb-6 aspect-square flex items-center justify-center relative overflow-hidden group">
                 <div className="absolute inset-0 bg-gradient-to-br from-blue-500/10 via-purple-500/10 to-pink-500/10 opacity-0 group-hover:opacity-100 transition-opacity duration-700"></div>
-                {images.length > 0 && images[selectedImage]?.medium_url ? (
+
+                {/* Priority: Gallery image > Color overlay > Filtered product images > Placeholder */}
+                {viewingGallery && selectedGalleryImage ? (
                   <img
-                    src={images[selectedImage].medium_url || images[selectedImage].image_url}
-                    alt={images[selectedImage].alt_text || product.name}
+                    src={selectedGalleryImage}
+                    alt={`${product.name} - Gallery`}
+                    className="max-w-full max-h-full object-contain transform transition-all duration-700 group-hover:scale-110 relative z-10"
+                  />
+                ) : overlayImageUrl ? (
+                  <img
+                    src={overlayImageUrl}
+                    alt={`${product.name} - ${getSelectedColorObj().color_name}`}
+                    className="max-w-full max-h-full object-contain transform transition-all duration-700 group-hover:scale-110 relative z-10"
+                  />
+                ) : filteredImages.length > 0 && filteredImages[selectedImage]?.medium_url ? (
+                  <img
+                    src={filteredImages[selectedImage].medium_url || filteredImages[selectedImage].image_url}
+                    alt={filteredImages[selectedImage].alt_text || product.name}
                     className="max-w-full max-h-full object-contain transform transition-all duration-700 group-hover:scale-110 relative z-10"
                   />
                 ) : (
@@ -324,37 +573,52 @@ const ProductDetailPage = ({ productSlug }) => {
                   </div>
                 )}
 
+                {/* Loading overlay while applying color */}
+                {isApplyingOverlay && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-white/70 backdrop-blur-sm z-20">
+                    <div className="text-center">
+                      <Loader className="h-12 w-12 text-blue-600 animate-spin mx-auto mb-2" />
+                      <p className="text-sm text-gray-600 font-medium">Applying color...</p>
+                    </div>
+                  </div>
+                )}
+
                 {/* Floating elements for visual appeal */}
                 <div className="absolute top-8 right-8 w-4 h-4 bg-blue-400 rounded-full opacity-30 animate-pulse"></div>
                 <div className="absolute bottom-12 left-8 w-6 h-6 bg-purple-400 rounded-full opacity-20 animate-bounce" style={{ animationDelay: '1s' }}></div>
               </div>
 
-              {/* Thumbnail Images */}
-              {images.length > 0 && (
-                <div className="flex space-x-4">
-                  {images.slice(0, 4).map((image, index) => (
-                    <button
-                      key={image.id || index}
-                      onClick={() => setSelectedImage(index)}
-                      className={`flex-1 aspect-square bg-gray-100 rounded-xl p-4 border-2 transition-all duration-300 ${
-                        selectedImage === index
-                          ? 'border-blue-500 shadow-lg shadow-blue-500/25'
-                          : 'border-gray-200 hover:border-gray-300'
-                      }`}
-                    >
-                      {image.thumbnail_url ? (
-                        <img
-                          src={image.thumbnail_url}
-                          alt={image.alt_text || `${product.name} - View ${index + 1}`}
-                          className="w-full h-full object-cover rounded"
-                        />
-                      ) : (
-                        <div className="w-full h-full flex items-center justify-center text-2xl">
-                          {getPlaceholderEmoji()}
-                        </div>
-                      )}
-                    </button>
-                  ))}
+              {/* Gallery Thumbnails - Only show actual gallery images */}
+              {galleryImages.length > 0 && (
+                <div>
+                  <h4 className="text-sm font-semibold text-gray-700 mb-3">Gallery</h4>
+                  <div className="flex space-x-4">
+                    {/* Gallery Image Thumbnails - show up to 4 images */}
+                    {galleryImages.slice(0, 4).map((image, index) => (
+                      <button
+                        key={image.id || index}
+                        onClick={() => handleGalleryClick(image, index)}
+                        className={`flex-1 aspect-square bg-gray-100 rounded-xl p-4 border-2 transition-all duration-300 ${
+                          viewingGallery && selectedGalleryIndex === index
+                            ? 'border-blue-500 shadow-lg shadow-blue-500/25 ring-2 ring-blue-500 ring-offset-2'
+                            : 'border-gray-200 hover:border-gray-300'
+                        }`}
+                        title={image.alt_text || `Gallery ${index + 1}`}
+                      >
+                        {image.thumbnail_url || image.image_url ? (
+                          <img
+                            src={image.thumbnail_url || image.image_url}
+                            alt={image.alt_text || `Gallery ${index + 1}`}
+                            className="w-full h-full object-cover rounded"
+                          />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center text-2xl">
+                            📷
+                          </div>
+                        )}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               )}
 
@@ -412,26 +676,29 @@ const ProductDetailPage = ({ productSlug }) => {
             {colors.length > 0 && (
               <div>
                 <h3 className="text-lg font-semibold text-gray-900 mb-4">Choose Color</h3>
-                <div className="flex space-x-3">
+                <div className="flex flex-wrap gap-3">
                   {colors.map((color) => (
                     <button
                       key={color.id}
-                      onClick={() => setSelectedColor(color.color_code)}
-                      className={`relative w-12 h-12 rounded-full border-2 transition-all duration-300 ${
+                      onClick={() => handleColorSelect(color.color_code)}
+                      disabled={isApplyingOverlay}
+                      className={`relative w-12 h-12 rounded-full border-2 transition-all duration-300 flex items-center justify-center ${
                         selectedColor === color.color_code
-                          ? 'border-gray-400 shadow-lg scale-110'
-                          : 'border-gray-200 hover:border-gray-300 hover:scale-105'
-                      }`}
+                          ? 'border-gray-900 shadow-lg scale-110 ring-2 ring-blue-500 ring-offset-2'
+                          : 'border-gray-300 hover:border-gray-400 hover:scale-105'
+                      } ${isApplyingOverlay ? 'opacity-50 cursor-not-allowed' : ''}`}
                       style={{ backgroundColor: color.hex_value }}
+                      title={color.color_name}
                     >
                       {selectedColor === color.color_code && (
-                        <div className="absolute inset-0 rounded-full border-2 border-white shadow-inner"></div>
+                        <Check className="h-6 w-6 text-white drop-shadow-lg" strokeWidth={3} />
                       )}
                     </button>
                   ))}
                 </div>
-                <p className="text-sm text-gray-600 mt-2">
-                  Selected: {getSelectedColorObj().color_name || 'N/A'}
+                <p className="text-sm text-gray-600 mt-3 font-medium">
+                  Selected: <span className="text-gray-900">{getSelectedColorObj().color_name || 'N/A'}</span>
+                  {isApplyingOverlay && <span className="ml-2 text-blue-600">(Applying color...)</span>}
                 </p>
               </div>
             )}

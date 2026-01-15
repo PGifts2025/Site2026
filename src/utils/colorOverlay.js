@@ -45,9 +45,9 @@ function loadImage(url) {
  * @param {CanvasRenderingContext2D} ctx - Canvas context
  * @param {ImageData} imageData - Image data to process
  * @param {{r: number, g: number, b: number}} targetColor - Target RGB color
- * @param {number} intensity - Blend intensity (0-1, default 0.85)
+ * @param {number} intensity - Blend intensity (0-1, default 0.95)
  */
-function multiplyBlend(ctx, imageData, targetColor, intensity = 0.85) {
+function multiplyBlend(ctx, imageData, targetColor, intensity = 0.95) {
   const data = imageData.data;
 
   for (let i = 0; i < data.length; i += 4) {
@@ -105,7 +105,7 @@ function preservePrintAreas(ctx, imageData, preserveAreas = []) {
  * @param {string} baseImageUrl - URL of the base template image (white/neutral)
  * @param {string} hexColor - Target hex color (e.g., '#FF0000')
  * @param {Object} options - Configuration options
- * @param {number} options.intensity - Blend intensity (0-1, default 0.85)
+ * @param {number} options.intensity - Blend intensity (0-1, default 0.95)
  * @param {Array} options.preserveAreas - Print areas to preserve (optional)
  * @param {number} options.maxWidth - Max width for output (default: original)
  * @param {string} options.outputFormat - Output format: 'blob' or 'dataUrl' (default: 'blob')
@@ -117,7 +117,7 @@ export async function applyColorOverlay(
   options = {}
 ) {
   const {
-    intensity = 0.85,
+    intensity = 0.95,
     preserveAreas = [],
     maxWidth = null,
     outputFormat = 'blob'
