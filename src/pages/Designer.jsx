@@ -9,6 +9,7 @@ import { applyColorOverlay, needsColorOverlay, getOptimalIntensity } from '../ut
 import { cacheColoredImage, getCachedImage } from '../utils/imageCache';
 import { useCart } from '../context/CartContext';
 import WaterBottle3DPreview from '../components/WaterBottle3DPreview';
+import ChiCup3DPreview from '../components/ChiCup3DPreview';
 import {
   getProductTemplates,
   getPrintAreasByProductView,
@@ -4199,8 +4200,8 @@ const Designer = () => {
               </div>
             </div>
 
-            {/* 3D Preview (only show for water bottles) */}
-            {selectedProduct === 'water-bottle' && (
+            {/* 3D Preview (show for water bottles and chi cups) */}
+            {(selectedProduct === 'water-bottle' || selectedProduct === 'chi-cup') && (
               <div className="bg-white rounded-lg shadow-sm p-6">
                 <h3 className="text-lg font-semibold mb-4">3D Preview</h3>
                 <button
@@ -4214,7 +4215,7 @@ const Designer = () => {
                   View in 3D
                 </button>
                 <p className="text-xs text-gray-600 text-center mt-2 italic">
-                  See your design on a rotating 3D water bottle
+                  See your design on a rotating 3D {selectedProduct === 'water-bottle' ? 'water bottle' : 'cup'}
                 </p>
               </div>
             )}
@@ -4808,11 +4809,23 @@ const Designer = () => {
       */}
 
       {/* 3D Water Bottle Preview Modal */}
-      <WaterBottle3DPreview
-        designTexture={designTexture}
-        isOpen={show3DPreview}
-        onClose={() => setShow3DPreview(false)}
-      />
+      {selectedProduct === 'water-bottle' && (
+        <WaterBottle3DPreview
+          designTexture={designTexture}
+          isOpen={show3DPreview}
+          onClose={() => setShow3DPreview(false)}
+        />
+      )}
+
+      {/* 3D Chi Cup Preview Modal */}
+      {selectedProduct === 'chi-cup' && (
+        <ChiCup3DPreview
+          designTexture={designTexture}
+          lidColor="#4A3728"
+          isOpen={show3DPreview}
+          onClose={() => setShow3DPreview(false)}
+        />
+      )}
     </div>
   );
 };

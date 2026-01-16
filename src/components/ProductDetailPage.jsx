@@ -36,6 +36,15 @@ import {
   checkProductCustomizable,
   getDesignerUrl
 } from '../services/productCatalogService';
+
+// Helper constants and functions for apparel size selector
+const APPAREL_SIZES = ['S', 'M', 'L', 'XL', 'XXL'];
+const isApparelProduct = (product) => {
+  if (!product) return false;
+  const apparelSlugs = ['hoodie', 't-shirts', 'polo', 'sweatshirts'];
+  return apparelSlugs.includes(product.slug);
+};
+
 const ProductDetailPage = ({ productSlug }) => {
   const navigate = useNavigate();
 
@@ -135,6 +144,54 @@ const ProductDetailPage = ({ productSlug }) => {
   const [features, setFeatures] = useState([]);
   const [specifications, setSpecifications] = useState({});
   const [currentPrice, setCurrentPrice] = useState(null);
+  // Multi-color selections for apparel (replaces simple sizeQuantities)
+  const [colorSelections, setColorSelections] = useState([
+    {
+      id: 1,
+      colorId: null,
+      colorName: '',
+      colorHex: '',
+      sizes: { S: 0, M: 0, L: 0, XL: 0, XXL: 0 }
+    }
+  ]);
+  const [nextColorId, setNextColorId] = useState(2);
+  const [showAllColors, setShowAllColors] = useState(false);
+
+  // Get available colors (exclude already selected ones)
+  const getAvailableColors = (currentSelectionId) => {
+    const selectedColorIds = colorSelections
+      .filter(sel => sel.id !== currentSelectionId && sel.colorId)
+      .map(sel => sel.colorId);
+
+    return colors.filter(color => !selectedColorIds.includes(color.id));
+  };
+
+  // Calculate subtotal for a single color row
+  const getColorSubtotal = (selection) => {
+    return Object.values(selection.sizes).reduce((sum, qty) => sum + qty, 0);
+  };
+
+  // Check if can add more colors
+  const canAddMoreColors = () => {
+    const usedColors = colorSelections.filter(sel => sel.colorId).length;
+    return usedColors < colors.length;
+  };
+
+  // Check if a row has any quantities entered
+  const hasQuantities = (selection) => {
+    return Object.values(selection.sizes).some(qty => qty > 0);
+  };
+
+  // Check if order is valid for apparel
+  const isOrderValid = () => {
+    if (totalQuantity < (product?.min_order_quantity || 0)) return false;
+
+    if (isApparelProduct(product)) {
+      return colorSelections.some(sel => sel.colorId && getColorSubtotal(sel) > 0);
+    }
+
+    return true;
+  };
 
   /**
    * Validate required props
@@ -237,8 +294,14 @@ const ProductDetailPage = ({ productSlug }) => {
   const updatePrice = async () => {
     if (!product) return;
 
+    const qty = isApparelProduct(product)
+      ? colorSelections.reduce((total, selection) => {
+          return total + getColorSubtotal(selection);
+        }, 0)
+      : quantity;
+
     try {
-      const priceInfo = await calculatePriceForQuantity(product.id, quantity);
+      const priceInfo = await calculatePriceForQuantity(product.id, qty);
       setCurrentPrice(priceInfo);
     } catch (err) {
       console.error('Error calculating price:', err);
@@ -255,7 +318,7 @@ const ProductDetailPage = ({ productSlug }) => {
     if (product) {
       updatePrice();
     }
-  }, [quantity, product]);
+  }, [quantity, product, colorSelections]);
 
   // Animate price changes
   useEffect(() => {
@@ -317,6 +380,109 @@ const ProductDetailPage = ({ productSlug }) => {
   };
 
   /**
+   * Handle size quantity change for apparel products
+   */
+  const handleSizeQuantityChange = (size, value) => {
+    const qty = value === '' ? 0 : Math.max(0, parseInt(value) || 0);
+    setSizeQuantities(prev => ({
+      ...prev,
+      [size]: qty
+    }));
+  };
+
+  /**
+   * Handle size quantity blur - validate input
+   */
+  const handleSizeQuantityBlur = (size, value) => {
+    const qty = value === '' ? 0 : Math.max(0, parseInt(value) || 0);
+    setSizeQuantities(prev => ({
+      ...prev,
+      [size]: qty
+    }));
+  };
+
+  // Handle color selection for a row
+  const handleColorSelectRow = (selectionId, colorId) => {
+    console.log('[Color Select] Selection ID:', selectionId, 'Color ID:', colorId);
+    const selectedColor = colors.find(c => c.id === parseInt(colorId));
+    console.log('[Color Select] Found color:', selectedColor);
+
+    setColorSelections(prev => {
+      const updated = prev.map(sel =>
+        sel.id === selectionId
+          ? {
+              ...sel,
+              colorId: parseInt(colorId),
+              colorName: selectedColor?.color_name || '',
+              colorHex: selectedColor?.hex_value || selectedColor?.color_code || ''
+            }
+          : sel
+      );
+      console.log('[Color Select] Updated selections:', updated);
+      return updated;
+    });
+  };
+
+  // Handle size quantity change for a specific color row
+  const handleColorSizeChange = (selectionId, size, value) => {
+    const numValue = value === '' ? 0 : Math.max(0, parseInt(value) || 0);
+    setColorSelections(prev => prev.map(sel =>
+      sel.id === selectionId
+        ? { ...sel, sizes: { ...sel.sizes, [size]: numValue } }
+        : sel
+    ));
+  };
+
+  // Add new color row
+  const handleAddColor = () => {
+    if (!canAddMoreColors()) return;
+
+    setColorSelections(prev => [...prev, {
+      id: nextColorId,
+      colorId: null,
+      colorName: '',
+      colorHex: '',
+      sizes: { S: 0, M: 0, L: 0, XL: 0, XXL: 0 }
+    }]);
+    setNextColorId(prev => prev + 1);
+  };
+
+  // Remove color row
+  const handleRemoveColor = (selectionId) => {
+    if (colorSelections.length <= 1) {
+      setColorSelections([{
+        id: nextColorId,
+        colorId: null,
+        colorName: '',
+        colorHex: '',
+        sizes: { S: 0, M: 0, L: 0, XL: 0, XXL: 0 }
+      }]);
+      setNextColorId(prev => prev + 1);
+      return;
+    }
+    setColorSelections(prev => prev.filter(sel => sel.id !== selectionId));
+  };
+
+  // Handle clicking a color swatch in Available Colors section
+  const handleColorSwatchClick = (color) => {
+    console.log('[Color Swatch Click] Color:', color.color_name);
+
+    // Update the selected color for image display
+    setSelectedColor(color.color_code);
+
+    // Trigger color overlay for apparel
+    if (isApparelProduct(product)) {
+      handleColorSelect(color.color_code);
+    }
+
+    // If first color row has no color selected, auto-fill it
+    if (colorSelections.length > 0 && !colorSelections[0].colorId) {
+      console.log('[Color Swatch Click] Auto-filling first row with color');
+      handleColorSelectRow(colorSelections[0].id, color.id);
+    }
+  };
+
+  /**
    * Get current pricing tier for display
    */
   const getCurrentTier = () => {
@@ -324,8 +490,14 @@ const ProductDetailPage = ({ productSlug }) => {
       return { price_per_unit: 0 };
     }
 
+    const qty = isApparelProduct(product)
+      ? colorSelections.reduce((total, selection) => {
+          return total + getColorSubtotal(selection);
+        }, 0)
+      : quantity;
+
     return pricingTiers.find(tier =>
-      quantity >= tier.min_quantity && (tier.max_quantity === null || quantity <= tier.max_quantity)
+      qty >= tier.min_quantity && (tier.max_quantity === null || qty <= tier.max_quantity)
     ) || pricingTiers[0];
   };
 
@@ -491,7 +663,12 @@ const ProductDetailPage = ({ productSlug }) => {
   };
 
   const currentTier = getCurrentTier();
-  const totalPrice = currentPrice ? currentPrice.total.toFixed(2) : (currentTier.price_per_unit * quantity).toFixed(2);
+  const totalQuantity = isApparelProduct(product)
+    ? colorSelections.reduce((total, selection) => {
+        return total + getColorSubtotal(selection);
+      }, 0)
+    : quantity;
+  const totalPrice = currentPrice ? currentPrice.total.toFixed(2) : (currentTier.price_per_unit * totalQuantity).toFixed(2);
   const isCustomizable = product ? checkProductCustomizable(product) : false;
   const filteredImages = getFilteredImages();
 
@@ -574,12 +751,12 @@ const ProductDetailPage = ({ productSlug }) => {
         </div>
       </header>
 
-      <div className="max-w-7xl mx-auto px-6 py-8">
-        <div className="grid grid-cols-12 gap-8">
+      <div className="max-w-7xl mx-auto px-4 lg:px-8 py-8">
+        <div className="flex flex-col lg:grid lg:grid-cols-12 lg:gap-8 gap-4">
 
           {/* Product Images */}
-          <div className="col-span-5">
-            <div className="sticky top-24">
+          <div className="lg:col-span-5 w-full">
+            <div className="lg:sticky lg:top-24">
               {/* Badge */}
               {product.badge && (
                 <div className="absolute top-4 left-4 z-10">
@@ -590,7 +767,7 @@ const ProductDetailPage = ({ productSlug }) => {
               )}
 
               {/* Main Image */}
-              <div className="bg-gradient-to-br from-gray-100 to-gray-200 rounded-3xl p-12 mb-6 aspect-square flex items-center justify-center relative overflow-hidden group">
+              <div className="bg-gradient-to-br from-gray-100 to-gray-200 rounded-3xl p-12 mb-6 aspect-square flex items-center justify-center relative overflow-hidden group max-h-[50vh] lg:max-h-none">
                 <div className="absolute inset-0 bg-gradient-to-br from-blue-500/10 via-purple-500/10 to-pink-500/10 opacity-0 group-hover:opacity-100 transition-opacity duration-700"></div>
 
                 {/* Priority: Gallery image > Color overlay > Filtered product images > Placeholder */}
@@ -637,7 +814,7 @@ const ProductDetailPage = ({ productSlug }) => {
               {galleryImages.length > 0 && (
                 <div>
                   <h4 className="text-sm font-semibold text-gray-700 mb-3">Gallery</h4>
-                  <div className="flex space-x-4">
+                  <div className="flex space-x-4 overflow-x-auto pb-2 lg:overflow-x-visible">
                     {/* Gallery Image Thumbnails - show up to 4 images */}
                     {galleryImages.slice(0, 4).map((image, index) => (
                       <button
@@ -692,11 +869,11 @@ const ProductDetailPage = ({ productSlug }) => {
           </div>
 
           {/* Product Info */}
-          <div className="col-span-4 space-y-8">
+          <div className="lg:col-span-4 w-full space-y-8">
 
             {/* Basic Info */}
             <div>
-              <h1 className="text-4xl font-bold text-gray-900 mb-2">{product.name}</h1>
+              <h1 className="text-2xl lg:text-4xl font-bold text-gray-900 mb-2">{product.name}</h1>
               {product.subtitle && <p className="text-xl text-gray-600 mb-4">{product.subtitle}</p>}
 
               {/* Rating */}
@@ -717,8 +894,8 @@ const ProductDetailPage = ({ productSlug }) => {
               {product.description && <p className="text-gray-700 leading-relaxed">{product.description}</p>}
             </div>
 
-            {/* Color Selection */}
-            {colors.length > 0 && (
+            {/* Color Selection - Hide for apparel products */}
+            {!isApparelProduct(product) && colors.length > 0 && (
               <div>
                 <h3 className="text-lg font-semibold text-gray-900 mb-4">Choose Color</h3>
                 <div className="flex flex-wrap gap-3">
@@ -782,6 +959,52 @@ const ProductDetailPage = ({ productSlug }) => {
                   Selected: <span className="text-gray-900">{getSelectedColorObj().color_name || 'N/A'}</span>
                   {isApplyingOverlay && <span className="ml-2 text-blue-600">(Applying color...)</span>}
                 </p>
+              </div>
+            )}
+
+            {/* For apparel, show available colors as reference */}
+            {isApparelProduct(product) && colors.length > 0 && (
+              <div className='mb-6'>
+                <h3 className='text-sm font-medium text-gray-700 mb-3'>Available Colors</h3>
+                <div className='flex flex-wrap gap-2'>
+                  {(showAllColors ? colors : colors.slice(0, 12)).map(color => (
+                    <button
+                      key={color.id}
+                      onClick={() => handleColorSwatchClick(color)}
+                      className={`w-8 h-8 rounded-full border-2 transition-all hover:scale-110 hover:shadow-md
+                        ${selectedColor === color.color_code
+                          ? 'border-blue-500 ring-2 ring-blue-200'
+                          : 'border-gray-300 hover:border-gray-400'}`}
+                      style={{ backgroundColor: color.hex_value || color.color_code }}
+                      title={color.color_name}
+                    />
+                  ))}
+                </div>
+
+                {/* See more / Show less toggle */}
+                {colors.length > 12 && (
+                  <button
+                    onClick={() => setShowAllColors(!showAllColors)}
+                    className='text-sm text-blue-600 hover:text-blue-800 mt-2 flex items-center gap-1'
+                  >
+                    {showAllColors ? 'Show less' : `See more colors (${colors.length - 12} more)`}
+                    <svg
+                      className={`w-4 h-4 transition-transform ${showAllColors ? 'rotate-180' : ''}`}
+                      fill='none'
+                      stroke='currentColor'
+                      viewBox='0 0 24 24'
+                    >
+                      <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M19 9l-7 7-7-7' />
+                    </svg>
+                  </button>
+                )}
+
+                {/* Selected color name */}
+                {selectedColor && (
+                  <p className='text-sm text-gray-600 mt-2'>
+                    Selected: <span className='font-medium'>{getSelectedColorObj().color_name}</span>
+                  </p>
+                )}
               </div>
             )}
 
@@ -862,8 +1085,8 @@ const ProductDetailPage = ({ productSlug }) => {
           </div>
 
           {/* Pricing Panel */}
-          <div className="col-span-3">
-            <div className="sticky top-24">
+          <div className="lg:col-span-3 w-full">
+            <div className="lg:sticky lg:top-24">
               <div className="bg-white rounded-3xl shadow-xl border border-gray-200/50 overflow-hidden">
 
                 {/* Header */}
@@ -872,35 +1095,194 @@ const ProductDetailPage = ({ productSlug }) => {
                   <p className="text-blue-100 text-sm">Bulk pricing available</p>
                 </div>
 
-                <div className="p-6 space-y-6">
+                <div className="p-4 lg:p-6 space-y-6">
 
                   {/* Quantity Selector */}
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-3">Quantity</label>
-                    <div className="flex items-center justify-center gap-2">
-                      <button
-                        onClick={() => handleQuantityChange(quantity - 1)}
-                        className="w-9 h-9 flex items-center justify-center bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors border border-gray-200"
-                      >
-                        <Minus className="h-4 w-4" />
-                      </button>
-                      <input
-                        type="text"
-                        value={quantityInput}
-                        onChange={handleQuantityInputChange}
-                        onBlur={handleQuantityBlur}
-                        onKeyDown={handleQuantityKeyDown}
-                        className="w-20 h-9 text-center border border-gray-300 rounded-lg font-semibold text-base focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                        placeholder={product?.min_order_quantity?.toString() || '25'}
-                      />
-                      <button
-                        onClick={() => handleQuantityChange(quantity + 1)}
-                        className="w-9 h-9 flex items-center justify-center bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors border border-gray-200"
-                      >
-                        <Plus className="h-4 w-4" />
-                      </button>
-                    </div>
-                    <p className="text-xs text-gray-500 mt-2 text-center">Minimum order: {product.min_order_quantity} units</p>
+                    {isApparelProduct(product) ? (
+                      <div className='space-y-4'>
+                        <label className='block text-sm font-medium text-gray-700'>
+                          Configure Your Order
+                        </label>
+
+                        {/* Color Rows */}
+                        <div className='space-y-4'>
+                          {colorSelections.map((selection, index) => (
+                            <div
+                              key={selection.id}
+                              className={`p-4 rounded-xl border space-y-3 transition-all
+                                ${selection.colorHex
+                                  ? 'bg-white border-l-4 border-gray-200'
+                                  : 'bg-gray-50 border-gray-200'}`}
+                              style={selection.colorHex ? { borderLeftColor: selection.colorHex } : {}}
+                            >
+                              {/* Color Header Row */}
+                              <div className='flex items-center justify-between gap-3'>
+                                {/* Color label with swatch */}
+                                <div className='flex items-center gap-2'>
+                                  <span className='text-xs font-medium text-gray-500'>Color {index + 1}</span>
+                                  {selection.colorHex && (
+                                    <div
+                                      className='w-5 h-5 rounded-full border-2 border-white shadow-sm ring-1 ring-gray-200'
+                                      style={{ backgroundColor: selection.colorHex }}
+                                      title={selection.colorName}
+                                    />
+                                  )}
+                                </div>
+
+                                {/* Remove Button */}
+                                <button
+                                  onClick={() => handleRemoveColor(selection.id)}
+                                  className='p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50
+                                             rounded-lg transition-colors'
+                                  title='Remove this color'
+                                >
+                                  <svg className='w-4 h-4' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
+                                    <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16' />
+                                  </svg>
+                                </button>
+                              </div>
+
+                              {/* Color Dropdown - full width on its own row */}
+                              <div className='relative'>
+                                <select
+                                  value={selection.colorId || ''}
+                                  onChange={(e) => handleColorSelectRow(selection.id, e.target.value)}
+                                  className='w-full appearance-none bg-white border border-gray-300 rounded-lg
+                                             py-2.5 pl-10 pr-8 text-sm font-medium focus:ring-2
+                                             focus:ring-blue-500 focus:border-transparent cursor-pointer'
+                                >
+                                  <option value=''>Select a color...</option>
+                                  {getAvailableColors(selection.id).map(color => (
+                                    <option key={color.id} value={color.id}>
+                                      {color.color_name}
+                                    </option>
+                                  ))}
+                                </select>
+                                {/* Color swatch preview in dropdown */}
+                                <div
+                                  className='absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full border border-gray-300'
+                                  style={{ backgroundColor: selection.colorHex || '#e5e7eb' }}
+                                />
+                                {/* Dropdown arrow */}
+                                <div className='absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none'>
+                                  <svg className='w-4 h-4 text-gray-400' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
+                                    <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M19 9l-7 7-7-7' />
+                                  </svg>
+                                </div>
+                              </div>
+
+                              {/* Size Inputs - Only show if color is selected */}
+                              {selection.colorId ? (
+                                <>
+                                  {console.log('[Render] Showing size inputs for selection', selection.id, 'colorId:', selection.colorId)}
+                                  <div className='grid grid-cols-5 gap-1.5 sm:gap-2 lg:gap-3'>
+                                    {['S', 'M', 'L', 'XL', 'XXL'].map((size) => (
+                                      <div key={size} className='text-center'>
+                                        <label className='block text-[10px] sm:text-xs font-semibold text-gray-500 mb-1'>
+                                          {size}
+                                        </label>
+                                        <input
+                                          type='number'
+                                          min='0'
+                                          value={selection.sizes[size] || ''}
+                                          onChange={(e) => handleColorSizeChange(selection.id, size, e.target.value)}
+                                          placeholder='0'
+                                          className='w-full text-center py-2 sm:py-2.5 px-0.5 sm:px-1
+                                                     border border-gray-300 rounded-lg
+                                                     text-xs sm:text-sm font-semibold
+                                                     focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white
+                                                     [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none'
+                                        />
+                                      </div>
+                                    ))}
+                                  </div>
+
+                                  {/* Subtotal for this color */}
+                                  <div className='flex justify-between items-center text-sm pt-2 border-t border-gray-200'>
+                                    <span className='text-gray-500'>
+                                      {selection.colorName} subtotal:
+                                    </span>
+                                    <span className='font-semibold text-gray-700'>
+                                      {getColorSubtotal(selection)} units
+                                    </span>
+                                  </div>
+                                </>
+                              ) : (
+                                console.log('[Render] NOT showing size inputs for selection', selection.id, 'colorId:', selection.colorId)
+                              )}
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* Add Another Color Button */}
+                        {canAddMoreColors() && (
+                          <button
+                            onClick={handleAddColor}
+                            className='w-full py-3 border-2 border-dashed border-gray-300 rounded-xl
+                                       text-sm font-medium text-gray-600 hover:border-blue-400
+                                       hover:text-blue-600 hover:bg-blue-50 transition-all
+                                       flex items-center justify-center gap-2'
+                          >
+                            <svg className='w-5 h-5' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
+                              <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M12 6v6m0 0v6m0-6h6m-6 0H6' />
+                            </svg>
+                            Add Another Color
+                          </button>
+                        )}
+
+                        {/* Combined Total Display */}
+                        <div className='p-4 bg-blue-50 rounded-xl border border-blue-200'>
+                          <div className='flex justify-between items-center'>
+                            <span className='text-sm font-medium text-blue-800'>Combined Total:</span>
+                            <span className='text-xl font-bold text-blue-900'>{totalQuantity} units</span>
+                          </div>
+
+                          {/* Minimum order warning */}
+                          {totalQuantity > 0 && totalQuantity < (product?.min_order_quantity || 0) && (
+                            <p className='text-xs text-amber-600 mt-2 flex items-center gap-1'>
+                              <AlertCircle className="h-3 w-3" />
+                              Minimum order: {product.min_order_quantity} units (add {product.min_order_quantity - totalQuantity} more)
+                            </p>
+                          )}
+
+                          {totalQuantity === 0 && (
+                            <p className='text-xs text-blue-600 mt-2'>
+                              Minimum order: {product?.min_order_quantity || 25} units total across all sizes and colors
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      // Keep existing single quantity selector for non-apparel
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-3">Quantity</label>
+                        <div className="flex items-center justify-center gap-2">
+                          <button
+                            onClick={() => handleQuantityChange(quantity - 1)}
+                            className="w-9 h-9 flex items-center justify-center bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors border border-gray-200"
+                          >
+                            <Minus className="h-4 w-4" />
+                          </button>
+                          <input
+                            type="text"
+                            value={quantityInput}
+                            onChange={handleQuantityInputChange}
+                            onBlur={handleQuantityBlur}
+                            onKeyDown={handleQuantityKeyDown}
+                            className="w-20 h-9 text-center border border-gray-300 rounded-lg font-semibold text-base focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            placeholder={product?.min_order_quantity?.toString() || '25'}
+                          />
+                          <button
+                            onClick={() => handleQuantityChange(quantity + 1)}
+                            className="w-9 h-9 flex items-center justify-center bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors border border-gray-200"
+                          >
+                            <Plus className="h-4 w-4" />
+                          </button>
+                        </div>
+                        <p className="text-xs text-gray-500 mt-2 text-center">Minimum order: {product?.min_order_quantity || 25} units</p>
+                      </div>
+                    )}
                   </div>
 
                   {/* Price Display */}
@@ -928,7 +1310,7 @@ const ProductDetailPage = ({ productSlug }) => {
                           <div
                             key={tier.id || index}
                             className={`flex justify-between items-center p-3 rounded-lg transition-all duration-300 ${
-                              quantity >= tier.min_quantity && (tier.max_quantity === null || quantity <= tier.max_quantity)
+                              totalQuantity >= tier.min_quantity && (tier.max_quantity === null || totalQuantity <= tier.max_quantity)
                                 ? 'bg-blue-100 border-2 border-blue-300 shadow-md'
                                 : 'bg-gray-50 border border-gray-200'
                             }`}
@@ -947,9 +1329,18 @@ const ProductDetailPage = ({ productSlug }) => {
 
                   {/* Action Buttons */}
                   <div className="space-y-3">
-                    <button className="w-full bg-gradient-to-r from-blue-600 via-purple-600 to-blue-700 text-white py-4 rounded-xl font-semibold hover:from-blue-700 hover:via-purple-700 hover:to-blue-800 transition-all duration-300 shadow-lg hover:shadow-xl transform hover:scale-105 flex items-center justify-center space-x-2">
+                    <button
+                      disabled={!isOrderValid()}
+                      className={`w-full py-4 rounded-xl font-semibold transition-all duration-300 shadow-lg hover:shadow-xl transform hover:scale-105 flex items-center justify-center space-x-2 ${
+                        !isOrderValid()
+                          ? 'bg-gray-300 cursor-not-allowed text-gray-500'
+                          : 'bg-gradient-to-r from-blue-600 via-purple-600 to-blue-700 text-white hover:from-blue-700 hover:via-purple-700 hover:to-blue-800'
+                      }`}
+                    >
                       <ShoppingCart className="h-5 w-5" />
-                      <span>Add to Quote</span>
+                      <span>{!isOrderValid()
+                        ? `Add ${(product?.min_order_quantity || 25) - totalQuantity} more units`
+                        : 'Add to Quote'}</span>
                     </button>
 
                     <button className="w-full border-2 border-gray-300 text-gray-700 py-4 rounded-xl font-semibold hover:border-gray-400 hover:bg-gray-50 transition-all duration-300">
