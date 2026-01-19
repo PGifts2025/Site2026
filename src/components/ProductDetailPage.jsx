@@ -160,8 +160,11 @@ const ProductDetailPage = ({ productSlug }) => {
   // Get available colors (exclude already selected ones)
   const getAvailableColors = (currentSelectionId) => {
     const selectedColorIds = colorSelections
-      .filter(sel => sel.id !== currentSelectionId && sel.colorId)
-      .map(sel => sel.colorId);
+      .filter(sel => sel.id !== currentSelectionId && sel.colorId && sel.colorId !== '')
+      .map(sel => sel.colorId);  // These are UUID strings
+
+    console.log('[Available Colors] Selected color IDs:', selectedColorIds);
+    console.log('[Available Colors] All color IDs:', colors.map(c => c.id));
 
     return colors.filter(color => !selectedColorIds.includes(color.id));
   };
@@ -202,6 +205,16 @@ const ProductDetailPage = ({ productSlug }) => {
       setLoading(false);
     }
   }, [productSlug]);
+
+  // Debug: Log when colors are loaded from database
+  useEffect(() => {
+    if (colors && colors.length > 0) {
+      console.log('[ProductDetail] Product colors loaded:', colors.length);
+      console.log('[ProductDetail] Sample color:', colors[0]);
+      console.log('[ProductDetail] Color ID type:', typeof colors[0]?.id);
+      console.log('[ProductDetail] All color IDs:', colors.map(c => c.id));
+    }
+  }, [colors]);
 
   /**
    * Load product data from database
@@ -404,17 +417,28 @@ const ProductDetailPage = ({ productSlug }) => {
   // Handle color selection for a row
   const handleColorSelectRow = (selectionId, colorId) => {
     console.log('[Color Select] Selection ID:', selectionId, 'Color ID:', colorId);
-    const selectedColor = colors.find(c => c.id === parseInt(colorId));
+    console.log('[Color Select] Color ID type:', typeof colorId);
+
+    // Keep colorId as string - UUIDs are strings, don't use parseInt!
+    const selectedColor = colors.find(c => c.id === colorId);
+
     console.log('[Color Select] Found color:', selectedColor);
+    console.log('[Color Select] Available colors:', colors.map(c => ({ id: c.id, name: c.color_name })));
+
+    if (!selectedColor) {
+      console.error('[Color Select] Color not found! colorId:', colorId);
+      console.error('[Color Select] Available color IDs:', colors.map(c => c.id));
+      return;
+    }
 
     setColorSelections(prev => {
       const updated = prev.map(sel =>
         sel.id === selectionId
           ? {
               ...sel,
-              colorId: parseInt(colorId),
-              colorName: selectedColor?.color_name || '',
-              colorHex: selectedColor?.hex_value || selectedColor?.color_code || ''
+              colorId: colorId,  // Keep as string (UUID)
+              colorName: selectedColor.color_name || '',
+              colorHex: selectedColor.hex_value || selectedColor.color_code || ''
             }
           : sel
       );
@@ -465,7 +489,7 @@ const ProductDetailPage = ({ productSlug }) => {
 
   // Handle clicking a color swatch in Available Colors section
   const handleColorSwatchClick = (color) => {
-    console.log('[Color Swatch Click] Color:', color.color_name);
+    console.log('[Color Swatch Click] Color:', color.color_name, 'ID:', color.id);
 
     // Update the selected color for image display
     setSelectedColor(color.color_code);
@@ -477,8 +501,8 @@ const ProductDetailPage = ({ productSlug }) => {
 
     // If first color row has no color selected, auto-fill it
     if (colorSelections.length > 0 && !colorSelections[0].colorId) {
-      console.log('[Color Swatch Click] Auto-filling first row with color');
-      handleColorSelectRow(colorSelections[0].id, color.id);
+      console.log('[Color Swatch Click] Auto-filling first row with color ID:', color.id);
+      handleColorSelectRow(colorSelections[0].id, color.id);  // Pass UUID string directly
     }
   };
 
@@ -1118,16 +1142,20 @@ const ProductDetailPage = ({ productSlug }) => {
                             >
                               {/* Color Header Row */}
                               <div className='flex items-center justify-between gap-3'>
-                                {/* Color label with swatch */}
-                                <div className='flex items-center gap-2'>
-                                  <span className='text-xs font-medium text-gray-500'>Color {index + 1}</span>
-                                  {selection.colorHex && (
-                                    <div
-                                      className='w-5 h-5 rounded-full border-2 border-white shadow-sm ring-1 ring-gray-200'
-                                      style={{ backgroundColor: selection.colorHex }}
-                                      title={selection.colorName}
-                                    />
-                                  )}
+                                {/* Color label with prominent swatch */}
+                                <div className='flex items-center gap-3'>
+                                  {/* Color swatch - show selected color or placeholder */}
+                                  <div
+                                    className={`w-6 h-6 rounded-full border-2 transition-all ${
+                                      selection.colorHex
+                                        ? 'border-white shadow-md ring-1 ring-gray-200'
+                                        : 'border-gray-300 bg-gray-200'
+                                    }`}
+                                    style={selection.colorHex ? { backgroundColor: selection.colorHex } : {}}
+                                  />
+                                  <span className='text-sm font-medium text-gray-700'>
+                                    {selection.colorName || `Color ${index + 1}`}
+                                  </span>
                                 </div>
 
                                 {/* Remove Button */}
@@ -1149,7 +1177,7 @@ const ProductDetailPage = ({ productSlug }) => {
                                   value={selection.colorId || ''}
                                   onChange={(e) => handleColorSelectRow(selection.id, e.target.value)}
                                   className='w-full appearance-none bg-white border border-gray-300 rounded-lg
-                                             py-2.5 pl-10 pr-8 text-sm font-medium focus:ring-2
+                                             py-2.5 pl-3 pr-8 text-sm font-medium focus:ring-2
                                              focus:ring-blue-500 focus:border-transparent cursor-pointer'
                                 >
                                   <option value=''>Select a color...</option>
@@ -1159,11 +1187,6 @@ const ProductDetailPage = ({ productSlug }) => {
                                     </option>
                                   ))}
                                 </select>
-                                {/* Color swatch preview in dropdown */}
-                                <div
-                                  className='absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full border border-gray-300'
-                                  style={{ backgroundColor: selection.colorHex || '#e5e7eb' }}
-                                />
                                 {/* Dropdown arrow */}
                                 <div className='absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none'>
                                   <svg className='w-4 h-4 text-gray-400' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
@@ -1172,10 +1195,10 @@ const ProductDetailPage = ({ productSlug }) => {
                                 </div>
                               </div>
 
-                              {/* Size Inputs - Only show if color is selected */}
-                              {selection.colorId ? (
+                              {/* Size Inputs - Show when color is selected (check for non-empty string) */}
+                              {selection.colorId && selection.colorId !== '' ? (
                                 <>
-                                  {console.log('[Render] Showing size inputs for selection', selection.id, 'colorId:', selection.colorId)}
+                                  {console.log('[Render] Showing size inputs for selection', selection.id, 'colorId:', selection.colorId, 'colorName:', selection.colorName)}
                                   <div className='grid grid-cols-5 gap-1.5 sm:gap-2 lg:gap-3'>
                                     {['S', 'M', 'L', 'XL', 'XXL'].map((size) => (
                                       <div key={size} className='text-center'>
