@@ -4818,11 +4818,9 @@ const Designer = () => {
       )}
 
       {/* 3D Chi Cup Preview Modal */}
-      {selectedProduct === 'chi-cup' && (
+      {show3DPreview && selectedProduct === 'chi-cup' && (
         <ChiCup3DPreview
           designTexture={designTexture}
-          lidColor="#4A3728"
-          isOpen={show3DPreview}
           onClose={() => setShow3DPreview(false)}
         />
       )}
