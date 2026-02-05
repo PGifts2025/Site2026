@@ -248,13 +248,14 @@ const ProductDetailPage = ({ productSlug }) => {
         .sort((a, b) => a.sort_order - b.sort_order);
 
       const productImgs = (data.images || [])
-        .filter(img => img.image_type === 'product' || !img.image_type);
+        .filter(img => img.image_type === 'main' || img.image_type === 'product' || !img.image_type);
 
       setGalleryImages(gallery);
       setProductImages(productImgs);
 
       console.log('[ProductDetail] Gallery images:', gallery.length);
       console.log('[ProductDetail] Product images:', productImgs.length);
+      console.log('[ProductDetail] All images:', data.images || []);
 
       // Set initial selected color - WHITE for apparel, first color for others
       const apparelSlugs = ['hoodie', 't-shirts', 'polo', 'sweatshirts'];
@@ -807,7 +808,7 @@ const ProductDetailPage = ({ productSlug }) => {
                     alt={`${product.name} - ${getSelectedColorObj().color_name}`}
                     className="max-w-full max-h-full object-contain transform transition-all duration-700 group-hover:scale-110 relative z-10"
                   />
-                ) : filteredImages.length > 0 && filteredImages[selectedImage]?.medium_url ? (
+                ) : filteredImages.length > 0 && filteredImages[selectedImage]?.image_url ? (
                   <img
                     src={filteredImages[selectedImage].medium_url || filteredImages[selectedImage].image_url}
                     alt={filteredImages[selectedImage].alt_text || product.name}
