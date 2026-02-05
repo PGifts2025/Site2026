@@ -34,7 +34,11 @@
       "Bash(git remote add:*)",
       "Bash(git branch:*)",
       "Bash(git push:*)",
-      "mcp__ide__getDiagnostics"
+      "mcp__ide__getDiagnostics",
+      "Bash(npx eslint:*)",
+      "Bash(python fix_chars.py:*)",
+      "Bash(powershell -Command \"\\(Get-Content Designer.jsx -Raw\\) -replace ''â•\"[â•═]+â•—', '================================================' -replace 'â• [â•═]+â•£', ')",
+      "Bash(===============================================' -replace 'â•š[â•═]+â•', '================================================' -replace 'â•â•â• ', '=== ' -replace ' â•â•â•', ' ===' -replace 'â•' ''', '|| ' -replace 'ðŸ\"\"', '[NOTE]' -replace 'ðŸ\"\"„', '[SYNC]' -replace 'ðŸ§ª', '[TEST]' -replace 'ðŸ\"\"¡', '[API]' -replace 'ðŸ\"\"¥', '[DATA]' -replace 'âŒ', '[ERROR]' -replace 'âœ…', '[OK]' -replace 'âœ\"\"', '[OK]' -replace 'ðŸ\"\"§', '[CONFIG]' -replace 'â­ï¸', '[SKIP]' -replace 'ðŸ—'ï¸', '[DELETE]' -replace 'ðŸ\"'', ''[SEARCH]'' -replace ''âš ï¸'', ''[WARN]'' -replace ''ðŸ\"´', '[DEBUG]' -replace 'ðŸ\"'', ''[DEBUG]'' | Set-Content Designer.jsx.fixed\")"
     ],
     "deny": [],
     "ask": []

@@ -1,4 +1,3 @@
-
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { fabric } from 'fabric';
 import { jsPDF } from 'jspdf';
@@ -110,6 +109,9 @@ const Designer = () => {
   const [userDesigns, setUserDesigns] = useState({});  // Track designs per product-color-view combination
   const [show3DPreview, setShow3DPreview] = useState(false);  // Toggle 3D preview modal
   const [designTexture, setDesignTexture] = useState(null);  // Current design as texture for 3D preview
+  const [cupBackgroundColor, setCupBackgroundColor] = useState('#f5f5f0');  // Cup background color (default: off-white)
+  const [showCupColorPicker, setShowCupColorPicker] = useState(false);  // Toggle cup color picker modal
+  const [isPanoramicMode, setIsPanoramicMode] = useState(false);  // Track if in panoramic mode for cup products
 
   // Zoom controls
   const [zoomLevel, setZoomLevel] = useState(1.0);  // 1.0 = 100%
@@ -140,6 +142,42 @@ const Designer = () => {
   // const [showMigratePrompt, setShowMigratePrompt] = useState(false);
   // const [anonymousDesignCount, setAnonymousDesignCount] = useState(0);
 
+  // Cup background color presets
+  const CUP_BACKGROUND_COLORS = [
+    { name: 'White', hex: '#f5f5f0' },
+    { name: 'Black', hex: '#1a1a1a' },
+    { name: 'Red', hex: '#dc2626' },
+    { name: 'Blue', hex: '#2563eb' },
+    { name: 'Green', hex: '#16a34a' },
+    { name: 'Yellow', hex: '#eab308' },
+    { name: 'Pink', hex: '#ec4899' },
+    { name: 'Orange', hex: '#ea580c' },
+    { name: 'Purple', hex: '#9333ea' },
+    { name: 'Teal', hex: '#14b8a6' },
+  ];
+
+  // Canvas dimensions for different product types
+  const CUP_CANVAS = {
+    width: 1024,
+    height: 1024,     // Full square canvas for proper UV mapping
+    bodyTop: 0,
+    bodyHeight: 1024,
+    bodyLeft: 0,      // NEW: Full width UV - U_min = 0.0000
+    bodyRight: 1024,  // NEW: Full width UV - U_max = 1.0000
+    bodyWidth: 1024,  // NEW: Full width usable!
+  };
+
+  const STANDARD_CANVAS = {
+    width: 800,
+    height: 800,
+  };
+
+  // Helper function to detect cup products
+  const isCupProduct = (productKey) => {
+    const cupProducts = ['chi-cup', 'water-bottle'];
+    return cupProducts.includes(productKey);
+  };
+
   // Get current product configuration (from database or JSON fallback)
   // Use useMemo to stabilize the object reference and prevent infinite re-renders
   const currentProduct = useMemo(() => {
@@ -154,61 +192,61 @@ const Designer = () => {
 
   // Debug: Monitor products state changes
   useEffect(() => {
-    console.log('╔═══════════════════════════════════════════════════╗');
-    console.log('║ [Designer] 🔍 PRODUCTS STATE CHANGED              ║');
-    console.log('╠═══════════════════════════════════════════════════╣');
-    console.log('║ Products count:', Object.keys(products).length);
-    console.log('║ Product keys:', Object.keys(products));
-    console.log('║ useDatabase:', useDatabase);
-    console.log('║ loadingProducts:', loadingProducts);
-    console.log('║ selectedProduct:', selectedProduct);
-    console.log('╚═══════════════════════════════════════════════════╝');
+    console.log('================================================');
+    console.log('=== [Designer] PRODUCTS STATE CHANGED ===');
+    console.log('= ====================================================');
+    console.log('| Products count:', Object.keys(products).length);
+    console.log('| Product keys:', Object.keys(products));
+    console.log('| useDatabase:', useDatabase);
+    console.log('| loadingProducts:', loadingProducts);
+    console.log('| selectedProduct:', selectedProduct);
+    console.log('================================================');
   }, [products]);
 
   // Debug: Monitor useDatabase state changes
   useEffect(() => {
-    console.log('╔═══════════════════════════════════════════════════╗');
-    console.log('║ [Designer] 🔄 useDatabase STATE CHANGED           ║');
-    console.log('╠═══════════════════════════════════════════════════╣');
-    console.log('║ useDatabase:', useDatabase);
-    console.log('║ Products count:', Object.keys(products).length);
-    console.log('╚═══════════════════════════════════════════════════╝');
+    console.log('================================================');
+    console.log('=== [Designer] useDatabase STATE CHANGED ===');
+    console.log('= ====================================================');
+    console.log('| useDatabase:', useDatabase);
+    console.log('| Products count:', Object.keys(products).length);
+    console.log('================================================');
   }, [useDatabase]);
 
   // Debug: Monitor overall Designer state
   useEffect(() => {
-    console.log('═══ DESIGNER STATE ═══');
+    console.log('=== DESIGNER STATE ===');
     console.log('Selected Product:', selectedProduct, currentProduct?.name || 'N/A');
     console.log('Product Colors:', productColors?.length || 0);
     console.log('Selected Color:', currentColorData?.color_name || 'N/A');
     console.log('Selected View:', selectedView);
     console.log('Print Areas Loaded:', printAreasLoaded, 'Count:', printAreas?.length || 0);
-    console.log('══════════════════════');
+    console.log('======================');
   }, [selectedProduct, productColors, currentColorData, selectedView, printAreas, printAreasLoaded]);
 
   // Load products from database
   useEffect(() => {
     const loadProductsFromDatabase = async () => {
-      console.log('═══════════════════════════════════════════════════');
-      console.log('[Designer] 🔄 STARTING loadProductsFromDatabase()');
+      console.log('===================================================');
+      console.log('[Designer] [SYNC] STARTING loadProductsFromDatabase()');
       console.log('[Designer] Current state:', {
         loadingProducts,
         useDatabase,
         productsCount: Object.keys(products).length
       });
-      console.log('═══════════════════════════════════════════════════');
-
-      // TEMPORARY TEST - Testing service role access
-      console.log('[Designer] 🧪 Testing service role access...');
-      const testResult = await testProductTemplatesWithServiceRole();
-      console.log('[Designer] 🧪 Test result:', testResult);
+      console.log('===================================================');
 
       setLoadingProducts(true);
       try {
-        console.log('[Designer] 📡 Calling getProductTemplates()...');
+        // TEMPORARY TEST - Testing service role access
+        console.log('[Designer] [TEST] Testing service role access...');
+        const testResult = await testProductTemplatesWithServiceRole();
+        console.log('[Designer] [TEST] Test result:', testResult);
+
+        console.log('[Designer] [API] Calling getProductTemplates()...');
         const { data: templates, error } = await getProductTemplates();
 
-        console.log('[Designer] 📥 RAW RESPONSE from getProductTemplates():');
+        console.log('[Designer] [DATA] RAW RESPONSE from getProductTemplates():');
         console.log('  - Error:', error?.message);
         console.log('  - Type:', typeof templates);
         console.log('  - Is Array:', Array.isArray(templates));
@@ -216,7 +254,7 @@ const Designer = () => {
         console.log('  - Full data:', JSON.stringify(templates, null, 2));
 
         if (error || !templates || templates.length === 0) {
-          console.error('[Designer] ❌ No products in database, using JSON fallback');
+          console.error('[Designer] Å’ No products in database, using JSON fallback');
           if (error) console.error('[Designer] Error details:', error);
           console.log('[Designer] Fallback to productsConfig:', Object.keys(productsConfig));
           setUseDatabase(false);
@@ -224,7 +262,7 @@ const Designer = () => {
           return;
         }
 
-        console.log(`[Designer] ✅ Loaded ${templates.length} templates from database`);
+        console.log(`[Designer] [OK] Loaded ${templates.length} templates from database`);
         console.log('[Designer] Template details:');
         templates.forEach((t, idx) => {
           console.log(`  ${idx + 1}. ${t.name} (key: ${t.product_key}, id: ${t.id})`);
@@ -232,7 +270,7 @@ const Designer = () => {
 
         // Convert templates to Designer format
         const productsMap = {};
-        console.log('[Designer] 🔧 Converting templates to Designer format...');
+        console.log('[Designer]  Converting templates to Designer format...');
 
         for (const template of templates) {
           console.log(`\n[Designer] Processing template: ${template.product_key}`);
@@ -252,17 +290,17 @@ const Designer = () => {
 
           console.log(`[Designer]   Created product structure:`, productData);
           productsMap[template.product_key] = productData;
-          console.log(`[Designer]   ✅ Added to productsMap with key: "${template.product_key}"`);
+          console.log(`[Designer]   [OK] Added to productsMap with key: "${template.product_key}"`);
         }
 
-        console.log('\n═══════════════════════════════════════════════════');
-        console.log('[Designer] 🎉 FINAL PRODUCTS MAP:');
+        console.log('\n===================================================');
+        console.log('[Designer] [CELEBRATE] FINAL PRODUCTS MAP:');
         console.log('[Designer] Product keys:', Object.keys(productsMap));
         console.log('[Designer] Product count:', Object.keys(productsMap).length);
         console.log('[Designer] Full productsMap:', JSON.stringify(productsMap, null, 2));
-        console.log('═══════════════════════════════════════════════════\n');
+        console.log('===================================================\n');
 
-        console.log('[Designer] 📝 Setting state...');
+        console.log('[Designer] [SAVE] Setting state...');
         console.log('[Designer]   - setProducts(productsMap) with', Object.keys(productsMap).length, 'products');
         setProducts(productsMap);
 
@@ -271,7 +309,7 @@ const Designer = () => {
 
         // Set first product as selected if available
         const firstKey = Object.keys(productsMap)[0];
-        console.log('[Designer] 🎯 Setting initial product selection...');
+        console.log('[Designer] [TARGET] Setting initial product selection...');
         console.log('[Designer]   - First product key:', firstKey);
 
         if (firstKey) {
@@ -287,30 +325,30 @@ const Designer = () => {
           // Set default view to 'front'
           console.log('[Designer]   - setSelectedView: front (default)');
           setSelectedView('front');
-          console.log('[Designer] ✅ Initial selection complete:', {
+          console.log('[Designer] [OK] Initial selection complete:', {
             view: 'front',
             product: firstProduct.name
           });
         }
 
-        console.log('[Designer] ✅ setLoadingProducts(false)');
+        console.log('[Designer] [OK] setLoadingProducts(false)');
         setLoadingProducts(false);
 
-        console.log('\n═══════════════════════════════════════════════════');
-        console.log('[Designer] 🎊 LOAD COMPLETE!');
+        console.log('\n===================================================');
+        console.log('[Designer] [COMPLETE] LOAD COMPLETE!');
         console.log('[Designer] Final state should be:');
         console.log('  - useDatabase: true');
         console.log('  - products:', Object.keys(productsMap).length, 'items');
         console.log('  - loadingProducts: false');
-        console.log('═══════════════════════════════════════════════════\n');
+        console.log('===================================================\n');
 
       } catch (error) {
-        console.error('\n═══════════════════════════════════════════════════');
-        console.error('[Designer] ❌ ERROR loading products from database:');
+        console.error('\n===================================================');
+        console.error('[Designer] Å’ ERROR loading products from database:');
         console.error('[Designer] Error type:', error.constructor.name);
         console.error('[Designer] Error message:', error.message);
         console.error('[Designer] Error stack:', error.stack);
-        console.error('═══════════════════════════════════════════════════\n');
+        console.error('===================================================\n');
         setUseDatabase(false);
         setLoadingProducts(false);
       }
@@ -350,7 +388,7 @@ const Designer = () => {
 
         // If apparel colors found, use them
         if (apparelData && apparelData.length > 0) {
-          console.log('[loadColorsForProduct] ✓ Found APPAREL colors');
+          console.log('[loadColorsForProduct] Å“[OK] Found APPAREL colors');
 
           // Map to simple color objects
           const colors = apparelData.map(ptc => {
@@ -370,12 +408,12 @@ const Designer = () => {
           const validColors = colors.filter(color => {
             const isValid = color && color.id && color.color_name && color.hex_code;
             if (!isValid) {
-              console.warn('[loadColorsForProduct] ⚠️ Invalid apparel color:', color);
+              console.warn('[loadColorsForProduct] [WARN]  Invalid apparel color:', color);
             }
             return isValid;
           });
 
-          console.log('[loadColorsForProduct] ✅ Validated', validColors.length, 'apparel colors');
+          console.log('[loadColorsForProduct] [OK] Validated', validColors.length, 'apparel colors');
           return validColors;
         }
 
@@ -399,7 +437,7 @@ const Designer = () => {
           return [];
         }
 
-        console.log('[loadColorsForProduct] ✓ Found GENERIC product variants');
+        console.log('[loadColorsForProduct] Å“[OK] Found GENERIC product variants');
 
         // CRITICAL FIX: Use folder structure URLs instead of malformed template_url from database
         // Construct URLs using the pattern: {productKey}/{colorName}-{view}.png
@@ -422,7 +460,7 @@ const Designer = () => {
           const colorSlug = variant.color_name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
           const folderStructureUrl = `${SUPABASE_URL}/product-templates/${productKey}/${colorSlug}-${variant.view_name}.png`;
 
-          console.log('[loadColorsForProduct] 🔧 Constructed URL:', folderStructureUrl);
+          console.log('[loadColorsForProduct]  Constructed URL:', folderStructureUrl);
 
           // Store view variant with folder structure URL
           colorMap.get(variant.color_code).variants.push({
@@ -432,7 +470,7 @@ const Designer = () => {
         });
 
         const genericColors = Array.from(colorMap.values());
-        console.log('[loadColorsForProduct] ✅ Loaded', genericColors.length, 'generic colors with folder-structure URLs');
+        console.log('[loadColorsForProduct] [OK] Loaded', genericColors.length, 'generic colors with folder-structure URLs');
 
         return genericColors;
 
@@ -466,16 +504,16 @@ const Designer = () => {
             setSelectedColorId(whiteColor.id);
             setCurrentColorData(whiteColor);
             setSelectedColor(whiteColor.hex_code);
-            console.log('[Designer] ✅ Selected WHITE color:', whiteColor.color_name);
+            console.log('[Designer] [OK] Selected WHITE color:', whiteColor.color_name);
           } else {
             // Fallback to first color
             setSelectedColorId(colors[0].id);
             setCurrentColorData(colors[0]);
             setSelectedColor(colors[0].hex_code);
-            console.log('[Designer] ⚠️ White not found, selected first color:', colors[0].color_name);
+            console.log('[Designer] [WARN]  White not found, selected first color:', colors[0].color_name);
           }
         } else {
-          console.warn('[Designer] ⚠️ No colors loaded');
+          console.warn('[Designer] [WARN]  No colors loaded');
           setProductColors([]);
         }
       } catch (error) {
@@ -722,7 +760,7 @@ const Designer = () => {
 
         // Load print areas for this product+view (supports multiple areas per view)
         if (currentProduct.id) {
-          console.log('═══ LOADING PRINT AREAS ═══');
+          console.log('=== LOADING PRINT AREAS ===');
           console.log('Product ID:', currentProduct.id);
           console.log('Product Key:', currentProduct.product_key);
           console.log('Product Name:', currentProduct.name);
@@ -760,7 +798,7 @@ const Designer = () => {
           }
 
           if (checkError) {
-            console.error('[loadPrintAreasForView] ❌ Query error:', checkError);
+            console.error('[loadPrintAreasForView] Å’ Query error:', checkError);
           }
 
           // View filter mapping: Maps area_keys to which VIEW they should be loaded/displayed on
@@ -798,9 +836,9 @@ const Designer = () => {
             return matches;
           }) || [];
 
-          console.log('[loadPrintAreasForView] ✅ Found', areas?.length || 0, 'print areas for view:', selectedView);
+          console.log('[loadPrintAreasForView] [OK] Found', areas?.length || 0, 'print areas for view:', selectedView);
           console.log('[loadPrintAreasForView] Filtered print areas:', areas);
-          console.log('═══════════════════════════');
+          console.log('===========================');
 
           // Convert print areas to Designer format
           const printAreasMap = {};
@@ -831,7 +869,7 @@ const Designer = () => {
               }));
 
               setPrintAreas(areas);
-              console.log('[Designer] ✅ Setting printAreasLoaded = true (print areas loaded successfully, count:', areas.length, ')');
+              console.log('[Designer] [OK] Setting printAreasLoaded = true (print areas loaded successfully, count:', areas.length, ')');
               setPrintAreasLoaded(true);  // Mark print areas as successfully loaded
 
               // Set first print area as active
@@ -846,18 +884,18 @@ const Designer = () => {
             }
           } else {
             // No print areas found, but still mark as loaded to avoid infinite disabled state
-            console.log('[Designer] ⚠️ Setting printAreasLoaded = true (no print areas found)');
+            console.log('[Designer] [WARN]  Setting printAreasLoaded = true (no print areas found)');
             setPrintAreasLoaded(true);
           }
         } else {
           // No product ID, mark as loaded
-          console.log('[Designer] ⚠️ Setting printAreasLoaded = true (no product ID)');
+          console.log('[Designer] [WARN]  Setting printAreasLoaded = true (no product ID)');
           setPrintAreasLoaded(true);
         }
       } catch (error) {
         console.error('[Designer] Error loading variant data:', error);
         // Even on error, mark as loaded to avoid buttons staying disabled forever
-        console.log('[Designer] ⚠️ Setting printAreasLoaded = true (error occurred)');
+        console.log('[Designer] [WARN]  Setting printAreasLoaded = true (error occurred)');
         setPrintAreasLoaded(true);
       }
     };
@@ -867,8 +905,148 @@ const Designer = () => {
 
   // Debug: Monitor printAreasLoaded state changes
   useEffect(() => {
-    console.log('[Designer] 🔵 printAreasLoaded state changed:', printAreasLoaded);
+    console.log('[Designer]  printAreasLoaded state changed:', printAreasLoaded);
   }, [printAreasLoaded]);
+
+  // Dynamic canvas sizing for cup products
+  useEffect(() => {
+    if (!canvas) {
+      console.log('[CupCanvas] No canvas yet');
+      return;
+    }
+
+    console.log('[CupCanvas] Product changed to:', selectedProduct);
+    console.log('[CupCanvas] Is cup product:', isCupProduct(selectedProduct));
+    console.log('[CupCanvas] Current panoramic mode:', isPanoramicMode);
+
+    const isCup = isCupProduct(selectedProduct);
+
+    if (isCup && !isPanoramicMode) {
+      console.log('[CupCanvas] Switching to panoramic mode');
+
+      // CRITICAL: REMOVE ALL template images - cups use full canvas, no template needed
+      const templateImages = canvas.getObjects().filter(obj =>
+        obj.type === 'image' &&
+        (obj.name === 'template-image' ||
+         obj.id === 'template-image' ||
+         obj.name === 'template' ||
+         !obj.name ||
+         obj.name === '')
+      );
+
+      console.log('[CupCanvas] ”˜ Removing', templateImages.length, 'template image(s) for panoramic mode');
+      templateImages.forEach(img => {
+        console.log('[CupCanvas] Removing template:', img.name || 'unnamed', 'at position:', img.left, img.top);
+        canvas.remove(img);
+      });
+
+      // Force canvas update
+      canvas.requestRenderAll();
+
+      // CRITICAL: Set imageScale to 1.0 for panoramic mode (no template scaling)
+      setImageScale(1.0);
+      console.log('[CupCanvas] [OK] Set imageScale to 1.0 for panoramic mode');
+
+      // Set canvas dimensions (internal resolution)
+      canvas.setWidth(CUP_CANVAS.width);
+      canvas.setHeight(CUP_CANVAS.height);
+      canvas.setBackgroundColor(cupBackgroundColor, canvas.renderAll.bind(canvas));
+
+      // CRITICAL FIX: Fabric.js setWidth/setHeight also sets CSS dimensions to 1024px
+      // We need to override with 100% to fill the container
+      const canvasEl = canvas.getElement();
+      if (canvasEl) {
+        canvasEl.style.width = '100%';
+        canvasEl.style.height = '100%';
+        console.log('[CupCanvas] [OK] Fixed CSS dimensions to fill container (was 1024px, now 100%)');
+      }
+
+    console.log('================================================');
+    console.log('================================================');
+      console.log('= ================================================================');
+      console.log('[CupCanvas] Fabric canvas.width:', canvas.width);
+      console.log('[CupCanvas] Fabric canvas.height:', canvas.height);
+      console.log('[CupCanvas] Fabric canvas.getWidth():', canvas.getWidth());
+      console.log('[CupCanvas] Fabric canvas.getHeight():', canvas.getHeight());
+
+      // canvasEl already declared above, reuse it
+      if (canvasEl) {
+        console.log('[CupCanvas] HTML canvas.width:', canvasEl.width);
+        console.log('[CupCanvas] HTML canvas.height:', canvasEl.height);
+        console.log('[CupCanvas] HTML clientWidth:', canvasEl.clientWidth);
+        console.log('[CupCanvas] HTML clientHeight:', canvasEl.clientHeight);
+
+        const container = canvasEl.parentElement;
+        if (container) {
+          console.log('[CupCanvas] Container clientWidth:', container.clientWidth);
+          console.log('[CupCanvas] Container clientHeight:', container.clientHeight);
+          console.log('[CupCanvas] Container offsetWidth:', container.offsetWidth);
+          console.log('[CupCanvas] Container offsetHeight:', container.offsetHeight);
+        }
+      }
+      console.log('[CupCanvas] Background color:', cupBackgroundColor);
+
+      // DIAGNOSTIC: Check for any CSS spacing issues
+      if (canvasContainerRef.current) {
+        const container = canvasContainerRef.current;
+        const computedStyle = window.getComputedStyle(container);
+        console.log('[CupCanvas] Container CSS:');
+        console.log('  - width:', computedStyle.width);
+        console.log('  - height:', computedStyle.height);
+        console.log('  - padding:', computedStyle.padding);
+        console.log('  - margin:', computedStyle.margin);
+        console.log('  - border:', computedStyle.border);
+        console.log('  - display:', computedStyle.display);
+        console.log('  - boxSizing:', computedStyle.boxSizing);
+      }
+    console.log('================================================');
+
+      // DEBUG: Alert to show actual runtime values
+      const containerInfo = canvasContainerRef.current
+        ? `${canvasContainerRef.current.clientWidth}x${canvasContainerRef.current.clientHeight}`
+        : '?x?';
+      alert(
+        'Cup Canvas Setup:\n' +
+        '* Internal canvas: ' + canvas.getWidth() + 'x' + canvas.getHeight() + ' (always 1024x1024)\n' +
+        '* Container size: ' + containerInfo + '\n' +
+        '* Canvas is CSS-scaled to fill container\n' +
+        (canvasContainerRef.current?.clientWidth > 1024 ? '[WARN]  Container exceeds 1024px - gray zones!' : 'Å“[OK] Container <= 1024px - perfect!')
+      );
+
+      // Update state
+      setIsPanoramicMode(true);
+
+      // Render zone guides
+      console.log('[CupCanvas] Calling renderCupZoneGuides...');
+      renderCupZoneGuides(canvas);
+
+      canvas.renderAll();
+    } else if (!isCup && isPanoramicMode) {
+      console.log('[CupCanvas] Switching to standard mode');
+
+      canvas.setWidth(STANDARD_CANVAS.width);
+      canvas.setHeight(STANDARD_CANVAS.height);
+      canvas.setBackgroundColor('#f8f9fa', canvas.renderAll.bind(canvas));
+      console.log('[CupCanvas] Canvas resized to:', canvas.width, 'x', canvas.height);
+
+      setIsPanoramicMode(false);
+
+      // Remove cup zone guides
+      removeCupZoneGuides(canvas);
+      canvas.renderAll();
+    }
+  }, [selectedProduct, canvas]);
+
+  // Update canvas background color for cup products when cupBackgroundColor changes
+  useEffect(() => {
+    if (!canvas || !canvasReady.current) return;
+
+    const isCup = isCupProduct(selectedProduct);
+    if (isCup) {
+      console.log('[CupCanvas] Updating background color to:', cupBackgroundColor);
+      canvas.setBackgroundColor(cupBackgroundColor, canvas.renderAll.bind(canvas));
+    }
+  }, [cupBackgroundColor, canvas, selectedProduct]);
 
   // Load product template when product or view changes (NOT color - color handled separately)
   useEffect(() => {
@@ -880,6 +1058,14 @@ const Designer = () => {
       });
 
       loadProductTemplate();
+
+      // Ensure zone guides are visible for cup products after template load
+      if (isCupProduct(selectedProduct)) {
+        // Delay slightly to ensure template load completes
+        setTimeout(() => {
+          ensureCupZoneGuidesVisible();
+        }, 100);
+      }
     }
   }, [selectedProduct, selectedView]); // Load template when product or view changes
 
@@ -891,7 +1077,13 @@ const Designer = () => {
       return;
     }
 
-    console.log('[Color Change Effect] ═══════════════════════════════════');
+    // Skip for cup products - they use panoramic canvas without template images
+    if (isCupProduct(selectedProduct)) {
+      console.log('[Color Change Effect]  Skipping for cup product - using panoramic mode');
+      return;
+    }
+
+    console.log('[Color Change Effect] ===================================');
     console.log('[Color Change Effect] Color changed to:', currentColorData.color_name);
     console.log('[Color Change Effect] Is Apparel:', currentColorData.is_apparel);
     console.log('[Color Change Effect] Print areas loaded:', printAreasLoaded);
@@ -916,23 +1108,23 @@ const Designer = () => {
 
         // GENERIC PRODUCT: Load direct variant image
         if (currentColorData.is_apparel === false && currentColorData.variants) {
-          console.log('[Color Change Effect] 🎯 GENERIC product - loading variant image');
+          console.log('[Color Change Effect] [TARGET] GENERIC product - loading variant image');
 
           // Find the variant for the current view
           const variant = currentColorData.variants.find(v => v.view_name === selectedView);
 
           if (!variant) {
-            console.error('[Color Change Effect] ❌ No variant found for view:', selectedView);
+            console.error('[Color Change Effect] Å’ No variant found for view:', selectedView);
             console.log('[Color Change Effect] Available variants:', currentColorData.variants.map(v => v.view_name));
             return;
           }
 
-          console.log('[Color Change Effect] ✅ Using variant image:', variant.template_url);
+          console.log('[Color Change Effect] [OK] Using variant image:', variant.template_url);
           imageUrl = variant.template_url;
 
         } else {
           // APPAREL PRODUCT: Use photo or color overlay
-          console.log('[Color Change Effect] 👕 APPAREL product - checking for uploaded photo...');
+          console.log('[Color Change Effect] [APPAREL] APPAREL product - checking for uploaded photo...');
 
           // Check if uploaded photo exists for this color
           const photoUrl = await getColorPhotoUrl(
@@ -943,11 +1135,11 @@ const Designer = () => {
 
           if (photoUrl) {
             // Use actual uploaded photo
-            console.log('[Color Change Effect] ✅ Using uploaded photo');
+            console.log('[Color Change Effect] [OK] Using uploaded photo');
             imageUrl = photoUrl;
           } else {
             // Generate overlay from white template
-            console.log('[Color Change Effect] 🎨 Generating color overlay');
+            console.log('[Color Change Effect] [COLOR] Generating color overlay');
 
             const whitePhotoUrl = await getColorPhotoUrl(
               productKey,
@@ -956,7 +1148,7 @@ const Designer = () => {
             );
 
             if (!whitePhotoUrl) {
-              console.error('[Color Change Effect] ❌ No white template available');
+              console.error('[Color Change Effect] Å’ No white template available');
               return;
             }
 
@@ -968,7 +1160,7 @@ const Designer = () => {
           // Update ONLY the canvas image - print areas preserved
           console.log('[Color Change Effect] Updating canvas image...');
           await updateCanvasImage(imageUrl);
-          console.log('[Color Change Effect] ✅ Color change complete, print areas preserved');
+          console.log('[Color Change Effect] [OK] Color change complete, print areas preserved');
         }
 
       } catch (err) {
@@ -978,7 +1170,7 @@ const Designer = () => {
 
     updateColorOnly();
 
-    console.log('[Color Change Effect] ═══════════════════════════════════');
+    console.log('[Color Change Effect] ===================================');
 
   }, [selectedColorId, currentColorData, selectedView]); // Color-specific dependencies only
 
@@ -1036,7 +1228,7 @@ const Designer = () => {
   // Debug: Monitor userDesigns state changes
   useEffect(() => {
     const variants = Object.keys(userDesigns);
-    console.log('[Designer] 📦 User designs state updated. Variants with designs:', variants);
+    console.log('[Designer] [STATE] User designs state updated. Variants with designs:', variants);
     variants.forEach(key => {
       console.log(`  - ${key}: ${userDesigns[key].length} objects`);
     });
@@ -1089,7 +1281,7 @@ const Designer = () => {
 
   // Render print area overlays when print areas load
   useEffect(() => {
-    console.log('[RENDER] ═══ RENDER EFFECT TRIGGERED ═══');
+    console.log('[RENDER] === RENDER EFFECT TRIGGERED ===');
     console.log('[RENDER] Canvas exists:', !!canvas);
     console.log('[RENDER] Canvas ready:', canvasReady.current);
     console.log('[RENDER] Print areas count:', printAreas?.length || 0);
@@ -1098,25 +1290,32 @@ const Designer = () => {
 
     // Exit if already rendering
     if (renderingRef.current) {
-      console.log('[RENDER] ❌ Already rendering, skipping duplicate render');
+      console.log('[RENDER] Å’ Already rendering, skipping duplicate render');
       return;
     }
 
     // Exit if canvas not ready
     if (!canvas || !canvasReady.current) {
-      console.log('[RENDER] ❌ Not ready: Canvas not initialized');
+      console.log('[RENDER] Å’ Not ready: Canvas not initialized');
+      return;
+    }
+
+    // Skip print area rendering for cup products - they use zone guides instead
+    if (isCupProduct(selectedProduct)) {
+      console.log('[RENDER]  Skipping print area render for cup product - using zone guides instead');
+      clearPrintAreaGuides(); // Clear any existing print area guides
       return;
     }
 
     // Exit if template is currently loading/rendering
     if (templateRendering) {
-      console.log('[RENDER] ⏳ Template is loading, waiting...');
+      console.log('[RENDER]  Template is loading, waiting...');
       return;
     }
 
     // Exit if no print areas loaded yet
     if (!printAreas || printAreas.length === 0) {
-      console.log('[RENDER] ❌ Not ready: No print areas data');
+      console.log('[RENDER] Å’ Not ready: No print areas data');
       if (canvas) {
         clearPrintAreaGuides();
       }
@@ -1131,7 +1330,7 @@ const Designer = () => {
     const activePrintAreaData = printAreas.find(area => area.name === activePrintArea);
 
     if (!activePrintAreaData) {
-      console.log('[RENDER] ❌ Active print area not found in loaded data');
+      console.log('[RENDER] Å’ Active print area not found in loaded data');
       console.log('[RENDER] Looking for:', activePrintArea);
       console.log('[RENDER] Available areas:', printAreas?.map(a => a.name));
 
@@ -1145,8 +1344,8 @@ const Designer = () => {
       return; // Exit early, effect will re-run with new active print area
     }
 
-    console.log('[RENDER] ✅ Active print area found:', activePrintAreaData.name);
-    console.log('[RENDER] ✅ All checks passed - proceeding with render');
+    console.log('[RENDER] [OK] Active print area found:', activePrintAreaData.name);
+    console.log('[RENDER] [OK] All checks passed - proceeding with render');
 
     // Now safe to proceed with rendering
     // CRITICAL: Clear old guides FIRST
@@ -1172,21 +1371,29 @@ const Designer = () => {
     const scaledHeight = area.height * imageScale;
 
     // CRITICAL FIX: Get actual template image position for proper alignment
-    const templateImg = canvas.getObjects().find(obj =>
-      obj.name === 'template-image' || obj.id === 'template-image'
-    );
+    // For cup/panoramic mode, NO template image is used (full canvas is designable)
+    let canvasOffsetX = 0;
+    let canvasOffsetY = 0;
 
-    // CRITICAL: Exit early if template not loaded yet
-    if (!templateImg) {
-      console.log('[RENDER] ⏳ Template image not loaded yet - deferring print area render');
-      renderingRef.current = false;
-      return;
+    if (!isPanoramicMode) {
+      const templateImg = canvas.getObjects().find(obj =>
+        obj.name === 'template-image' || obj.id === 'template-image'
+      );
+
+      // CRITICAL: Exit early if template not loaded yet (only for non-cup products)
+      if (!templateImg) {
+        console.log('[RENDER]  Template image not loaded yet - deferring print area render');
+        renderingRef.current = false;
+        return;
+      }
+
+      // Use template's actual position as offset
+      canvasOffsetX = templateImg.left || 0;
+      canvasOffsetY = templateImg.top || 0;
+      console.log('[RENDER] [OK] Template image found - using position:', { x: canvasOffsetX, y: canvasOffsetY });
+    } else {
+      console.log('[RENDER] [OK] Panoramic mode - no template image, using full canvas (offset: 0,0)');
     }
-
-    // Use template's actual position as offset
-    const canvasOffsetX = templateImg.left || 0;
-    const canvasOffsetY = templateImg.top || 0;
-    console.log('[RENDER] ✅ Template image found - using position:', { x: canvasOffsetX, y: canvasOffsetY });
 
     console.log('=== [DESIGNER] RENDERING ACTIVE PRINT AREA ===');
     console.log('Print Area Name:', area.name);
@@ -1275,7 +1482,7 @@ const Designer = () => {
       const widthDisplay = area.width_mm ? `${area.width_mm}mm` : `${area.width}px`;
       const heightDisplay = area.height_mm ? `${area.height_mm}mm` : `${area.height}px`;
 
-      const labelText = `${area.name}\nMax size: ${widthDisplay} × ${heightDisplay}`;
+      const labelText = `${area.name}\nMax size: ${widthDisplay} ” ${heightDisplay}`;
 
       console.log('[RENDER] Label text:', labelText);
 
@@ -1302,7 +1509,7 @@ const Designer = () => {
     try {
       if (canvas && canvas.getContext && canvas.getContext()) {
         canvas.renderAll();
-        console.log('[Designer] ✅ Rendered active print area:', area.name);
+        console.log('[Designer] [OK] Rendered active print area:', area.name);
       }
     } catch (error) {
       console.error('[Designer] Error during renderAll in print area render:', error);
@@ -1318,14 +1525,14 @@ const Designer = () => {
 
   // Force render of first print area when print areas first load
   useEffect(() => {
-    console.log('[Designer] 🎬 Initial render effect triggered');
+    console.log('[Designer] [ACTION] Initial render effect triggered');
     console.log('[Designer] printAreasLoaded:', printAreasLoaded);
     console.log('[Designer] printAreas count:', printAreas?.length);
     console.log('[Designer] canvas ready:', !!canvas && canvasReady.current);
 
     // Only trigger once when print areas first become available
     if (printAreasLoaded && printAreas && printAreas.length > 0 && canvas && canvasReady.current) {
-      console.log('[Designer] 🚀 Forcing initial print area render');
+      console.log('[Designer] [LAUNCH] Forcing initial print area render');
 
       // Find the first print area for current view
       const firstPrintArea = printAreas[0];
@@ -1357,6 +1564,12 @@ const Designer = () => {
     });
 
     const constrainToPrintArea = (obj) => {
+      // CRITICAL: Skip ALL constraints for panoramic/cup mode - full canvas is usable
+      if (isPanoramicMode) {
+        console.log('[constrainToPrintArea] Panoramic mode - skipping constraints (full canvas usable)');
+        return;
+      }
+
       // Skip watermark, overlays, and template image
       if (obj.id === 'watermark' || obj.id === 'printAreaOverlay' ||
           obj.isPrintAreaGuide || obj.selectable === false) {
@@ -1373,19 +1586,25 @@ const Designer = () => {
       const scaledHeight = printArea.height * imageScale;
 
       // FIX: Get actual template image position for proper alignment
-      const templateImg = canvas.getObjects().find(obj =>
-        obj.name === 'template-image' || obj.id === 'template-image'
-      );
+      // For cup/panoramic mode, NO template image (full canvas is usable)
+      let canvasOffsetX = 0;
+      let canvasOffsetY = 0;
 
-      // Exit if template not loaded yet
-      if (!templateImg) {
-        console.log('[constrainToPrintArea] Template not loaded yet, skipping constraints');
-        return;
+      if (!isPanoramicMode) {
+        const templateImg = canvas.getObjects().find(obj =>
+          obj.name === 'template-image' || obj.id === 'template-image'
+        );
+
+        // Exit if template not loaded yet (only for non-cup products)
+        if (!templateImg) {
+          console.log('[constrainToPrintArea] Template not loaded yet, skipping constraints');
+          return;
+        }
+
+        // Use template's actual position as offset
+        canvasOffsetX = templateImg.left || 0;
+        canvasOffsetY = templateImg.top || 0;
       }
-
-      // Use template's actual position as offset
-      const canvasOffsetX = templateImg.left || 0;
-      const canvasOffsetY = templateImg.top || 0;
 
       // Calculate scaled print area bounds on canvas
       const printLeft = scaledX + canvasOffsetX;
@@ -1491,7 +1710,7 @@ const Designer = () => {
     }
 
     if (!productKey) {
-      console.error('[getColorPhotoUrl] ❌ No product key found! Product:', product);
+      console.error('[getColorPhotoUrl] Å’ No product key found! Product:', product);
       console.error('[DEBUG] Available keys:', product ? Object.keys(product) : 'product is null/undefined');
       return null;
     }
@@ -1524,11 +1743,11 @@ const Designer = () => {
           .from('product-templates')
           .getPublicUrl(path);
 
-        console.log('[getColorPhotoUrl] ✅ Photo found:', urlData.publicUrl);
+        console.log('[getColorPhotoUrl] [OK] Photo found:', urlData.publicUrl);
         return urlData.publicUrl;
       }
 
-      console.log('[getColorPhotoUrl] ⚠️ No photo found, will use overlay');
+      console.log('[getColorPhotoUrl] [WARN]  No photo found, will use overlay');
       return null;
 
     } catch (err) {
@@ -1555,21 +1774,21 @@ const Designer = () => {
     }
 
     if (view === 'front' && colorAssignment.has_front_photo && colorAssignment.front_photo_url) {
-      console.log('[Designer] ✅ Photo exists for', colorAssignment.apparel_colors?.color_name, 'front');
+      console.log('[Designer] [OK] Photo exists for', colorAssignment.apparel_colors?.color_name, 'front');
       return colorAssignment.front_photo_url;
     }
 
     if (view === 'back' && colorAssignment.has_back_photo && colorAssignment.back_photo_url) {
-      console.log('[Designer] ✅ Photo exists for', colorAssignment.apparel_colors?.color_name, 'back');
+      console.log('[Designer] [OK] Photo exists for', colorAssignment.apparel_colors?.color_name, 'back');
       return colorAssignment.back_photo_url;
     }
 
     if (view === 'top' && colorAssignment.has_top_photo && colorAssignment.top_photo_url) {
-      console.log('[Designer] ✅ Photo exists for', colorAssignment.apparel_colors?.color_name, 'top');
+      console.log('[Designer] [OK] Photo exists for', colorAssignment.apparel_colors?.color_name, 'top');
       return colorAssignment.top_photo_url;
     }
 
-    console.log('[Designer] ℹ️ No photo for', colorAssignment.apparel_colors?.color_name, view, '- will use overlay');
+    console.log('[Designer] [INFO] No photo for', colorAssignment.apparel_colors?.color_name, view, '- will use overlay');
     return null;
   };
 
@@ -1670,7 +1889,7 @@ const Designer = () => {
         // Convert to blob URL
         canvas.toBlob((blob) => {
           const url = URL.createObjectURL(blob);
-          console.log('[applyColorOverlay] ✅ Overlay complete');
+          console.log('[applyColorOverlay] [OK] Overlay complete');
           resolve(url);
         }, 'image/png');
       };
@@ -1695,7 +1914,7 @@ const Designer = () => {
    */
   const saveCurrentDesigns = (printAreaNameOverride = null) => {
     if (!canvas) {
-      console.log('[saveCurrentDesigns] ❌ No canvas');
+      console.log('[saveCurrentDesigns] Å’ No canvas');
       return [];
     }
 
@@ -1703,7 +1922,7 @@ const Designer = () => {
     const printAreaToSave = printAreaNameOverride || activePrintArea;
 
     if (!printAreaToSave) {
-      console.log('[saveCurrentDesigns] ❌ No print area specified');
+      console.log('[saveCurrentDesigns] Å’ No print area specified');
       return [];
     }
 
@@ -1785,10 +2004,10 @@ const Designer = () => {
       const allDesigns = JSON.parse(localStorage.getItem('userDesigns') || '{}');
       allDesigns[variantKey] = designs;
       localStorage.setItem('userDesigns', JSON.stringify(allDesigns));
-      console.log('[saveCurrentDesigns] ✅ Saved successfully');
+      console.log('[saveCurrentDesigns] [OK] Saved successfully');
       console.log('[saveCurrentDesigns] All saved designs:', Object.keys(allDesigns));
     } catch (err) {
-      console.error('[saveCurrentDesigns] ❌ Save failed:', err);
+      console.error('[saveCurrentDesigns] Å’ Save failed:', err);
     }
 
     return designs;
@@ -1804,7 +2023,7 @@ const Designer = () => {
       return;
     }
 
-    console.log('[restoreDesignsForPrintArea] ═══════════════════════════════');
+    console.log('[restoreDesignsForPrintArea] ===============================');
     console.log('[restoreDesignsForPrintArea] Restoring for:', printAreaName);
 
     // Build variant key
@@ -1828,9 +2047,9 @@ const Designer = () => {
       const designs = allDesigns[variantKey];
 
       if (!designs || designs.length === 0) {
-        console.log('[restoreDesignsForPrintArea] ❌ No saved designs for this print area');
+        console.log('[restoreDesignsForPrintArea] Å’ No saved designs for this print area');
         canvas.renderAll();
-        console.log('[restoreDesignsForPrintArea] ═══════════════════════════════');
+        console.log('[restoreDesignsForPrintArea] ===============================');
         return;
       }
 
@@ -1913,12 +2132,12 @@ const Designer = () => {
       }
 
       canvas.renderAll();
-      console.log('[restoreDesignsForPrintArea] ✅ Restored', restoredCount, 'designs');
-      console.log('[restoreDesignsForPrintArea] ═══════════════════════════════');
+      console.log('[restoreDesignsForPrintArea] [OK] Restored', restoredCount, 'designs');
+      console.log('[restoreDesignsForPrintArea] ===============================');
 
     } catch (err) {
       console.error('[restoreDesignsForPrintArea] Error:', err);
-      console.log('[restoreDesignsForPrintArea] ═══════════════════════════════');
+      console.log('[restoreDesignsForPrintArea] ===============================');
     }
   };
 
@@ -2026,7 +2245,7 @@ const Designer = () => {
       }
 
       canvas.renderAll();
-      console.log('[restoreDesigns] ✅ Restored', restoredCount, 'designs');
+      console.log('[restoreDesigns] [OK] Restored', restoredCount, 'designs');
 
     } catch (err) {
       console.error('[restoreDesigns] Failed to restore:', err);
@@ -2153,7 +2372,7 @@ const Designer = () => {
 
         canvas.renderAll();
 
-        console.log('[updateCanvasImage] ✅ Template replaced successfully (centered)');
+        console.log('[updateCanvasImage] [OK] Template replaced successfully (centered)');
         console.log('[updateCanvasImage] Final object count:', canvas.getObjects().length);
 
         // STEP 2: Restore designs for current print area AFTER new template is loaded
@@ -2167,7 +2386,7 @@ const Designer = () => {
 
           // Clear template rendering state
           setTemplateRendering(false);
-          console.log('[updateCanvasImage] ✅ Template rendering complete');
+          console.log('[updateCanvasImage] [OK] Template rendering complete');
 
           resolve();
         }, 100);
@@ -2229,7 +2448,7 @@ const Designer = () => {
 
         canvas.toBlob((blob) => {
           const url = URL.createObjectURL(blob);
-          console.log('[StrongOverlay] ✅ Strong overlay complete (95% intensity)');
+          console.log('[StrongOverlay] [OK] Strong overlay complete (95% intensity)');
           resolve(url);
         }, 'image/png');
       };
@@ -2249,7 +2468,7 @@ const Designer = () => {
    * @param {Object} selectedColor - Color object with color_name, hex_code, etc.
    */
   const handleColorChange = async (selectedColor) => {
-    console.log('═══════════════════════════════════');
+    console.log('===================================');
     console.log('[handleColorChange] Color selected:', selectedColor.color_name);
     console.log('[handleColorChange] Hex:', selectedColor.hex_code);
     console.log('[handleColorChange] Product:', currentProduct?.product_key || selectedProduct);
@@ -2266,33 +2485,33 @@ const Designer = () => {
       const productKey = currentProduct?.product_key || selectedProduct;
 
       if (!productKey) {
-        console.error('[handleColorChange] ❌ Cannot determine product key');
+        console.error('[handleColorChange] Å’ Cannot determine product key');
         setChangingColor(false);
         return;
       }
 
       // GENERIC PRODUCT: Load direct variant image
       if (selectedColor.is_apparel === false && selectedColor.variants) {
-        console.log('[handleColorChange] 🎯 GENERIC product - loading variant image directly');
+        console.log('[handleColorChange] [TARGET] GENERIC product - loading variant image directly');
 
         // Find the variant for the current view
         const variant = selectedColor.variants.find(v => v.view_name === selectedView);
 
         if (!variant) {
-          console.error('[handleColorChange] ❌ No variant found for view:', selectedView);
+          console.error('[handleColorChange] Å’ No variant found for view:', selectedView);
           console.log('[handleColorChange] Available variants:', selectedColor.variants.map(v => v.view_name));
           setChangingColor(false);
           return;
         }
 
-        console.log('[handleColorChange] ✅ Loading variant image:', variant.template_url);
+        console.log('[handleColorChange] [OK] Loading variant image:', variant.template_url);
         await updateCanvasImage(variant.template_url);
         setChangingColor(false);
         return;
       }
 
       // APPAREL PRODUCT: Use color overlay system
-      console.log('[handleColorChange] 👕 APPAREL product - using color overlay system');
+      console.log('[handleColorChange] [APPAREL] APPAREL product - using color overlay system');
 
       // STEP 1: Check if we have an uploaded photo for this color
       const photoUrl = await getColorPhotoUrl(
@@ -2303,14 +2522,14 @@ const Designer = () => {
 
       if (photoUrl) {
         // Use actual uploaded photo
-        console.log('[handleColorChange] ✅ Loading uploaded photo');
+        console.log('[handleColorChange] [OK] Loading uploaded photo');
         await updateCanvasImage(photoUrl);
         setChangingColor(false);
         return;
       }
 
       // STEP 2: No photo exists, generate color overlay
-      console.log('[handleColorChange] 🎨 Generating color overlay');
+      console.log('[handleColorChange] [COLOR] Generating color overlay');
 
       // Get WHITE template as base
       const whitePhotoUrl = await getColorPhotoUrl(
@@ -2320,7 +2539,7 @@ const Designer = () => {
       );
 
       if (!whitePhotoUrl) {
-        console.error('[handleColorChange] ❌ No white template found!');
+        console.error('[handleColorChange] Å’ No white template found!');
         setChangingColor(false);
         return;
       }
@@ -2333,17 +2552,33 @@ const Designer = () => {
       await updateCanvasImage(coloredImageUrl);
 
     } catch (err) {
-      console.error('[handleColorChange] ❌ Error:', err);
+      console.error('[handleColorChange] Å’ Error:', err);
     } finally {
       setChangingColor(false);
     }
 
-    console.log('═══════════════════════════════════');
+    console.log('===================================');
   };
 
   const loadProductTemplate = async () => {
     if (!canvas || !canvasReady.current || !currentProduct) {
       console.warn('[Designer] Canvas not ready for template loading');
+      return;
+    }
+
+    // Skip template loading for cup products - they use panoramic canvas with zone guides
+    if (isCupProduct(selectedProduct)) {
+      console.log('[Designer]  Skipping template load for cup product - using panoramic mode');
+
+      // CRITICAL: Set imageScale to 1.0 for panoramic mode (no template scaling)
+      setImageScale(1.0);
+      console.log('[Designer] [OK] Set imageScale to 1.0 for panoramic mode (no template, no scaling)');
+
+      setTemplateLoaded(true);
+      setTemplateRendering(false);
+
+      // Re-render zone guides to ensure they're visible
+      renderCupZoneGuides(canvas);
       return;
     }
 
@@ -2369,9 +2604,9 @@ const Designer = () => {
       // ============================================================
       // PRIORITY FALLBACK SYSTEM FOR COLOR PHOTOS
       // ============================================================
-      // 1. Check if actual color-specific photo exists → Use it
-      // 2. Check if cached overlay exists → Use it
-      // 3. Generate overlay from default template → Cache it
+      // 1. Check if actual color-specific photo exists   Use it
+      // 2. Check if cached overlay exists   Use it
+      // 3. Generate overlay from default template   Cache it
       // 4. Fallback to variant/product template
       // ============================================================
 
@@ -2386,7 +2621,7 @@ const Designer = () => {
         if (folderPhotoUrl) {
           templateUrl = folderPhotoUrl;
           source = 'folder-structure';
-          console.log('[Designer] ✅ Using folder structure photo:', templateUrl);
+          console.log('[Designer] [OK] Using folder structure photo:', templateUrl);
         }
       }
 
@@ -2397,15 +2632,15 @@ const Designer = () => {
           if (selectedView === 'front' && colorAssignment.has_front_photo && colorAssignment.front_photo_url) {
             templateUrl = colorAssignment.front_photo_url;
             source = 'color-specific-photo-db';
-            console.log('[Designer] ✅ Using actual color photo from database');
+            console.log('[Designer] [OK] Using actual color photo from database');
           } else if (selectedView === 'back' && colorAssignment.has_back_photo && colorAssignment.back_photo_url) {
             templateUrl = colorAssignment.back_photo_url;
             source = 'color-specific-photo-db';
-            console.log('[Designer] ✅ Using actual color photo from database');
+            console.log('[Designer] [OK] Using actual color photo from database');
           } else if (selectedView === 'top' && colorAssignment.has_top_photo && colorAssignment.top_photo_url) {
             templateUrl = colorAssignment.top_photo_url;
             source = 'color-specific-photo-db';
-            console.log('[Designer] ✅ Using actual color photo from database');
+            console.log('[Designer] [OK] Using actual color photo from database');
           }
         }
       }
@@ -2416,7 +2651,7 @@ const Designer = () => {
         if (cachedUrl) {
           templateUrl = cachedUrl;
           source = 'cached-overlay';
-          console.log('[Designer] ✅ Using cached color overlay');
+          console.log('[Designer] [OK] Using cached color overlay');
         }
       }
 
@@ -2431,7 +2666,7 @@ const Designer = () => {
         defaultTemplateUrl = whiteUrlData.publicUrl;
         needsOverlay = true;
         source = 'generated-overlay';
-        console.log('[Designer] 🎨 Will generate color overlay from white template:', whiteImagePath);
+        console.log('[Designer] [COLOR] Will generate color overlay from white template:', whiteImagePath);
       }
 
       // STEP 5: Fallback to white template
@@ -2444,7 +2679,7 @@ const Designer = () => {
 
         templateUrl = whiteUrlData.publicUrl;
         source = 'white-template-fallback';
-        console.log('[Designer] ⚠️ Using white template fallback:', whiteImagePath);
+        console.log('[Designer] [WARN]  Using white template fallback:', whiteImagePath);
       }
 
       console.log('[Designer] Template loading strategy:', {
@@ -2561,7 +2796,7 @@ const Designer = () => {
             currentCanvas.renderAll();
             console.log('[Designer] Template rendered successfully with scale:', scale);
             setTemplateRendering(false);
-            console.log('[Designer] ✅ Template rendering state cleared');
+            console.log('[Designer] [OK] Template rendering state cleared');
 
             // Restore user designs for current print area
             console.log('[Designer] Template loaded, restoring designs for:', activePrintArea);
@@ -2592,7 +2827,7 @@ const Designer = () => {
       try {
         if (needsOverlay && defaultTemplateUrl && currentColorData) {
           // Generate color overlay
-          console.log('[Designer] 🎨 Generating color overlay...');
+          console.log('[Designer] [COLOR] Generating color overlay...');
           console.log('[Designer] Default template:', defaultTemplateUrl);
           console.log('[Designer] Target color:', currentColorData.hex_code, currentColorData.color_name);
 
@@ -2609,7 +2844,7 @@ const Designer = () => {
               }
             );
 
-            console.log('[Designer] ✅ Color overlay generated successfully');
+            console.log('[Designer] [OK] Color overlay generated successfully');
 
             // Cache the result
             if (currentProduct.id && selectedColorId) {
@@ -2620,7 +2855,7 @@ const Designer = () => {
                 overlayDataUrl
               );
               if (cached) {
-                console.log('[Designer] ✅ Overlay cached for future use');
+                console.log('[Designer] [OK] Overlay cached for future use');
               }
             }
 
@@ -2700,6 +2935,12 @@ const Designer = () => {
       const name = (obj.name || obj.get('name') || '').toLowerCase();
       const id = (obj.id || obj.get('id') || '').toLowerCase();
 
+      // IMPORTANT: Never remove cup zone guides or margins
+      const isCupZoneGuide = name.includes('cup-zone') || name.includes('cup-margin');
+      if (isCupZoneGuide) {
+        return false; // Keep cup zone guides
+      }
+
       // Check for any of these conditions:
       const hasGuideId = id.includes('printarea') || id.includes('overlay') ||
                          id.includes('print-area') || id.includes('print_area');
@@ -2748,20 +2989,480 @@ const Designer = () => {
   };
 
   /**
+   * Render cup zone guides for panoramic canvas with seam connection indicators
+   */
+  const renderCupZoneGuides = (canvas) => {
+    console.log('[ZoneGuides] ===============================================');
+    console.log('[ZoneGuides] Rendering zone guides (FULL-WIDTH UV)');
+
+    // Remove existing guides first
+    removeCupZoneGuides(canvas);
+
+    // CRITICAL: Also remove any print area overlays that might be constraining the view
+    const printAreaObjects = canvas.getObjects().filter(obj =>
+      obj.id === 'printAreaOverlay' ||
+      (obj.name && obj.name.includes('print-area')) ||
+      (obj.id && obj.id.includes('print-area'))
+    );
+    if (printAreaObjects.length > 0) {
+      console.log('[ZoneGuides] [WARN]  Removing', printAreaObjects.length, 'print area objects from canvas');
+      printAreaObjects.forEach(obj => canvas.remove(obj));
+    }
+
+    // CRITICAL DEBUG: Check container vs canvas dimensions
+    const canvasEl = canvas.getElement();
+    const container = canvasEl.parentElement;
+    console.log('================================================');
+    console.log('================================================');
+    console.log('= ================================================================');
+    console.log('CONTAINER dimensions:', container.clientWidth, 'x', container.clientHeight);
+    console.log('CANVAS element dimensions:', canvasEl.width, 'x', canvasEl.height);
+    console.log('Fabric canvas.getWidth():', canvas.getWidth());
+    console.log('Fabric canvas.getHeight():', canvas.getHeight());
+    console.log('================================================');
+
+    // Verify container size (canvas is scaled with CSS to fill it)
+    console.log('Å“[OK] Container size:', container.clientWidth, 'x', container.clientHeight);
+    console.log('Å“[OK] Canvas internal size:', canvas.getWidth(), 'x', canvas.getHeight(), '(always 1024x1024)');
+    console.log('Å“[OK] Canvas is CSS-scaled to fill container (responsive design)');
+
+    if (container.clientWidth > 1024 || container.clientHeight > 1024) {
+      console.warn('[WARN]  Container exceeds 1024px!');
+      console.warn('This creates gray dead zones. Container should have maxWidth: 1024px CSS.');
+    } else if (container.clientWidth < canvas.getWidth()) {
+      console.log('Å“[OK] Small screen detected - container shrunk to fit, canvas scales down visually');
+    } else {
+      console.log('Å“[OK] Large screen - container at max size (1024x1024), canvas fills it perfectly');
+    }
+
+    // CRITICAL: Use getWidth() and getHeight() to get ACTUAL display dimensions
+    const canvasWidth = canvas.getWidth();
+    const canvasHeight = canvas.getHeight();
+
+    console.log('[ZoneGuides] === CANVAS DIMENSIONS ===');
+    console.log('[ZoneGuides] canvas.getWidth():', canvasWidth);
+    console.log('[ZoneGuides] canvas.getHeight():', canvasHeight);
+    console.log('[ZoneGuides] canvas.width:', canvas.width);
+    console.log('[ZoneGuides] canvas.height:', canvas.height);
+
+    // Reusing canvasEl from above
+    if (canvasEl) {
+      console.log('[ZoneGuides] HTML element.width:', canvasEl.width, 'element.height:', canvasEl.height);
+      console.log('[ZoneGuides] HTML clientWidth:', canvasEl.clientWidth, 'clientHeight:', canvasEl.clientHeight);
+      console.log('[ZoneGuides] CSS width:', canvasEl.style.width, 'CSS height:', canvasEl.style.height);
+    }
+
+    console.log('[ZoneGuides] Drawing guides for ACTUAL canvas:', canvasWidth, 'x', canvasHeight);
+
+    // Log all objects currently on canvas
+    const allObjects = canvas.getObjects();
+    console.log('[ZoneGuides] Current objects on canvas:', allObjects.length);
+    allObjects.forEach((obj, i) => {
+      if (obj.name && (obj.name.includes('print-area') || obj.id === 'printAreaOverlay')) {
+        console.log(`  ${i}: Å’ PRINT AREA OBJECT:`, obj.name || obj.id, {
+          left: obj.left,
+          top: obj.top,
+          width: obj.width,
+          height: obj.height,
+          type: obj.type
+        });
+      }
+    });
+
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // SIMPLIFIED PRINTABLE AREA - Single red rectangle matching 3D preview
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+    // ================================================================
+    // PRODUCT-SPECIFIC PRINT AREA BOUNDARIES
+    // Canvas is 1024x1024. Lower TOP_Y = higher line. Higher BOTTOM_Y = lower line.
+    // ================================================================
+    let SAFE_TOP_Y, SAFE_BOTTOM_Y;
+    
+    if (selectedProduct === 'chi-cup') {
+      // Chi Cup calibrated values
+      SAFE_TOP_Y = 348;       // TOP edge - below cup lid
+      SAFE_BOTTOM_Y = 1010;   // BOTTOM edge - above cup base
+    } else if (selectedProduct === 'water-bottle') {
+      // Water Bottle - ADJUST THESE VALUES TO CALIBRATE
+      // Start with full range since UV mapping is 0.001 to 0.999
+      SAFE_TOP_Y = 150;        // TOP edge - below bottle cap/neck curve
+      SAFE_BOTTOM_Y = 760;   // BOTTOM edge - above bottle base
+    } else {
+      // Default fallback
+      SAFE_TOP_Y = 50;
+      SAFE_BOTTOM_Y = 974;
+    }
+    // ================================================================
+    const PRINT_LEFT = 0;
+    const PRINT_RIGHT = canvasWidth;
+
+    console.log('[ZoneGuides] Print area boundaries:');
+    console.log('  - SAFE_TOP_Y:', SAFE_TOP_Y, 'px from top');
+    console.log('  - SAFE_BOTTOM_Y:', SAFE_BOTTOM_Y, 'px from top');
+    console.log('  - Printable height:', SAFE_BOTTOM_Y - SAFE_TOP_Y, 'px');
+
+    // Create simple red dashed rectangle showing printable area
+    const printAreaRect = new fabric.Rect({
+      left: PRINT_LEFT,
+      top: SAFE_TOP_Y,
+      width: PRINT_RIGHT - PRINT_LEFT,
+      height: SAFE_BOTTOM_Y - SAFE_TOP_Y,
+      fill: 'transparent',
+      stroke: '#ef4444',
+      strokeWidth: 2,
+      strokeDashArray: [8, 4],
+      selectable: false,
+      evented: false,
+      name: 'cup-zone-print-area',
+      isPrintAreaGuide: true,
+      excludeFromExport: true,
+    });
+    canvas.add(printAreaRect);
+    canvas.sendToBack(printAreaRect);
+
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // ZONE DIVIDERS - Positioned for correct cup rotation (FRONT/BACK opposite, LEFT/RIGHT opposite)
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+    // Zone boundaries (not centers)
+    const ZONE_BOUNDS = {
+      backLeft: 128,    // Between BACK and LEFT
+      leftFront: 384,   // Between LEFT and FRONT
+      frontRight: 640,  // Between FRONT and RIGHT
+      rightBack: 896,   // Between RIGHT and BACK
+    };
+
+    // Vertical divider lines at zone boundaries
+    const dividers = [
+      { x: 0, label: 'SEAM', color: '#ef4444', width: 2 },              // Back seam (left edge)
+      { x: ZONE_BOUNDS.backLeft, label: '', color: '#3b82f6', width: 1 },   // BACK|LEFT boundary
+      { x: ZONE_BOUNDS.leftFront, label: '', color: '#3b82f6', width: 1 },  // LEFT|FRONT boundary
+      { x: ZONE_BOUNDS.frontRight, label: '', color: '#3b82f6', width: 1 }, // FRONT|RIGHT boundary
+      { x: ZONE_BOUNDS.rightBack, label: '', color: '#3b82f6', width: 1 },  // RIGHT|BACK boundary
+      { x: canvasWidth, label: 'SEAM', color: '#ef4444', width: 2 },    // Back seam (right edge)
+    ];
+
+    dividers.forEach((div, index) => {
+      const line = new fabric.Line([div.x, SAFE_TOP_Y, div.x, SAFE_BOTTOM_Y], {
+        stroke: div.color,
+        strokeWidth: div.width,
+        strokeDashArray: [6, 3],
+        selectable: false,
+        evented: false,
+        name: `cup-zone-line-${index}`,
+        isPrintAreaGuide: true,
+        excludeFromExport: true,
+      });
+      canvas.add(line);
+
+      if (div.label) {
+        const label = new fabric.Text(div.label, {
+          left: div.x === 0 ? 5 : div.x - 5,
+          top: SAFE_TOP_Y + 10,
+          fontSize: 11,
+          fontWeight: 'bold',
+          fill: div.color,
+          fontFamily: 'Arial, sans-serif',
+          originX: div.x === 0 ? 'left' : 'right',
+          selectable: false,
+          evented: false,
+          name: `cup-zone-label-${index}`,
+          isPrintAreaGuide: true,
+          excludeFromExport: true,
+        });
+        canvas.add(label);
+      }
+    });
+
+    // Zone area labels - positioned at CENTER of each zone
+    const areaLabels = [
+      { x: 64, label: 'BACK' },                    // 0-128 (left half of back)
+      { x: 256, label: 'LEFT' },                   // 128-384 (centered at 256)
+      { x: 512, label: 'FRONT', color: '#22c55e' }, // 384-640 (centered at 512)
+      { x: 768, label: 'RIGHT' },                  // 640-896 (centered at 768)
+      { x: 960, label: 'BACK' },                   // 896-1024 (right half of back)
+    ];
+
+    areaLabels.forEach((area, index) => {
+      const label = new fabric.Text(area.label, {
+        left: area.x,
+        top: SAFE_BOTTOM_Y - 25,
+        fontSize: 11,
+        fontWeight: 'bold',
+        fill: area.color || '#666666',
+        fontFamily: 'Arial, sans-serif',
+        originX: 'center',
+        selectable: false,
+        evented: false,
+        name: `cup-zone-area-${index}`,
+        isPrintAreaGuide: true,
+        excludeFromExport: true,
+      });
+      canvas.add(label);
+    });
+
+    // Seam connection indicator
+    const seamIndicator = new fabric.Text('â† edges connect (back seam) â†’', {
+      left: canvasWidth / 2,
+      top: SAFE_BOTTOM_Y + 5,
+      fontSize: 10,
+      fill: '#ef4444',
+      fontFamily: 'Arial, sans-serif',
+      originX: 'center',
+      selectable: false,
+      evented: false,
+      name: 'cup-zone-seam-indicator',
+      isPrintAreaGuide: true,
+      excludeFromExport: true,
+    });
+    canvas.add(seamIndicator);
+
+    // Add helpful instruction text at the top
+    const instructionText = new fabric.Text('Place FRONT design in center. For BACK, place at far LEFT or RIGHT edge.', {
+      left: canvasWidth / 2,
+      top: SAFE_TOP_Y - 30,
+      fontSize: 11,
+      fontWeight: 'bold',
+      fill: '#22c55e',
+      fontFamily: 'Arial, sans-serif',
+      originX: 'center',
+      selectable: false,
+      evented: false,
+      name: 'cup-zone-instruction',
+      isPrintAreaGuide: true,
+      excludeFromExport: true,
+    });
+    canvas.add(instructionText);
+
+    // Send all guides to back
+    const allGuides = canvas.getObjects().filter(obj =>
+      obj.name && obj.name.includes('cup-zone')
+    );
+    allGuides.forEach(guide => canvas.sendToBack(guide));
+
+    canvas.renderAll();
+
+    console.log('âœ… Simple printable area rectangle created:', PRINT_LEFT, SAFE_TOP_Y, 'to', PRINT_RIGHT, SAFE_BOTTOM_Y);
+    console.log('   Design content inside this red rectangle will appear on the 3D cup');
+  };
+
+  /**
+   * Remove cup zone guides from canvas
+   */
+  const removeCupZoneGuides = (canvas) => {
+    if (!canvas || !canvas.getObjects) return;
+
+    console.log('[ZoneGuides] Removing cup zone guides');
+    const allObjects = canvas.getObjects();
+    const guidesToRemove = allObjects.filter(obj => {
+      const name = (obj.name || '').toLowerCase();
+      return name.includes('cup-zone') ||
+             name.includes('cup-margin') ||
+             name.includes('cup-connect');
+    });
+
+    console.log('[ZoneGuides] Removing', guidesToRemove.length, 'guide objects');
+    guidesToRemove.forEach(obj => {
+      canvas.remove(obj);
+    });
+  };
+
+  /**
+   * Ensure cup zone guides are visible and properly layered
+   * Call this after any canvas manipulation that might affect guides
+   */
+  const ensureCupZoneGuidesVisible = () => {
+    if (!canvas || !isCupProduct(selectedProduct)) return;
+
+    const guides = canvas.getObjects().filter(obj =>
+      obj.name && (
+        obj.name.includes('cup-zone') ||
+        obj.name.includes('cup-margin') ||
+        obj.name.includes('cup-connect')
+      )
+    );
+
+    if (guides.length === 0) {
+      console.log('[ZoneGuides] No guides found, re-rendering...');
+      renderCupZoneGuides(canvas);
+    } else {
+      console.log('[ZoneGuides] Guides exist, sending to back');
+      guides.forEach(guide => canvas.sendToBack(guide));
+      canvas.renderAll();
+    }
+  };
+
+  /**
+   * Generate design texture for cup products
+   */
+  const generateDesignTextureForCup = () => {
+    if (!canvas) return null;
+
+    console.log('================================================');
+    console.log('================================================');
+    console.log('= =================================================================');
+
+    // Get canvas element for CSS size comparison
+    const canvasElement = canvasRef.current;
+
+    console.log('[3D EXPORT] Fabric Canvas dimensions:');
+    console.log('  - canvas.width:', canvas.width);
+    console.log('  - canvas.height:', canvas.height);
+    console.log('  - canvas.getWidth():', canvas.getWidth());
+    console.log('  - canvas.getHeight():', canvas.getHeight());
+
+    if (canvasElement) {
+      console.log('[3D EXPORT] HTML Canvas element:');
+      console.log('  - element.width (actual pixels):', canvasElement.width);
+      console.log('  - element.height (actual pixels):', canvasElement.height);
+      console.log('  - element.clientWidth (CSS display):', canvasElement.clientWidth);
+      console.log('  - element.clientHeight (CSS display):', canvasElement.clientHeight);
+      console.log('  - element.offsetWidth:', canvasElement.offsetWidth);
+      console.log('  - element.offsetHeight:', canvasElement.offsetHeight);
+      console.log('  - CSS scale ratio X:', canvasElement.clientWidth / canvasElement.width);
+      console.log('  - CSS scale ratio Y:', canvasElement.clientHeight / canvasElement.height);
+
+      const style = window.getComputedStyle(canvasElement);
+      console.log('  - CSS transform:', style.transform);
+      console.log('  - CSS width:', style.width);
+      console.log('  - CSS height:', style.height);
+    }
+
+    // Hide zone guides AND template image temporarily
+    const objectsToHide = canvas.getObjects().filter(obj => {
+      // Hide zone guides
+      if (obj.name && (
+        obj.name.includes('cup-zone') ||
+        obj.name.includes('cup-margin') ||
+        obj.name.includes('cup-connect')
+      )) {
+        return true;
+      }
+      // Hide template image (it's just a mockup, not part of the design)
+      if (obj.id === 'template-image' || obj.name === 'template-image') {
+        return true;
+      }
+      return false;
+    });
+
+    console.log('[3D EXPORT] Hiding', objectsToHide.length, 'objects (guides + template)');
+    console.log('[3D EXPORT] Hidden objects:', objectsToHide.map(obj => obj.id || obj.name || 'unnamed'));
+    objectsToHide.forEach(obj => obj.set('visible', false));
+    canvas.renderAll();
+
+    // Export canvas as data URL
+    console.log('[3D EXPORT] === FABRIC CANVAS EXPORT DEBUG ===');
+    console.log('[3D EXPORT] Fabric canvas dimensions:');
+    console.log('  - canvas.width:', canvas.width);
+    console.log('  - canvas.height:', canvas.height);
+    console.log('  - canvas.getWidth():', canvas.getWidth());
+    console.log('  - canvas.getHeight():', canvas.getHeight());
+    console.log('[3D EXPORT] Exporting with multiplier: 1');
+    console.log('[3D EXPORT] Expected export size: 1024x1024 (if canvas is 1024x1024)');
+
+    // CRITICAL: Reset viewport transform to export at 100% zoom, no pan
+    const originalVPT = canvas.viewportTransform ? [...canvas.viewportTransform] : null;
+    console.log('[3D EXPORT] Viewport transform BEFORE reset:', canvas.viewportTransform);
+
+    // Reset to identity transform
+    canvas.setViewportTransform([1, 0, 0, 1, 0, 0]);
+    console.log('[3D EXPORT] Viewport transform AFTER reset:', canvas.viewportTransform);
+    canvas.renderAll();
+
+    const dataUrl = canvas.toDataURL({
+      format: 'png',
+      quality: 1,
+      multiplier: 1,
+      enableRetinaScaling: false
+    });
+
+    // Restore original viewport transform
+    if (originalVPT) {
+      canvas.setViewportTransform(originalVPT);
+      canvas.renderAll();
+      console.log('[3D EXPORT] Viewport transform restored');
+    }
+
+    console.log('[3D EXPORT] Data URL generated, length:', dataUrl.length, 'characters');
+
+    // Decode the data URL to get actual image dimensions
+    const img = new Image();
+    img.onload = () => {
+      console.log('[3D EXPORT] [OK] EXPORTED IMAGE DIMENSIONS:');
+      console.log('  - Image naturalWidth:', img.naturalWidth);
+      console.log('  - Image naturalHeight:', img.naturalHeight);
+      console.log('  - Image width:', img.width);
+      console.log('  - Image height:', img.height);
+      console.log('  - Data URL length:', dataUrl.length, 'characters');
+
+      if (img.naturalWidth !== 1024 || img.naturalHeight !== 1024) {
+        console.warn('[3D EXPORT] [WARN]  WARNING: Export size mismatch!');
+        console.warn('[3D EXPORT] Expected 1024x1024, got', img.naturalWidth, 'x', img.naturalHeight);
+      } else {
+        console.log('[3D EXPORT] [OK] Export size correct: 1024x1024');
+      }
+
+      // Save to window for debugging
+      window.fabricExportDebug = dataUrl;
+      console.log('[3D EXPORT]  Saved to window.fabricExportDebug - paste in console to view');
+    };
+    img.src = dataUrl;
+
+    // Restore visibility of hidden objects
+    console.log('[3D EXPORT] Restoring visibility of', objectsToHide.length, 'objects');
+    objectsToHide.forEach(obj => obj.set('visible', true));
+    canvas.renderAll();
+
+    console.log('================================================');
+
+    return dataUrl;
+  };
+
+  /**
+   * Handle 3D preview for cup products
+   */
+  const handle3DPreview = () => {
+    console.log('================================================');
+    console.log('================================================');
+    console.log('= =================================================================');
+    console.log('[3D PREVIEW] Product:', selectedProduct);
+    console.log('[3D PREVIEW] Canvas dimensions:', canvas?.getWidth(), 'x', canvas?.getHeight());
+    console.log('[3D PREVIEW] Canvas backgroundColor:', canvas?.backgroundColor);
+
+    if (isCupProduct(selectedProduct)) {
+      console.log('[3D PREVIEW] Generating texture from canvas...');
+      const texture = generateDesignTextureForCup();
+
+      if (texture) {
+        console.log('[3D PREVIEW] [OK] Texture generated successfully');
+        console.log('[3D PREVIEW] Texture dataURL length:', texture.length, 'characters');
+        console.log('[3D PREVIEW] Setting designTexture state and opening modal...');
+        setDesignTexture(texture);
+        setShow3DPreview(true);
+        console.log('[3D PREVIEW] [OK] Modal should now be visible');
+      } else {
+        console.error('[3D PREVIEW] Å’ Failed to generate texture');
+      }
+    }
+    console.log('================================================');
+  };
+
+  /**
    * Manual save button handler
    */
   const handleSavePosition = () => {
-    console.log('═══════════════════════════════════');
+    console.log('===================================');
     console.log('[handleSavePosition] Save button clicked');
     console.log('[handleSavePosition] Active print area:', activePrintArea);
     console.log('[handleSavePosition] Print areas visible:', printAreasVisible);
 
     // Check if there's an active print area
     if (!activePrintArea || !printAreasVisible) {
-      console.log('[handleSavePosition] ❌ No active print area');
+      console.log('[handleSavePosition] Å’ No active print area');
       setSaveStatus({
         type: 'error',
-        message: '⚠️ Please select a print area first'
+        message: '[WARN]  Please select a print area first'
       });
       setTimeout(() => setSaveStatus(null), 3000);
       return;
@@ -2792,15 +3493,15 @@ const Designer = () => {
       const action = isUpdate ? 'Updated' : 'Saved';
       setSaveStatus({
         type: 'success',
-        message: `✓ ${action} ${designs.length} design(s) to ${activePrintArea}`
+        message: `Å“[OK] ${action} ${designs.length} design(s) to ${activePrintArea}`
       });
-      console.log(`[handleSavePosition] ✅ ${action}!`);
+      console.log(`[handleSavePosition] [OK] ${action}!`);
     } else {
       setSaveStatus({
         type: 'success',
-        message: `✓ Position saved (no designs)`
+        message: `Å“[OK] Position saved (no designs)`
       });
-      console.log('[handleSavePosition] ✅ Saved empty state');
+      console.log('[handleSavePosition] [OK] Saved empty state');
     }
 
     // Clear status after 3 seconds
@@ -2808,7 +3509,7 @@ const Designer = () => {
       setSaveStatus(null);
     }, 3000);
 
-    console.log('═══════════════════════════════════');
+    console.log('===================================');
   };
 
   /**
@@ -2820,7 +3521,7 @@ const Designer = () => {
     if (!canvas || !currentProduct) {
       setSaveStatus({
         type: 'error',
-        message: '⚠️ No design to add'
+        message: '[WARN]  No design to add'
       });
       setTimeout(() => setSaveStatus(null), 3000);
       return;
@@ -2858,7 +3559,7 @@ const Designer = () => {
       // Show success message
       setSaveStatus({
         type: 'success',
-        message: '✓ Added to cart!'
+        message: 'Å“[OK] Added to cart!'
       });
       setTimeout(() => setSaveStatus(null), 3000);
 
@@ -2870,7 +3571,7 @@ const Designer = () => {
       console.error('[handleAddToCart] Error:', error);
       setSaveStatus({
         type: 'error',
-        message: '⚠️ Failed to add to cart'
+        message: '[WARN]  Failed to add to cart'
       });
       setTimeout(() => setSaveStatus(null), 3000);
     }
@@ -2896,7 +3597,7 @@ const Designer = () => {
   };
 
   const handleViewClick = async (buttonPressed, event) => {
-    console.log('═══════════════════════════════════');
+    console.log('===================================');
     console.log('[handleViewClick] Button pressed:', buttonPressed);
 
     // Map buttons to specific print area names
@@ -2927,7 +3628,7 @@ const Designer = () => {
         canvas.renderAll();
       }
 
-      console.log('═══════════════════════════════════');
+      console.log('===================================');
       return;
     }
 
@@ -2974,13 +3675,13 @@ const Designer = () => {
       // Template load will handle: setTemplateRendering(false) + restore designs
     }
 
-    console.log('═══════════════════════════════════');
+    console.log('===================================');
   };
 
   const handleViewDoubleClick = (event) => {
     event.preventDefault();
     event.stopPropagation();
-    console.log('[Designer] ✨ DOUBLE CLICK DETECTED ✨');
+    console.log('[Designer] [SPARKLE] DOUBLE CLICK DETECTED [SPARKLE]');
     setShowPrintAreaGuide(prev => {
       const newValue = !prev;
       console.log('[Designer] Toggling print area guide visibility to:', newValue);
@@ -3244,7 +3945,7 @@ const Designer = () => {
 
     canvas.renderAll();
 
-    console.log('[Designer] ✅ Text added successfully with name:', text.name);
+    console.log('[Designer] [OK] Text added successfully with name:', text.name);
   };
 
   const handleImageUpload = (e) => {
@@ -3330,7 +4031,7 @@ const Designer = () => {
 
         canvas.renderAll();
 
-        console.log('[Designer] ✅ Image added successfully with name:', img.name);
+        console.log('[Designer] [OK] Image added successfully with name:', img.name);
 
         // Clear the file input so same file can be uploaded again
         e.target.value = '';
@@ -3588,14 +4289,58 @@ const Designer = () => {
 
     canvas.renderAll();
 
-    console.log('[3D Preview] Exporting only user design elements with transparent background');
+    console.log('[3D Preview] === FABRIC CANVAS EXPORT (generate3DPreviewTexture) ===');
+    console.log('[3D Preview] Fabric canvas dimensions:');
+    console.log('  - canvas.width:', canvas.width);
+    console.log('  - canvas.height:', canvas.height);
+    console.log('  - canvas.getWidth():', canvas.getWidth());
+    console.log('  - canvas.getHeight():', canvas.getHeight());
+
+    // CRITICAL: For cup/panoramic mode, use multiplier 1 (1024x1024) to match UV texture size
+    // For other products, use multiplier 2 for higher resolution
+    const exportMultiplier = isPanoramicMode ? 1 : 2;
+    console.log('[3D Preview] Export multiplier:', exportMultiplier, '(panoramic:', isPanoramicMode, ')');
+    console.log('[3D Preview] Expected export size:', (canvas.width * exportMultiplier), 'x', (canvas.height * exportMultiplier));
+
+    // CRITICAL: Reset viewport transform to export at 100% zoom, no pan
+    // Otherwise the design appears smaller if user zoomed out
+    const originalVPT = canvas.viewportTransform ? [...canvas.viewportTransform] : null;
+    console.log('[3D Preview] Viewport transform BEFORE reset:', canvas.viewportTransform);
+
+    // Reset to identity transform: [scaleX, skewY, skewX, scaleY, translateX, translateY]
+    canvas.setViewportTransform([1, 0, 0, 1, 0, 0]);
+    console.log('[3D Preview] Viewport transform AFTER reset:', canvas.viewportTransform);
+    canvas.renderAll();  // Re-render with reset transform
 
     // Export only the visible (user design) objects
     const designDataUrl = canvas.toDataURL({
       format: 'png',
       quality: 1,
-      multiplier: 2 // Higher resolution for 3D texture
+      multiplier: exportMultiplier,
+      enableRetinaScaling: false  // Don't apply device pixel ratio scaling
     });
+
+    // Restore original viewport transform
+    if (originalVPT) {
+      canvas.setViewportTransform(originalVPT);
+      canvas.renderAll();
+      console.log('[3D Preview] Viewport transform restored');
+    }
+
+    console.log('[3D Preview] Data URL generated, length:', designDataUrl.length);
+
+    // Decode to check actual dimensions
+    const checkImg = new Image();
+    checkImg.onload = () => {
+      console.log('[3D Preview] [OK] EXPORTED IMAGE DIMENSIONS:');
+      console.log('  - naturalWidth:', checkImg.naturalWidth);
+      console.log('  - naturalHeight:', checkImg.naturalHeight);
+      if (isPanoramicMode && (checkImg.naturalWidth !== 1024 || checkImg.naturalHeight !== 1024)) {
+        console.warn('[3D Preview] [WARN]  WARNING: Cup mode export size mismatch!');
+        console.warn('[3D Preview] Expected 1024x1024, got', checkImg.naturalWidth, 'x', checkImg.naturalHeight);
+      }
+    };
+    checkImg.src = designDataUrl;
 
     console.log('[3D Preview] Design texture generated, length:', designDataUrl.length);
     console.log('[3D Preview] Texture preview (first 100 chars):', designDataUrl.substring(0, 100));
@@ -3913,13 +4658,13 @@ const Designer = () => {
 
                       {/* DEBUG INFO */}
                       <div className="mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded text-xs">
-                        <p className="font-bold text-yellow-900">🐛 DEBUG INFO:</p>
-                        <p className="text-yellow-800">• useDatabase: <span className="font-mono">{String(useDatabase)}</span></p>
-                        <p className="text-yellow-800">• loadingProducts: <span className="font-mono">{String(loadingProducts)}</span></p>
-                        <p className="text-yellow-800">• products count: <span className="font-mono">{Object.keys(products).length}</span></p>
-                        <p className="text-yellow-800">• product keys: <span className="font-mono">{Object.keys(products).join(', ') || 'none'}</span></p>
-                        <p className="text-yellow-800">• selectedProduct: <span className="font-mono">{selectedProduct}</span></p>
-                        <p className="text-yellow-800">• productsConfig keys: <span className="font-mono">{Object.keys(productsConfig).join(', ')}</span></p>
+                        <p className="font-bold text-yellow-900">º DEBUG INFO:</p>
+                        <p className="text-yellow-800">* useDatabase: <span className="font-mono">{String(useDatabase)}</span></p>
+                        <p className="text-yellow-800">* loadingProducts: <span className="font-mono">{String(loadingProducts)}</span></p>
+                        <p className="text-yellow-800">* products count: <span className="font-mono">{Object.keys(products).length}</span></p>
+                        <p className="text-yellow-800">* product keys: <span className="font-mono">{Object.keys(products).join(', ') || 'none'}</span></p>
+                        <p className="text-yellow-800">* selectedProduct: <span className="font-mono">{selectedProduct}</span></p>
+                        <p className="text-yellow-800">* productsConfig keys: <span className="font-mono">{Object.keys(productsConfig).join(', ')}</span></p>
                         <details className="mt-1">
                           <summary className="cursor-pointer text-yellow-900 font-medium">View full products object</summary>
                           <pre className="mt-1 p-2 bg-white rounded overflow-auto max-h-40 text-xs">
@@ -3930,6 +4675,19 @@ const Designer = () => {
                     </>
                   )}
                 </div>
+
+                {/* Panoramic Mode Indicator */}
+                {isCupProduct(selectedProduct) && (
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
+                    <p className="text-sm text-blue-800 font-medium">
+                      [COLOR] Panoramic Design Mode
+                    </p>
+                    <p className="text-xs text-blue-600 mt-1">
+                      Design wraps around the entire cup. Front is in the center.
+                      Left and right edges connect at the back seam.
+                    </p>
+                  </div>
+                )}
 
                 {/* Database-Driven Color Selector */}
                 {useDatabase && productColors.length > 0 && (
@@ -3977,6 +4735,47 @@ const Designer = () => {
                         <div className="text-xs">{currentColorData.hex_code}</div>
                       </div>
                     )}
+
+                    {/* Cup Background Color - Only for cup products */}
+                    {currentProduct?.product_key?.includes('cup') && (
+                      <div className="mt-3">
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          Cup Background
+                        </label>
+                        <div className="relative">
+                          <button
+                            onClick={() => setShowCupColorPicker(!showCupColorPicker)}
+                            className="w-9 h-9 rounded-full border-2 border-gray-300 hover:border-blue-400 transition-all"
+                            style={{
+                              background: cupBackgroundColor !== '#f5f5f0'
+                                ? cupBackgroundColor
+                                : 'conic-gradient(red, yellow, lime, aqua, blue, magenta, red)'
+                            }}
+                            title="Change cup background color"
+                          />
+                          {showCupColorPicker && (
+                            <div className="absolute top-12 left-0 bg-white rounded-lg shadow-lg border p-3 z-50">
+                              <div className="grid grid-cols-5 gap-2">
+                                {CUP_BACKGROUND_COLORS.map(color => (
+                                  <button
+                                    key={color.hex}
+                                    onClick={() => {
+                                      setCupBackgroundColor(color.hex);
+                                      setShowCupColorPicker(false);
+                                    }}
+                                    className={`w-8 h-8 rounded-full border-2 ${
+                                      cupBackgroundColor === color.hex ? 'border-blue-500 ring-2 ring-blue-300' : 'border-gray-300'
+                                    }`}
+                                    style={{ backgroundColor: color.hex }}
+                                    title={color.name}
+                                  />
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -4006,7 +4805,7 @@ const Designer = () => {
                 )}
 
                 {/* View Selector - Show Front/Left/Right/Back/Top buttons (dynamic based on print areas) */}
-                {useDatabase && currentProduct && (() => {
+                {!isCupProduct(selectedProduct) && useDatabase && currentProduct && (() => {
                   // Get available views from ALL print areas (not filtered by view)
                   const getAvailableViews = () => {
                     // Use ALL print areas, not the filtered ones
@@ -4041,7 +4840,7 @@ const Designer = () => {
                   const availableViews = getAvailableViews();
 
                   // Add this just before the Print Location buttons JSX
-                  console.log('═══ PRINT LOCATION DEBUG ═══');
+                  console.log('=== PRINT LOCATION DEBUG ===');
                   console.log('printAreas state:', printAreas);
                   console.log('printAreas count:', printAreas?.length);
                   if (printAreas && printAreas.length > 0) {
@@ -4051,7 +4850,7 @@ const Designer = () => {
                     });
                   }
                   console.log('getAvailableViews() returns:', getAvailableViews());
-                  console.log('═══════════════════════════');
+                  console.log('===========================');
 
                   return (
                     <div>
@@ -4165,7 +4964,7 @@ const Designer = () => {
                         </button>
                       </div>
                       <p className="text-sm text-blue-600 font-medium mt-2 bg-blue-50 p-2 rounded">
-                        💡 Tip: Each print area has its own independent designs. Click a button to switch areas. Badges show design count per area.
+                        [TIP] Tip: Each print area has its own independent designs. Click a button to switch areas. Badges show design count per area.
                       </p>
                     </div>
                   );
@@ -4261,7 +5060,7 @@ const Designer = () => {
                   </button>
                 </div>
                 <p className="text-xs text-gray-600 text-center mt-2 italic">
-                  💡 Use mouse wheel to zoom
+                  [TIP] Use mouse wheel to zoom
                 </p>
               </div>
             </div>
@@ -4309,7 +5108,7 @@ const Designer = () => {
                     </button>
                   </div>
                   <p className="text-xs text-gray-600 text-center mt-2 italic">
-                    💡 Use mouse wheel to zoom
+                    [TIP] Use mouse wheel to zoom
                   </p>
                 </div>
             </div>
@@ -4364,13 +5163,34 @@ const Designer = () => {
                 </div>
 
                 {/* Canvas with responsive sizing */}
-                <div ref={canvasContainerRef} className="w-full flex justify-center items-center overflow-auto">
+                <div
+                  ref={canvasContainerRef}
+                  className={isPanoramicMode ? "" : "w-full flex justify-center items-center overflow-auto"}
+                  style={isPanoramicMode ? {
+                    width: '100%',
+                    maxWidth: '1024px',  // CRITICAL: Limit max size to match canvas
+                    aspectRatio: '1 / 1',  // Keep it square
+                    margin: '0 auto',
+                    padding: 0,
+                    overflow: 'hidden',
+                    display: 'block',
+                    position: 'relative'
+                  } : { padding: 0 }}
+                >
                   <canvas
                     ref={canvasRef}
-                    width={canvasSize}
-                    height={canvasSize}
-                    className="max-w-full h-auto"
-                    style={{ display: 'block', margin: '0 auto' }}
+                    width={isPanoramicMode ? CUP_CANVAS.width : canvasSize}
+                    height={isPanoramicMode ? CUP_CANVAS.height : canvasSize}
+                    className={isPanoramicMode ? "" : "max-w-full h-auto"}
+                    style={{
+                      display: 'block',
+                      margin: 0,
+                      padding: 0,
+                      border: 'none',
+                      // For cup/panoramic mode: scale canvas to fill container (always 1024x1024 internally)
+                      width: isPanoramicMode ? '100%' : undefined,
+                      height: isPanoramicMode ? '100%' : undefined
+                    }}
                   />
                 </div>
               </div>
@@ -4588,7 +5408,7 @@ const Designer = () => {
                         className="flex items-center justify-center p-2 bg-gray-500 text-white rounded hover:bg-gray-600 text-xs"
                         title="Nudge up-left"
                       >
-                        ↖
+                         “
                       </button>
                       <button
                         onClick={() => nudgeSelected('up')}
@@ -4602,7 +5422,7 @@ const Designer = () => {
                         className="flex items-center justify-center p-2 bg-gray-500 text-white rounded hover:bg-gray-600 text-xs"
                         title="Nudge up-right"
                       >
-                        ↗
+                         ”
                       </button>
 
                       {/* Middle row */}
@@ -4630,7 +5450,7 @@ const Designer = () => {
                         className="flex items-center justify-center p-2 bg-gray-500 text-white rounded hover:bg-gray-600 text-xs"
                         title="Nudge down-left"
                       >
-                        ↙
+                         â„¢
                       </button>
                       <button
                         onClick={() => nudgeSelected('down')}
@@ -4644,11 +5464,28 @@ const Designer = () => {
                         className="flex items-center justify-center p-2 bg-gray-500 text-white rounded hover:bg-gray-600 text-xs"
                         title="Nudge down-right"
                       >
-                        ↘
+                         Ëœ
                       </button>
                     </div>
                   </div>
                 </div>
+
+                {/* 3D Preview - Only for cup products */}
+                {isCupProduct(selectedProduct) && (
+                  <div>
+                    <h4 className="text-sm font-medium text-gray-700 mb-2">3D Preview</h4>
+                    <button
+                      onClick={handle3DPreview}
+                      className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
+                    >
+                      <Eye className="w-4 h-4" />
+                      <span>View in 3D</span>
+                    </button>
+                    <p className="text-xs text-gray-500 mt-1 text-center">
+                      See your design on a rotating 3D cup
+                    </p>
+                  </div>
+                )}
 
                 {/* Export Tools */}
                 <div>
@@ -4708,7 +5545,7 @@ const Designer = () => {
                   </button>
                   {!user && anonymousDesignCount > 0 && (
                     <p className="text-xs text-orange-600 mt-2 p-2 bg-orange-50 rounded">
-                      ⚠️ Sign in to save permanently ({anonymousDesignCount} design{anonymousDesignCount > 1 ? 's' : ''} will be lost)
+                      [WARN]  Sign in to save permanently ({anonymousDesignCount} design{anonymousDesignCount > 1 ? 's' : ''} will be lost)
                     </p>
                   )}
                 </div> */}
@@ -4741,7 +5578,7 @@ const Designer = () => {
                 onClick={() => setShowAuth(false)}
                 className="text-gray-400 hover:text-gray-600"
               >
-                ×
+                ”
               </button>
             </div>
 
@@ -4809,10 +5646,9 @@ const Designer = () => {
       */}
 
       {/* 3D Water Bottle Preview Modal */}
-      {selectedProduct === 'water-bottle' && (
+      {show3DPreview && selectedProduct === 'water-bottle' && (
         <WaterBottle3DPreview
           designTexture={designTexture}
-          isOpen={show3DPreview}
           onClose={() => setShow3DPreview(false)}
         />
       )}
@@ -4821,6 +5657,7 @@ const Designer = () => {
       {show3DPreview && selectedProduct === 'chi-cup' && (
         <ChiCup3DPreview
           designTexture={designTexture}
+          cupColor={cupBackgroundColor}
           onClose={() => setShow3DPreview(false)}
         />
       )}
