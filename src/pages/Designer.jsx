@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { fabric } from 'fabric';
 import { jsPDF } from 'jspdf';
 import { isMockAuth } from '../config/supabase';
@@ -61,6 +62,7 @@ import {
 const supabase = isMockAuth ? createMockSupabase() : supabaseClient;
 
 const Designer = () => {
+  const [searchParams] = useSearchParams();
   const canvasRef = useRef(null);
   const canvasContainerRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -129,18 +131,16 @@ const Designer = () => {
   const [selectedObject, setSelectedObject] = useState(null);
 
   // Design persistence state
-  // TEMPORARILY DISABLED: Design persistence features (Prompt 2.7)
-  // These will be re-enabled after fixing the infinite remount loop
-  // const [savedDesigns, setSavedDesigns] = useState([]);
-  // const [loadingDesigns, setLoadingDesigns] = useState(false);
-  // const [showSaveModal, setShowSaveModal] = useState(false);
-  // const [showMyDesigns, setShowMyDesigns] = useState(false);
-  // const [designName, setDesignName] = useState('');
-  // const [savingDesign, setSavingDesign] = useState(false);
-  // const [saveStatus, setSaveStatus] = useState(''); // 'saving', 'saved', 'error'
-  // const [currentDesignId, setCurrentDesignId] = useState(null); // Track if editing existing design
-  // const [showMigratePrompt, setShowMigratePrompt] = useState(false);
-  // const [anonymousDesignCount, setAnonymousDesignCount] = useState(0);
+  const [savedDesigns, setSavedDesigns] = useState([]);
+  const [loadingDesigns, setLoadingDesigns] = useState(false);
+  const [showSaveModal, setShowSaveModal] = useState(false);
+  const [showMyDesigns, setShowMyDesigns] = useState(false);
+  const [designName, setDesignName] = useState('');
+  const [savingDesign, setSavingDesign] = useState(false);
+  const [designSaveStatus, setDesignSaveStatus] = useState(''); // 'saving', 'saved', 'error'
+  const [currentDesignId, setCurrentDesignId] = useState(null); // Track if editing existing design
+  const [showMigratePrompt, setShowMigratePrompt] = useState(false);
+  const [anonymousDesignCount, setAnonymousDesignCount] = useState(0);
 
   // Cup background color presets
   const CUP_BACKGROUND_COLORS = [
@@ -3849,6 +3849,74 @@ const Designer = () => {
     };
   }, []);
 
+  // Load design from URL parameter
+  useEffect(() => {
+    const loadDesignFromUrl = async () => {
+      const designId = searchParams.get('design');
+
+      if (!designId || !canvas) {
+        return;
+      }
+
+      try {
+        console.log('[Designer] Loading design from URL:', designId);
+
+        // Fetch design from database
+        const design = await getUserDesign(designId);
+
+        if (!design) {
+          alert('Design not found');
+          return;
+        }
+
+        console.log('[Designer] Design loaded:', design);
+
+        // Set design ID and name for editing mode
+        setCurrentDesignId(design.id);
+        setDesignName(design.design_name);
+
+        // Load the design data onto canvas
+        if (design.design_data) {
+          canvas.loadFromJSON(design.design_data, () => {
+            canvas.renderAll();
+            console.log('[Designer] Canvas loaded from design data');
+          });
+        }
+
+        // Set product if available
+        if (design.product_key && design.product_key !== selectedProduct) {
+          // TODO: Switch to the correct product
+          console.log('[Designer] Design product:', design.product_key);
+        }
+
+        // Set color if available
+        if (design.color_code && design.color_code !== selectedColor) {
+          setSelectedColor(design.color_code);
+          console.log('[Designer] Design color:', design.color_code);
+        }
+
+        // Set view if available
+        if (design.view_name && design.view_name !== selectedView) {
+          setSelectedView(design.view_name);
+          setSelectedViewButton(design.view_name);
+          console.log('[Designer] Design view:', design.view_name);
+        }
+
+        // Set print area if available
+        if (design.print_area && design.print_area !== activePrintArea) {
+          setActivePrintArea(design.print_area);
+          console.log('[Designer] Design print area:', design.print_area);
+        }
+
+      } catch (error) {
+        console.error('[Designer] Error loading design from URL:', error);
+        alert('Error loading design. Please try again.');
+      }
+    };
+
+    loadDesignFromUrl();
+  }, [searchParams, canvas]); // Run when URL params or canvas changes
+
   // TEMPORARILY DISABLED: Load user's saved designs
   // const loadUserDesigns = async () => {
   //   setLoadingDesigns(true);
@@ -4573,6 +4641,157 @@ const Designer = () => {
   //   }
   // };
 
+  // Design Save Functions
+  const saveDesign = () => {
+    if (!canvas) {
+      alert('Canvas not ready');
+      return;
+    }
+
+    // Show save modal to get design name
+    setShowSaveModal(true);
+  };
+
+  const handleSaveDesign = async () => {
+    console.log('[Designer] ========== SAVE DESIGN STARTED ==========');
+    console.log('[Designer] Canvas exists:', !!canvas);
+    console.log('[Designer] Design name:', designName);
+    console.log('[Designer] User:', user);
+    console.log('[Designer] Products state:', products);
+    console.log('[Designer] Selected product:', selectedProduct);
+
+    if (!canvas) {
+      console.error('[Designer] ❌ Canvas not ready');
+      alert('Canvas not ready');
+      return;
+    }
+
+    if (!designName.trim()) {
+      console.error('[Designer] ❌ Design name is empty');
+      alert('Please enter a design name');
+      return;
+    }
+
+    setSavingDesign(true);
+    setDesignSaveStatus('saving');
+
+    try {
+      const userId = user?.id || null;
+      const sessionId = !userId ? getSessionId() : null;
+
+      console.log('[Designer] 📝 Saving design with:');
+      console.log('  - Name:', designName);
+      console.log('  - User ID:', userId);
+      console.log('  - Session ID:', sessionId);
+      console.log('  - Product:', selectedProduct);
+      console.log('  - Color:', selectedColor);
+      console.log('  - Color Name:', currentColorData?.color_name);
+      console.log('  - View:', selectedView);
+      console.log('  - Print Area:', activePrintArea);
+
+      // Get product template ID
+      const productTemplate = products[selectedProduct];
+      console.log('[Designer] Product template lookup:', productTemplate);
+
+      if (!productTemplate) {
+        console.error('[Designer] ❌ Product template not found for:', selectedProduct);
+        console.error('[Designer] Available products:', Object.keys(products));
+        throw new Error(`Product template not found for: ${selectedProduct}`);
+      }
+
+      if (!productTemplate.id) {
+        console.error('[Designer] ❌ Product template has no ID:', productTemplate);
+        throw new Error('Product template is missing ID field');
+      }
+
+      console.log('[Designer] ✅ Product template ID:', productTemplate.id);
+
+      // Get canvas JSON data
+      const canvasJSON = canvas.toJSON();
+      console.log('[Designer] Canvas JSON generated:', Object.keys(canvasJSON));
+
+      // Generate thumbnail
+      let thumbnailDataURL = null;
+      try {
+        thumbnailDataURL = canvas.toDataURL({
+          format: 'png',
+          quality: 0.8,
+          multiplier: 0.3 // Scale down for smaller file size
+        });
+        console.log('[Designer] ✅ Thumbnail generated, length:', thumbnailDataURL?.length);
+      } catch (thumbError) {
+        console.warn('[Designer] ⚠️ Failed to generate thumbnail:', thumbError);
+      }
+
+      const designData = {
+        canvas,
+        designName: designName.trim(),
+        productTemplateId: productTemplate.id,
+        variantId: currentVariant?.id || selectedColorId || null,
+        viewName: selectedView,
+        isPublic: false,
+        // Additional fields for better tracking
+        productKey: selectedProduct,
+        colorCode: selectedColor,
+        colorName: currentColorData?.color_name || selectedColor,
+        printArea: activePrintArea
+      };
+
+      console.log('[Designer] 📦 Design data prepared:', {
+        designName: designData.designName,
+        productTemplateId: designData.productTemplateId,
+        variantId: designData.variantId,
+        viewName: designData.viewName,
+        productKey: designData.productKey,
+        colorCode: designData.colorCode,
+        colorName: designData.colorName,
+        printArea: designData.printArea
+      });
+
+      if (currentDesignId) {
+        // Update existing design
+        console.log('[Designer] 🔄 Updating existing design:', currentDesignId);
+        const result = await updateUserDesign(currentDesignId, designData);
+        console.log('[Designer] Update result:', result);
+
+        if (result) {
+          setDesignSaveStatus('saved');
+          console.log('[Designer] ✅ Design updated successfully');
+          alert('Design updated successfully!');
+          setTimeout(() => setDesignSaveStatus(''), 2000);
+          setShowSaveModal(false);
+        } else {
+          throw new Error('Failed to update design - no result returned');
+        }
+      } else {
+        // Save new design
+        console.log('[Designer] 💾 Saving new design...');
+        const result = await saveUserDesign(designData);
+        console.log('[Designer] Save result:', result);
+
+        if (result) {
+          setDesignSaveStatus('saved');
+          setCurrentDesignId(result.id); // Track design ID for future updates
+          console.log('[Designer] ✅ Design saved successfully with ID:', result.id);
+          alert('Design saved successfully!');
+          setTimeout(() => setDesignSaveStatus(''), 2000);
+          setShowSaveModal(false);
+        } else {
+          throw new Error('Failed to save design - no result returned');
+        }
+      }
+    } catch (error) {
+      console.error('[Designer] ❌❌❌ ERROR SAVING DESIGN:', error);
+      console.error('[Designer] Error stack:', error.stack);
+      setDesignSaveStatus('error');
+      alert(`Error saving design: ${error.message}`);
+      setTimeout(() => setDesignSaveStatus(''), 3000);
+    } finally {
+      setSavingDesign(false);
+      console.log('[Designer] ========== SAVE DESIGN ENDED ==========');
+    }
+  };
+
   // Get available print areas for current product
   const availablePrintAreas = (currentProduct && currentProduct.printAreas) ? Object.keys(currentProduct.printAreas) : [];
 
@@ -4582,8 +4801,15 @@ const Designer = () => {
       <div className="bg-white shadow-sm border-b">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center py-4">
-            <h1 className="text-2xl font-bold text-gray-900">Design Studio</h1>
-            
+            <div>
+              <h1 className="text-2xl font-bold text-gray-900">Design Studio</h1>
+              {currentDesignId && designName && (
+                <p className="text-sm text-gray-600 mt-1">
+                  Editing: <span className="font-semibold">{designName}</span>
+                </p>
+              )}
+            </div>
+
             <div className="flex items-center space-x-4">
               {user ? (
                 <div className="flex items-center space-x-2">
@@ -5506,9 +5732,8 @@ const Designer = () => {
                       <FileText className="w-4 h-4" />
                       <span>Export PDF</span>
                     </button>
-                    
-                    {/* TEMPORARILY DISABLED: Save Design Button */}
-                    {/* <button
+
+                    <button
                       onClick={saveDesign}
                       disabled={savingDesign}
                       className="w-full flex items-center justify-center space-x-2 px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -5518,7 +5743,7 @@ const Designer = () => {
                           <Loader className="w-4 h-4 animate-spin" />
                           <span>Saving...</span>
                         </>
-                      ) : saveStatus === 'saved' ? (
+                      ) : designSaveStatus === 'saved' ? (
                         <>
                           <Save className="w-4 h-4" />
                           <span>Saved!</span>
@@ -5529,7 +5754,7 @@ const Designer = () => {
                           <span>Save Design</span>
                         </>
                       )}
-                    </button> */}
+                    </button>
                   </div>
                 </div>
 
@@ -5633,17 +5858,80 @@ const Designer = () => {
         </div>
       )}
 
-      {/*
-        TEMPORARILY DISABLED: Design Persistence Modals (Prompt 2.7)
+      {/* Save Design Modal */}
+      {showSaveModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-bold text-gray-900">
+                {currentDesignId ? 'Update Design' : 'Save Design'}
+              </h2>
+              <button
+                onClick={() => {
+                  setShowSaveModal(false);
+                  setDesignName('');
+                }}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <X className="h-6 w-6" />
+              </button>
+            </div>
 
-        The following UI components have been removed to fix infinite remount loop:
-        - Save Design Modal
-        - My Designs Modal
-        - Migrate Designs Prompt
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Design Name
+              </label>
+              <input
+                type="text"
+                value={designName}
+                onChange={(e) => setDesignName(e.target.value)}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder="Enter design name"
+                autoFocus
+              />
+            </div>
 
-        These will be re-implemented properly in a future update.
-        See git history or PROJECT_HANDOVER_COMPLETE.md for the original code.
-      */}
+            <div className="bg-gray-50 rounded-lg p-3 mb-4 text-sm text-gray-600">
+              <p><strong>Product:</strong> {products[selectedProduct]?.product_name || selectedProduct}</p>
+              <p><strong>Color:</strong> {currentColorData?.color_name || selectedColor}</p>
+              <p><strong>View:</strong> {selectedView}</p>
+              <p><strong>Print Area:</strong> {activePrintArea || 'None'}</p>
+            </div>
+
+            {designSaveStatus === 'error' && (
+              <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-800">
+                Failed to save design. Please try again.
+              </div>
+            )}
+
+            <div className="flex space-x-3">
+              <button
+                onClick={() => {
+                  setShowSaveModal(false);
+                  setDesignName('');
+                }}
+                className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveDesign}
+                disabled={savingDesign || !designName.trim()}
+                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-2"
+              >
+                {savingDesign ? (
+                  <>
+                    <Loader className="h-4 w-4 animate-spin" />
+                    <span>Saving...</span>
+                  </>
+                ) : (
+                  <span>{currentDesignId ? 'Update' : 'Save'}</span>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 3D Water Bottle Preview Modal */}
       {show3DPreview && selectedProduct === 'water-bottle' && (

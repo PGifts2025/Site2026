@@ -1754,18 +1754,37 @@ export const generateDesignThumbnail = async (canvas, maxWidth = 400, maxHeight 
  * @returns {Promise<Object>} Saved design with ID and thumbnail URL
  */
 export const saveUserDesign = async (designData) => {
+  console.log('[saveUserDesign] ========== START ==========');
+  console.log('[saveUserDesign] isMockAuth:', isMockAuth);
+  console.log('[saveUserDesign] designData:', {
+    designName: designData.designName,
+    productTemplateId: designData.productTemplateId,
+    variantId: designData.variantId,
+    viewName: designData.viewName,
+    productKey: designData.productKey,
+    colorCode: designData.colorCode,
+    colorName: designData.colorName,
+    printArea: designData.printArea
+  });
+
   if (isMockAuth) {
-    console.log('Mock mode: Would save design:', designData.designName);
+    console.log('[saveUserDesign] Mock mode: Would save design:', designData.designName);
     return { id: 'mock-design-id', thumbnail_url: '/mock-thumbnail.png' };
   }
 
   try {
     const client = getSupabaseClient();
+    console.log('[saveUserDesign] Supabase client obtained');
+
     const { data: { user } } = await client.auth.getUser();
+    console.log('[saveUserDesign] Auth user:', user?.id);
 
     // Get user_id or session_id
     const userId = user?.id || null;
     const sessionId = userId ? null : getSessionId();
+
+    console.log('[saveUserDesign] User ID:', userId);
+    console.log('[saveUserDesign] Session ID:', sessionId);
 
     if (!userId && !sessionId) {
       throw new Error('Unable to identify user or session');
@@ -1779,8 +1798,12 @@ export const saveUserDesign = async (designData) => {
       throw new Error('Product template ID is required');
     }
 
+    console.log('[saveUserDesign] ✅ Validation passed');
+
     // Get canvas JSON
+    console.log('[saveUserDesign] Converting canvas to JSON...');
     const canvasJSON = designData.canvas.toJSON(['id', 'name', 'lockMovementX', 'lockMovementY', 'lockScalingX', 'lockScalingY', 'lockRotation', 'selectable']);
+    console.log('[saveUserDesign] ✅ Canvas JSON generated, objects count:', canvasJSON?.objects?.length);
 
     // Generate thumbnail
     let thumbnailUrl = null;
@@ -1813,28 +1836,57 @@ export const saveUserDesign = async (designData) => {
     }
 
     // Insert design into database
+    const insertData = {
+      user_id: userId,
+      session_id: sessionId,
+      product_template_id: designData.productTemplateId,
+      variant_id: designData.variantId || null,
+      design_name: designData.designName || 'Untitled Design',
+      design_data: canvasJSON,
+      thumbnail_url: thumbnailUrl,
+      view_name: designData.viewName || null,
+      is_public: designData.isPublic || false,
+      product_key: designData.productKey || null,
+      color_code: designData.colorCode || null,
+      color_name: designData.colorName || null,
+      print_area: designData.printArea || null
+    };
+
+    console.log('[saveUserDesign] 💾 Inserting into user_designs table...');
+    console.log('[saveUserDesign] Insert data:', {
+      user_id: insertData.user_id,
+      session_id: insertData.session_id,
+      product_template_id: insertData.product_template_id,
+      design_name: insertData.design_name,
+      product_key: insertData.product_key,
+      color_code: insertData.color_code,
+      color_name: insertData.color_name,
+      print_area: insertData.print_area,
+      has_design_data: !!insertData.design_data,
+      thumbnail_url: insertData.thumbnail_url
+    });
+
     const { data, error } = await client
       .from('user_designs')
-      .insert({
-        user_id: userId,
-        session_id: sessionId,
-        product_template_id: designData.productTemplateId,
-        variant_id: designData.variantId || null,
-        design_name: designData.designName || 'Untitled Design',
-        design_data: canvasJSON,
-        thumbnail_url: thumbnailUrl,
-        view_name: designData.viewName || null,
-        is_public: designData.isPublic || false
-      })
+      .insert(insertData)
       .select()
       .single();
 
-    if (error) throw error;
+    console.log('[saveUserDesign] Database response:', { data, error });
 
-    console.log('Design saved successfully:', data.id);
+    if (error) {
+      console.error('[saveUserDesign] ❌ Database error:', error);
+      throw error;
+    }
+
+    console.log('[saveUserDesign] ✅ Design saved successfully:', data.id);
+    console.log('[saveUserDesign] ========== END ==========');
     return data;
   } catch (error) {
-    console.error('Error saving design:', error);
+    console.error('[saveUserDesign] ❌❌❌ ERROR:', error);
+    console.error('[saveUserDesign] Error message:', error.message);
+    console.error('[saveUserDesign] Error stack:', error.stack);
+    console.log('[saveUserDesign] ========== END (ERROR) ==========');
     throw error;
   }
 };
@@ -1976,6 +2028,23 @@ export const updateUserDesign = async (designId, designData) => {
     // Update public flag if provided
     if (designData.isPublic !== undefined) {
       updateData.is_public = designData.isPublic;
+    }
+
+    // Update additional fields if provided
+    if (designData.productKey !== undefined) {
+      updateData.product_key = designData.productKey;
+    }
+    if (designData.colorCode !== undefined) {
+      updateData.color_code = designData.colorCode;
+    }
+    if (designData.colorName !== undefined) {
+      updateData.color_name = designData.colorName;
+    }
+    if (designData.printArea !== undefined) {
+      updateData.print_area = designData.printArea;
+    }
+    if (designData.viewName !== undefined) {
+      updateData.view_name = designData.viewName;
     }
 
     // Update canvas data if provided

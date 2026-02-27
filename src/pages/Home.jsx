@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Search, ShoppingCart, User, Phone, Mail, ChevronLeft, ChevronRight, Star } from 'lucide-react';
+import { Search, ShoppingCart, User, Phone, Mail, ChevronLeft, ChevronRight, Star, Loader } from 'lucide-react';
 import { Link } from "react-router-dom";
+import { getSupabaseClient } from '../services/productCatalogService';
 
 const PromoGiftsApp = () => {
   const [bestSellersSlide, setBestSellersSlide] = useState(0);
@@ -8,6 +9,12 @@ const PromoGiftsApp = () => {
   const [isSliderPaused, setIsSliderPaused] = useState(false);
   const [heroSlide, setHeroSlide] = useState(0);
   const [productsPerSlide, setProductsPerSlide] = useState(4);
+
+  // State for fetched products from database
+  const [featuredProducts, setFeaturedProducts] = useState([]);
+  const [hotProducts, setHotProducts] = useState([]);
+  const [loadingFeatured, setLoadingFeatured] = useState(true);
+  const [loadingHot, setLoadingHot] = useState(true);
 
   // Hero slider content
   const heroSliderContent = [
@@ -18,7 +25,8 @@ const PromoGiftsApp = () => {
       buttonText: "ORDER NOW",
       bgColor: "bg-blue-500",
       textColor: "text-white",
-      image: "🍼"
+      imageUrl: "https://cbcevjhvgmxrxeeyldza.supabase.co/storage/v1/object/public/product-templates/hero-banners/left-slider-1.png",
+      link: "/water-bottles/water-bottle"
     },
     {
       id: 2,
@@ -27,7 +35,8 @@ const PromoGiftsApp = () => {
       buttonText: "ORDER NOW",
       bgColor: "bg-green-600",
       textColor: "text-white",
-      image: "☕"
+      imageUrl: "https://cbcevjhvgmxrxeeyldza.supabase.co/storage/v1/object/public/product-templates/hero-banners/left-slider-2.png",
+      link: "/cups/chi-cup"
     }
   ];
 
@@ -40,7 +49,8 @@ const PromoGiftsApp = () => {
     buttonText: "View Product",
     bgColor: "bg-gray-100",
     textColor: "text-gray-900",
-    image: "🛍️"
+    imageUrl: "https://cbcevjhvgmxrxeeyldza.supabase.co/storage/v1/object/public/product-templates/hero-banners/right-bags.png",
+    link: "/bags"
   };
 
   const smallBlocks = [
@@ -75,86 +85,6 @@ const PromoGiftsApp = () => {
     }
   ];
 
-  // Hot Products
-  const hotProducts = [
-    {
-      name: "A5 Medium Croft Notebook",
-      description: "Best Seller. High quality PU. Soft touch. 17 colour choices. Matching elastic closure & bookmark.",
-      price: "£2.59 ON 250+ (MQ 50)",
-      image: "📓",
-      badge: "★",
-      category: "Pads"
-    },
-    {
-      name: "Sweets in Eco Pot",
-      description: "Best Seller. Compostable, plant based packaging. Sweets suitable for most diets. 3 sizes available.",
-      price: "£1.12 ON 250+ (MQ 100)",
-      image: "🍬",
-      badge: "★",
-      category: "Gifts"
-    },
-    {
-      name: "Middleton 500ml Metal Bottle",
-      description: "Best Seller. Double walled. Huge range of colours. Reusable, BPA & PVC free.",
-      price: "£5.87 ON 250+ (MQ 50)",
-      image: "🍼",
-      badge: "★",
-      category: "Water Bottles"
-    },
-    {
-      name: "Recycled T-Shirts & Bottles",
-      description: "Best Seller. Made from 60% recycled T-Shirts and 40% recycled bottles. Available in 18 colour choices.",
-      price: "£1.64 ON 250+ (MQ 50)",
-      image: "👕",
-      badge: "★",
-      category: "Clothing"
-    },
-    {
-      name: "Wellington Boot Pen Pot",
-      description: "Best Seller. Quirky design. Pen pot or herb pot. Print to 1 or both boots. Great colour range.",
-      price: "£3.28 ON 250+ (MQ 100)",
-      image: "🥾",
-      badge: "★",
-      category: "Office"
-    },
-    {
-      name: "Circular & Co Travel Mug",
-      description: "Eco Option. Official Circular & Co. Product. Leak Proof & Insulated Travel Mug. Available in 8oz or 12oz size.",
-      price: "£10.16 ON 250+ (MQ 25)",
-      image: "☕",
-      badge: "♻️",
-      category: "Mugs"
-    },
-    {
-      name: "Eco Mini Power Bank",
-      description: "Eco Option. Made from recycled plastic. Compact. 5000mah.",
-      price: "£8.65 ON 250+ (MQ 50)",
-      image: "🔋",
-      badge: "♻️",
-      category: "Tech"
-    },
-    {
-      name: "Ecoffee Cup® 8oz",
-      description: "Best Seller. Official Ecoffee Product. Bamboo Travel Cup with 8oz Capacity.",
-      price: "£8.91 ON 250+ (MQ 100)",
-      image: "🌾",
-      badge: "★",
-      category: "Mugs"
-    }
-  ];
-
-  // Best sellers for slider
-  const bestSellers = [
-    { name: 'Classic Ceramic Mug', price: '£2.50', image: '☕', category: 'Mugs' },
-    { name: 'Stainless Steel Bottle', price: '£4.99', image: '🍼', category: 'Water Bottles' },
-    { name: 'Canvas Tote Bag', price: '£3.75', image: '👜', category: 'Bags' },
-    { name: 'Power Bank 10000mAh', price: '£12.99', image: '🔋', category: 'Tech' },
-    { name: 'Metal Ballpoint Pen', price: '£1.99', image: '✒️', category: 'Pens' },
-    { name: 'A5 Notebook', price: '£3.50', image: '📓', category: 'Pads' },
-    { name: 'Wireless Charger', price: '£8.99', image: '⚡', category: 'Tech' },
-    { name: 'Eco Water Bottle', price: '£5.99', image: '🌱', category: 'Water Bottles' }
-  ];
-
   // Product categories
   const categories = [
     { name: 'Cups', icon: '☕' },
@@ -169,6 +99,10 @@ const PromoGiftsApp = () => {
     { name: 'Notebooks', icon: '📓' },
     { name: 'Tea Towels', icon: '🍽️' }
   ];
+
+  // Use fetched products from database (must be declared before useEffects that reference them)
+  const displayBestSellers = featuredProducts;
+  const displayHotProducts = hotProducts;
 
   // Update products per slide based on screen width
   useEffect(() => {
@@ -190,13 +124,13 @@ const PromoGiftsApp = () => {
 
   // Auto-slider for best sellers
   useEffect(() => {
-    if (isSliderPaused) return;
+    if (isSliderPaused || displayBestSellers.length === 0) return;
 
     const timer = setInterval(() => {
-      setBestSellersSlide((prev) => (prev + 1) % Math.ceil(bestSellers.length / productsPerSlide));
+      setBestSellersSlide((prev) => (prev + 1) % Math.ceil(displayBestSellers.length / productsPerSlide));
     }, 4000);
     return () => clearInterval(timer);
-  }, [bestSellers.length, isSliderPaused, productsPerSlide]);
+  }, [displayBestSellers.length, isSliderPaused, productsPerSlide]);
 
   // Auto-slider for hero section
   useEffect(() => {
@@ -207,12 +141,111 @@ const PromoGiftsApp = () => {
   }, [heroSliderContent.length]);
 
   const nextBestSellers = () => {
-    setBestSellersSlide((prev) => (prev + 1) % Math.ceil(bestSellers.length / productsPerSlide));
+    setBestSellersSlide((prev) => (prev + 1) % Math.ceil(displayBestSellers.length / productsPerSlide));
   };
 
   const prevBestSellers = () => {
-    setBestSellersSlide((prev) => (prev - 1 + Math.ceil(bestSellers.length / productsPerSlide)) % Math.ceil(bestSellers.length / productsPerSlide));
+    setBestSellersSlide((prev) => (prev - 1 + Math.ceil(displayBestSellers.length / productsPerSlide)) % Math.ceil(displayBestSellers.length / productsPerSlide));
   };
+
+  // Fetch featured products for Best Sellers carousel
+  useEffect(() => {
+    const fetchFeaturedProducts = async () => {
+      try {
+        setLoadingFeatured(true);
+        const supabase = getSupabaseClient();
+
+        const { data, error } = await supabase
+          .from('catalog_products')
+          .select(`
+            *,
+            catalog_categories!inner(name, slug),
+            catalog_product_images(image_url, thumbnail_url, is_primary, image_type),
+            catalog_pricing_tiers(min_quantity, price_per_unit)
+          `)
+          .eq('is_featured', true)
+          .eq('status', 'active')
+          .limit(8);
+
+        if (error) throw error;
+
+        // Process products to extract primary image and lowest price
+        const processedProducts = data.map(product => {
+          const primaryImage = product.catalog_product_images.find(img => img.is_primary)
+            || product.catalog_product_images.find(img => img.image_type === 'main')
+            || product.catalog_product_images[0];
+
+          const lowestPriceTier = product.catalog_pricing_tiers
+            .sort((a, b) => a.price_per_unit - b.price_per_unit)[0];
+
+          return {
+            ...product,
+            primaryImage: primaryImage?.thumbnail_url || primaryImage?.image_url,
+            lowestPrice: lowestPriceTier?.price_per_unit
+          };
+        });
+
+        console.log('[Home] Fetched featured products:', processedProducts.length);
+        setFeaturedProducts(processedProducts);
+      } catch (error) {
+        console.error('[Home] Error fetching featured products:', error);
+      } finally {
+        setLoadingFeatured(false);
+      }
+    };
+
+    fetchFeaturedProducts();
+  }, []);
+
+  // Fetch best seller products for HOT PRODUCTS section
+  useEffect(() => {
+    const fetchHotProducts = async () => {
+      try {
+        setLoadingHot(true);
+        const supabase = getSupabaseClient();
+
+        const { data, error } = await supabase
+          .from('catalog_products')
+          .select(`
+            *,
+            catalog_categories!inner(name, slug),
+            catalog_product_images(image_url, thumbnail_url, is_primary, image_type),
+            catalog_pricing_tiers(min_quantity, price_per_unit)
+          `)
+          .eq('badge', 'Best Seller')
+          .eq('status', 'active')
+          .limit(8);
+
+        if (error) throw error;
+
+        // Process products
+        const processedProducts = data.map(product => {
+          const primaryImage = product.catalog_product_images.find(img => img.is_primary)
+            || product.catalog_product_images.find(img => img.image_type === 'main')
+            || product.catalog_product_images[0];
+
+          const lowestPriceTier = product.catalog_pricing_tiers
+            .sort((a, b) => a.price_per_unit - b.price_per_unit)[0];
+
+          return {
+            ...product,
+            primaryImage: primaryImage?.thumbnail_url || primaryImage?.image_url,
+            lowestPrice: lowestPriceTier?.price_per_unit,
+            minQuantity: product.min_order_quantity
+          };
+        });
+
+        console.log('[Home] Fetched hot products:', processedProducts.length);
+        setHotProducts(processedProducts);
+      } catch (error) {
+        console.error('[Home] Error fetching hot products:', error);
+      } finally {
+        setLoadingHot(false);
+      }
+    };
+
+    fetchHotProducts();
+  }, []);
 
   return (
     <div className="min-h-screen bg-white">
@@ -226,19 +259,29 @@ const PromoGiftsApp = () => {
             {heroSliderContent.map((block, index) => (
               <div
                 key={block.id}
-                className={`absolute inset-0 ${block.bgColor} ${block.textColor} p-4 sm:p-8 flex items-center justify-between transition-opacity duration-1000 ${
+                className={`absolute inset-0 transition-opacity duration-1000 ${
                   index === heroSlide ? 'opacity-100' : 'opacity-0'
                 }`}
               >
-                <div className="z-10">
-                  <h2 className="text-xl sm:text-2xl md:text-3xl font-bold mb-2">{block.title}</h2>
-                  <p className="text-base sm:text-xl text-yellow-300 font-bold mb-4">{block.subtitle}</p>
-                  <button className="bg-white text-gray-900 px-4 py-2 sm:px-6 sm:py-3 rounded font-semibold hover:bg-gray-100 transition-colors text-sm sm:text-base">
-                    {block.buttonText}
-                  </button>
-                </div>
-                <div className="text-4xl sm:text-6xl md:text-8xl opacity-20 absolute right-4 sm:right-8">
-                  {block.image}
+                {/* Background Image */}
+                <img
+                  src={block.imageUrl}
+                  alt={block.title}
+                  className="absolute inset-0 w-full h-full object-cover object-center"
+                />
+
+                {/* Dark overlay for text readability */}
+                <div className="absolute inset-0 bg-black/5"></div>
+
+                {/* Content */}
+                <div className={`absolute inset-0 ${block.textColor} p-4 sm:p-8 flex items-center justify-between`}>
+                  <div className="z-10">
+                    <h2 className="text-xl sm:text-2xl md:text-3xl font-bold mb-2 drop-shadow-lg">{block.title}</h2>
+                    <p className="text-base sm:text-xl text-yellow-300 font-bold mb-4 drop-shadow-lg">{block.subtitle}</p>
+                    <Link to={block.link} className="inline-block bg-white text-gray-900 px-4 py-2 sm:px-6 sm:py-3 rounded font-semibold hover:bg-gray-100 transition-colors text-sm sm:text-base shadow-lg">
+                      {block.buttonText}
+                    </Link>
+                  </div>
                 </div>
               </div>
             ))}
@@ -258,17 +301,27 @@ const PromoGiftsApp = () => {
           </div>
 
           {/* Right - Static Bags Block */}
-          <div className={`${rightHeroBlock.bgColor} ${rightHeroBlock.textColor} rounded-lg p-4 sm:p-8 flex items-center justify-between relative overflow-hidden h-64`}>
-            <div className="z-10">
-              <h2 className="text-xl sm:text-2xl md:text-3xl font-bold mb-2">{rightHeroBlock.title}</h2>
-              <p className="text-base sm:text-xl text-red-500 font-bold mb-4">{rightHeroBlock.subtitle}</p>
-              <p className="text-xs sm:text-sm mb-6 max-w-md">{rightHeroBlock.description}</p>
-              <button className="bg-gray-800 text-white px-4 py-2 sm:px-6 sm:py-3 rounded font-semibold hover:bg-gray-700 transition-colors text-sm sm:text-base">
-                {rightHeroBlock.buttonText}
-              </button>
-            </div>
-            <div className="text-4xl sm:text-6xl md:text-8xl opacity-10 absolute right-4 sm:right-8">
-              {rightHeroBlock.image}
+          <div className="rounded-lg relative overflow-hidden h-64">
+            {/* Background Image */}
+            <img
+              src={rightHeroBlock.imageUrl}
+              alt={rightHeroBlock.title}
+              className="absolute inset-0 w-full h-full object-cover object-center"
+            />
+
+            {/* Dark overlay for text readability */}
+            <div className="absolute inset-0 bg-black/5"></div>
+
+            {/* Content */}
+            <div className="absolute inset-0 p-4 sm:p-8 flex items-center justify-between">
+              <div className="z-10">
+                <h2 className="text-xl sm:text-2xl md:text-3xl font-bold mb-2 drop-shadow-lg text-white">{rightHeroBlock.title}</h2>
+                <p className="text-base sm:text-xl text-red-500 font-bold mb-4 drop-shadow-lg">{rightHeroBlock.subtitle}</p>
+                <p className="text-xs sm:text-sm mb-6 max-w-md drop-shadow-lg text-white/90">{rightHeroBlock.description}</p>
+                <Link to={rightHeroBlock.link} className="inline-block bg-gray-800 text-white px-4 py-2 sm:px-6 sm:py-3 rounded font-semibold hover:bg-gray-700 transition-colors text-sm sm:text-base shadow-lg">
+                  {rightHeroBlock.buttonText}
+                </Link>
+              </div>
             </div>
           </div>
         </div>
@@ -322,72 +375,89 @@ const PromoGiftsApp = () => {
             </button>
 
             <div className="relative h-52 overflow-hidden mx-12">
-              <div
-                className="flex transition-all duration-1000 ease-out absolute inset-0"
-                style={{
-                  transform: `translateX(-${bestSellersSlide * 100}%)`
-                }}
-              >
-                {Array.from({ length: Math.ceil(bestSellers.length / productsPerSlide) }).map((_, slideIndex) => (
-                  <div key={slideIndex} className="w-full flex-shrink-0 px-2 sm:px-6">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-6">
-                      {bestSellers.slice(slideIndex * productsPerSlide, slideIndex * productsPerSlide + productsPerSlide).map((product, index) => (
-                        <div 
-                          key={index} 
-                          className="group relative transition-all duration-700 cursor-pointer"
-                          onMouseEnter={() => setIsSliderPaused(true)}
-                          onMouseLeave={() => setIsSliderPaused(false)}
-                        >
-                          <div className="bg-white/90 border border-gray-200/50 rounded-2xl p-4 shadow-lg hover:shadow-2xl transition-all duration-700 group-hover:scale-110 group-hover:-translate-y-6 overflow-hidden relative">
-                            
-                            <div className="absolute inset-0 bg-gradient-to-br from-blue-400/10 via-purple-400/10 to-pink-400/10 opacity-0 group-hover:opacity-100 transition-all duration-700"></div>
-                            
-                            <div className="relative z-10">
-                              <div className="text-center mb-3">
-                                <div className="text-3xl mb-2 transform transition-all duration-700 ease-out group-hover:scale-150 group-hover:rotate-12">
-                                  {product.image}
-                                </div>
-                                <span className="inline-block text-xs text-gray-500 bg-white/80 px-3 py-1 rounded-full border border-gray-200/50 group-hover:bg-gradient-to-r group-hover:from-blue-100 group-hover:to-purple-100 group-hover:text-blue-700 transition-all duration-500">
-                                  {product.category}
-                                </span>
-                              </div>
+              {loadingFeatured ? (
+                <div className="flex items-center justify-center h-full">
+                  <Loader className="h-12 w-12 text-blue-600 animate-spin" />
+                </div>
+              ) : (
+                <div
+                  className="flex transition-all duration-1000 ease-out absolute inset-0"
+                  style={{
+                    transform: `translateX(-${bestSellersSlide * 100}%)`
+                  }}
+                >
+                  {Array.from({ length: Math.ceil(displayBestSellers.length / productsPerSlide) }).map((_, slideIndex) => (
+                    <div key={slideIndex} className="w-full flex-shrink-0 px-2 sm:px-6">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-6">
+                        {displayBestSellers.slice(slideIndex * productsPerSlide, slideIndex * productsPerSlide + productsPerSlide).map((product, index) => (
+                          <Link
+                            key={product.id || index}
+                            to={`/${product.catalog_categories?.slug || 'products'}/${product.slug}`}
+                            className="group relative transition-all duration-700 cursor-pointer"
+                            onMouseEnter={() => setIsSliderPaused(true)}
+                            onMouseLeave={() => setIsSliderPaused(false)}
+                          >
+                            <div className="bg-white/90 border border-gray-200/50 rounded-2xl p-4 shadow-lg hover:shadow-2xl transition-all duration-700 group-hover:scale-110 group-hover:-translate-y-6 overflow-hidden relative">
 
-                              <div className="text-center">
-                                <h3 className="font-semibold text-xs text-gray-900 mb-2 leading-tight group-hover:text-blue-600 transition-all duration-500">
-                                  {product.name}
-                                </h3>
-                                <p className="text-blue-600 font-bold text-sm mb-3 group-hover:text-purple-600 transition-all duration-500">
-                                  {product.price}
-                                </p>
-                                
-                                <button className="w-full bg-gradient-to-r from-blue-600 to-purple-600 text-white py-2 rounded-xl text-xs font-medium transition-all duration-700 transform group-hover:scale-110 shadow-lg relative overflow-hidden">
-                                  <span className="relative z-10">Customize Now</span>
-                                </button>
+                              <div className="absolute inset-0 bg-gradient-to-br from-blue-400/10 via-purple-400/10 to-pink-400/10 opacity-0 group-hover:opacity-100 transition-all duration-700"></div>
+
+                              <div className="relative z-10">
+                                <div className="text-center mb-3">
+                                  {product.primaryImage ? (
+                                    <img
+                                      src={product.primaryImage}
+                                      alt={product.name}
+                                      className="w-20 h-20 mx-auto mb-2 object-contain transform transition-all duration-700 ease-out group-hover:scale-150 group-hover:rotate-12"
+                                    />
+                                  ) : (
+                                    <div className="text-3xl mb-2 transform transition-all duration-700 ease-out group-hover:scale-150 group-hover:rotate-12">
+                                      {product.image || '📦'}
+                                    </div>
+                                  )}
+                                  <span className="inline-block text-xs text-gray-500 bg-white/80 px-3 py-1 rounded-full border border-gray-200/50 group-hover:bg-gradient-to-r group-hover:from-blue-100 group-hover:to-purple-100 group-hover:text-blue-700 transition-all duration-500">
+                                    {product.catalog_categories?.name || product.category}
+                                  </span>
+                                </div>
+
+                                <div className="text-center">
+                                  <h3 className="font-semibold text-xs text-gray-900 mb-2 leading-tight group-hover:text-blue-600 transition-all duration-500">
+                                    {product.name}
+                                  </h3>
+                                  <p className="text-blue-600 font-bold text-sm mb-3 group-hover:text-purple-600 transition-all duration-500">
+                                    {product.lowestPrice ? `From £${product.lowestPrice}` : product.price}
+                                  </p>
+
+                                  <button className="w-full bg-gradient-to-r from-blue-600 to-purple-600 text-white py-2 rounded-xl text-xs font-medium transition-all duration-700 transform group-hover:scale-110 shadow-lg relative overflow-hidden">
+                                    <span className="relative z-10">Customize Now</span>
+                                  </button>
+                                </div>
                               </div>
                             </div>
-                          </div>
-                        </div>
-                      ))}
+                          </Link>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
 
-          <div className="flex justify-center mt-6 space-x-3">
-            {Array.from({ length: Math.ceil(bestSellers.length / productsPerSlide) }).map((_, index) => (
-              <button
-                key={index}
-                onClick={() => setBestSellersSlide(index)}
-                className={`transition-all duration-500 rounded-full ${
-                  index === bestSellersSlide
-                    ? 'w-10 h-3 bg-gradient-to-r from-blue-500 to-purple-500 shadow-lg'
-                    : 'w-3 h-3 bg-gray-400/60 hover:bg-gray-500/80 shadow-md'
-                }`}
-              />
-            ))}
-          </div>
+          {!loadingFeatured && displayBestSellers.length > 0 && (
+            <div className="flex justify-center mt-6 space-x-3">
+              {Array.from({ length: Math.ceil(displayBestSellers.length / productsPerSlide) }).map((_, index) => (
+                <button
+                  key={index}
+                  onClick={() => setBestSellersSlide(index)}
+                  className={`transition-all duration-500 rounded-full ${
+                    index === bestSellersSlide
+                      ? 'w-10 h-3 bg-gradient-to-r from-blue-500 to-purple-500 shadow-lg'
+                      : 'w-3 h-3 bg-gray-400/60 hover:bg-gray-500/80 shadow-md'
+                  }`}
+                />
+              ))}
+            </div>
+          )}
         </div>
       </section>
 
@@ -398,51 +468,68 @@ const PromoGiftsApp = () => {
             HOT PRODUCTS
           </h2>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-6">
-            {hotProducts.map((product, index) => (
-              <div
-                key={index}
-                className="group cursor-pointer transform transition-all duration-700 hover:scale-105 h-full"
-              >
-                <div className="bg-white/95 rounded-2xl shadow-lg hover:shadow-2xl border border-gray-200/50 p-3 sm:p-4 lg:p-6 relative overflow-hidden transition-all duration-700 group-hover:shadow-blue-500/20 group-hover:-translate-y-6 h-full flex flex-col">
+          {loadingHot ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader className="h-12 w-12 text-blue-600 animate-spin" />
+            </div>
+          ) : displayHotProducts.length === 0 ? (
+            <div className="text-center py-12 text-gray-500">
+              <p>No hot products available at the moment. Check back soon!</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-6">
+              {displayHotProducts.map((product, index) => (
+                <Link
+                  key={product.id || index}
+                  to={`/${product.catalog_categories?.slug || 'products'}/${product.slug}`}
+                  className="group cursor-pointer transform transition-all duration-700 hover:scale-105 h-full"
+                >
+                  <div className="bg-white/95 rounded-2xl shadow-lg hover:shadow-2xl border border-gray-200/50 p-3 sm:p-4 lg:p-6 relative overflow-hidden transition-all duration-700 group-hover:shadow-blue-500/20 group-hover:-translate-y-6 h-full flex flex-col">
 
-                  <div className="absolute top-2 right-2 sm:top-4 sm:right-4 z-20 transform transition-all duration-500 group-hover:scale-125">
-                    {product.badge === "★" ? (
-                      <Star className="h-5 w-5 sm:h-6 sm:w-6 text-red-500 fill-current drop-shadow-lg" />
-                    ) : (
-                      <span className="text-green-500 text-lg sm:text-xl drop-shadow-lg">{product.badge}</span>
+                    {product.badge && (
+                      <div className="absolute top-2 right-2 sm:top-4 sm:right-4 z-20 transform transition-all duration-500 group-hover:scale-125">
+                        <Star className="h-5 w-5 sm:h-6 sm:w-6 text-red-500 fill-current drop-shadow-lg" />
+                      </div>
                     )}
-                  </div>
 
-                  <div className="text-center mb-3 sm:mb-4">
-                    <div className="text-4xl sm:text-5xl lg:text-6xl mb-2 sm:mb-3 transform transition-all duration-700 group-hover:scale-125 group-hover:rotate-12">
-                      {product.image}
+                    <div className="text-center mb-3 sm:mb-4">
+                      {product.primaryImage ? (
+                        <img
+                          src={product.primaryImage}
+                          alt={product.name}
+                          className="w-24 h-24 sm:w-28 sm:h-28 lg:w-32 lg:h-32 mx-auto mb-2 sm:mb-3 object-contain transform transition-all duration-700 group-hover:scale-125 group-hover:rotate-12"
+                        />
+                      ) : (
+                        <div className="text-4xl sm:text-5xl lg:text-6xl mb-2 sm:mb-3 transform transition-all duration-700 group-hover:scale-125 group-hover:rotate-12">
+                          {product.image || '📦'}
+                        </div>
+                      )}
                     </div>
-                  </div>
 
-                  <div className="text-center flex-grow flex flex-col justify-between">
-                    <div>
-                      <h3 className="font-bold text-gray-900 text-sm mb-2 uppercase tracking-wide transition-all duration-500 group-hover:text-blue-600 min-h-[2.5rem] flex items-center justify-center">
-                        {product.name}
-                      </h3>
-                      <p className="text-xs text-gray-600 mb-4 leading-relaxed transition-all duration-500 group-hover:text-gray-800 min-h-[3rem] flex items-center">
-                        {product.description}
+                    <div className="text-center flex-grow flex flex-col justify-between">
+                      <div>
+                        <h3 className="font-bold text-gray-900 text-sm mb-2 uppercase tracking-wide transition-all duration-500 group-hover:text-blue-600 min-h-[2.5rem] flex items-center justify-center">
+                          {product.name}
+                        </h3>
+                        <p className="text-xs text-gray-600 mb-4 leading-relaxed transition-all duration-500 group-hover:text-gray-800 min-h-[3rem] flex items-center">
+                          {product.subtitle || product.description}
+                        </p>
+                      </div>
+                      <p className="text-sm font-bold text-gray-900 transition-all duration-500 group-hover:text-blue-600">
+                        {product.lowestPrice ? `FROM £${product.lowestPrice} ON 250+ (MQ ${product.minQuantity || 25})` : product.price}
                       </p>
                     </div>
-                    <p className="text-sm font-bold text-gray-900 transition-all duration-500 group-hover:text-blue-600">
-                      {product.price}
-                    </p>
-                  </div>
 
-                  <div className="absolute bottom-3 left-3">
-                    <span className="text-xs text-gray-400 bg-white/80 px-3 py-1 rounded-full border border-gray-200/50 shadow-md">
-                      {product.category}
-                    </span>
+                    <div className="absolute bottom-3 left-3">
+                      <span className="text-xs text-gray-400 bg-white/80 px-3 py-1 rounded-full border border-gray-200/50 shadow-md">
+                        {product.catalog_categories?.name || product.category}
+                      </span>
+                    </div>
                   </div>
-                </div>
-              </div>
-            ))}
-          </div>
+                </Link>
+              ))}
+            </div>
+          )}
         </div>
       </section>
 

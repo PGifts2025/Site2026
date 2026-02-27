@@ -18,9 +18,19 @@ import AdminSeedData from './pages/AdminSeedData';
 import Checkout from './pages/Checkout';
 import OrderConfirmation from './pages/OrderConfirmation';
 import HeaderBar from './components/HeaderBar';
-import AuthProvider from './components/AuthProvider';
+import { AuthProvider } from './context/AuthContext';
 import { CartProvider } from './context/CartContext';
 import Cart from './components/Cart';
+
+// Customer Account Components
+import CustomerGuard from './components/auth/CustomerGuard';
+import CustomerDashboard from './pages/account/CustomerDashboard';
+import CustomerOrders from './pages/account/CustomerOrders';
+import CustomerOrderDetail from './pages/account/CustomerOrderDetail';
+import CustomerQuotes from './pages/account/CustomerQuotes';
+import CustomerDesigns from './pages/account/CustomerDesigns';
+import CustomerAddresses from './pages/account/CustomerAddresses';
+import CustomerSettings from './pages/account/CustomerSettings';
 
 // Dynamic Catalog Category Pages
 import BagsCategory from './pages/categories/BagsCategory';
@@ -37,6 +47,16 @@ import CablesCategory from './pages/categories/CablesCategory';
 
 // Dynamic Product Detail
 import ProductDetail from './pages/ProductDetail';
+
+// Admin Components
+import AdminGuard from './components/admin/AdminGuard';
+import AdminDashboard from './pages/admin/AdminDashboard';
+import AdminOrders from './pages/admin/AdminOrders';
+import AdminOrderDetail from './pages/admin/AdminOrderDetail';
+import AdminCustomers from './pages/admin/AdminCustomers';
+import AdminCustomerDetail from './pages/admin/AdminCustomerDetail';
+import AdminTeam from './pages/admin/AdminTeam';
+import AdminSettings from './pages/admin/AdminSettings';
 
 function App() {
   return (
@@ -89,8 +109,24 @@ function App() {
             {/* Tools */}
             <Route path="/designer" element={<Designer />} />
 
-            {/* Admin */}
-            <Route path="/admin/products" element={<ProductManager />} />
+            {/* Customer Account - Protected Routes */}
+            <Route path="/account" element={<CustomerGuard><CustomerDashboard /></CustomerGuard>} />
+            <Route path="/account/orders" element={<CustomerGuard><CustomerOrders /></CustomerGuard>} />
+            <Route path="/account/orders/:id" element={<CustomerGuard><CustomerOrderDetail /></CustomerGuard>} />
+            <Route path="/account/quotes" element={<CustomerGuard><CustomerQuotes /></CustomerGuard>} />
+            <Route path="/account/designs" element={<CustomerGuard><CustomerDesigns /></CustomerGuard>} />
+            <Route path="/account/addresses" element={<CustomerGuard><CustomerAddresses /></CustomerGuard>} />
+            <Route path="/account/settings" element={<CustomerGuard><CustomerSettings /></CustomerGuard>} />
+
+            {/* Admin - Protected Routes */}
+            <Route path="/admin" element={<AdminGuard><AdminDashboard /></AdminGuard>} />
+            <Route path="/admin/orders" element={<AdminGuard><AdminOrders /></AdminGuard>} />
+            <Route path="/admin/orders/:id" element={<AdminGuard><AdminOrderDetail /></AdminGuard>} />
+            <Route path="/admin/customers" element={<AdminGuard><AdminCustomers /></AdminGuard>} />
+            <Route path="/admin/customers/:id" element={<AdminGuard><AdminCustomerDetail /></AdminGuard>} />
+            <Route path="/admin/products" element={<AdminGuard><ProductManager /></AdminGuard>} />
+            <Route path="/admin/team" element={<AdminGuard><AdminTeam /></AdminGuard>} />
+            <Route path="/admin/settings" element={<AdminGuard><AdminSettings /></AdminGuard>} />
             <Route path="/admin/seed-data" element={<AdminSeedData />} />
 
             {/* Checkout */}

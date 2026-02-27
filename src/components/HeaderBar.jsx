@@ -1,9 +1,10 @@
 // src/components/HeaderBar.jsx
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Phone, Search, ShoppingCart, User, LogOut, Menu, X } from 'lucide-react';
-import { useAuth } from './AuthProvider';
+import { Phone, Search, ShoppingCart, User, LogOut, Menu, X, ChevronDown, Package, FileText, MapPin, Settings } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
 import { useCart } from '../context/CartContext';
+import AuthModal from './auth/AuthModal';
 
 const categories = [
   { name: 'Design Tool', path: '/designer' },
@@ -21,46 +22,20 @@ const categories = [
 ];
 
 function HeaderBar() {
-  const { user, signIn, signOut } = useAuth();
+  const { user, signOut } = useAuth();
   const { cart, toggleCart } = useCart();
   const [searchQuery, setSearchQuery] = useState('');
-  const [showAuth, setShowAuth] = useState(false);
-  const [authMode, setAuthMode] = useState('login');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [showUserMenu, setShowUserMenu] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   // Calculate cart count - number of unique items (line items)
   const cartCount = cart.length;
 
-  const handleAuth = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-    setError('');
-
-    try {
-      if (authMode === 'login') {
-        const { error } = await signIn(email, password);
-        if (error) throw error;
-        setShowAuth(false);
-        setEmail('');
-        setPassword('');
-      } else {
-        // For signup, you might want to add signUp to useAuth
-        setError('Sign up not implemented yet. Please contact admin.');
-      }
-    } catch (error) {
-      setError(error.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const handleSignOut = async () => {
     try {
       await signOut();
+      setShowUserMenu(false);
     } catch (error) {
       console.error('Error signing out:', error);
     }
@@ -72,7 +47,7 @@ function HeaderBar() {
         {/* Top Header */}
         <div className="flex justify-between items-center py-4">
           {/* Logo */}
-          <div className="flex items-center">
+          <Link to="/" className="flex items-center hover:opacity-80 transition-opacity cursor-pointer">
             <div className="bg-red-500 text-white rounded-full w-10 h-10 md:w-12 md:h-12 flex items-center justify-center font-bold text-lg md:text-xl mr-2 md:mr-4">
               PG
             </div>
@@ -84,7 +59,7 @@ function HeaderBar() {
                 <span className="text-sm font-semibold text-gray-700">01844 600900</span>
               </div>
             </div>
-          </div>
+          </Link>
 
           {/* Desktop Search Bar */}
           <div className="hidden lg:flex flex-1 max-w-2xl mx-8">
@@ -107,23 +82,81 @@ function HeaderBar() {
             {/* Desktop User Menu */}
             <div className="hidden md:flex items-center space-x-4">
               {user ? (
-                <div className="flex items-center space-x-4">
-                  <span className="text-sm text-gray-600 hidden lg:block">{user.email}</span>
+                <div className="relative">
                   <button
-                    onClick={handleSignOut}
+                    onClick={() => setShowUserMenu(!showUserMenu)}
                     className="flex items-center space-x-2 text-gray-700 hover:text-red-500 transition-colors"
                   >
-                    <LogOut className="h-5 w-5" />
-                    <span className="hidden lg:inline">Sign Out</span>
+                    <User className="h-6 w-6" />
+                    <span className="hidden lg:inline">{user.email?.split('@')[0]}</span>
+                    <ChevronDown className="h-4 w-4" />
                   </button>
+
+                  {/* Dropdown Menu */}
+                  {showUserMenu && (
+                    <div className="absolute right-0 mt-2 w-56 bg-white rounded-lg shadow-xl border border-gray-200 py-2 z-50">
+                      <div className="px-4 py-2 border-b border-gray-200">
+                        <p className="text-sm font-semibold text-gray-900">{user.email}</p>
+                      </div>
+                      <Link
+                        to="/account"
+                        onClick={() => setShowUserMenu(false)}
+                        className="flex items-center space-x-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                      >
+                        <User className="h-4 w-4" />
+                        <span>My Account</span>
+                      </Link>
+                      <Link
+                        to="/account/orders"
+                        onClick={() => setShowUserMenu(false)}
+                        className="flex items-center space-x-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                      >
+                        <Package className="h-4 w-4" />
+                        <span>My Orders</span>
+                      </Link>
+                      <Link
+                        to="/account/quotes"
+                        onClick={() => setShowUserMenu(false)}
+                        className="flex items-center space-x-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                      >
+                        <FileText className="h-4 w-4" />
+                        <span>My Quotes</span>
+                      </Link>
+                      <Link
+                        to="/account/addresses"
+                        onClick={() => setShowUserMenu(false)}
+                        className="flex items-center space-x-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                      >
+                        <MapPin className="h-4 w-4" />
+                        <span>Addresses</span>
+                      </Link>
+                      <Link
+                        to="/account/settings"
+                        onClick={() => setShowUserMenu(false)}
+                        className="flex items-center space-x-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                      >
+                        <Settings className="h-4 w-4" />
+                        <span>Settings</span>
+                      </Link>
+                      <div className="border-t border-gray-200 mt-2 pt-2">
+                        <button
+                          onClick={handleSignOut}
+                          className="flex items-center space-x-2 px-4 py-2 text-sm text-red-600 hover:bg-gray-50 w-full"
+                        >
+                          <LogOut className="h-4 w-4" />
+                          <span>Sign Out</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <button
-                  onClick={() => setShowAuth(true)}
+                  onClick={() => setShowAuthModal(true)}
                   className="flex items-center space-x-2 text-gray-700 hover:text-red-500 transition-colors"
                 >
                   <User className="h-6 w-6" />
-                  <span className="hidden lg:inline">My Account</span>
+                  <span className="hidden lg:inline">Sign In</span>
                 </button>
               )}
             </div>
@@ -196,21 +229,37 @@ function HeaderBar() {
           <div className="max-w-7xl mx-auto px-4 py-2">
             <div className="flex flex-col space-y-1">
               {user ? (
-                <button
-                  onClick={handleSignOut}
-                  className="text-white hover:text-red-400 py-2 px-4 text-left transition-colors"
-                >
-                  Sign Out
-                </button>
+                <>
+                  <Link
+                    to="/account"
+                    onClick={() => setMobileMenuOpen(false)}
+                    className="text-white hover:text-red-400 py-2 px-4 transition-colors"
+                  >
+                    My Account
+                  </Link>
+                  <Link
+                    to="/account/orders"
+                    onClick={() => setMobileMenuOpen(false)}
+                    className="text-white hover:text-red-400 py-2 px-4 transition-colors"
+                  >
+                    My Orders
+                  </Link>
+                  <button
+                    onClick={handleSignOut}
+                    className="text-white hover:text-red-400 py-2 px-4 text-left transition-colors"
+                  >
+                    Sign Out
+                  </button>
+                </>
               ) : (
                 <button
                   onClick={() => {
-                    setShowAuth(true);
+                    setShowAuthModal(true);
                     setMobileMenuOpen(false);
                   }}
                   className="text-white hover:text-red-400 py-2 px-4 text-left transition-colors"
                 >
-                  My Account
+                  Sign In
                 </button>
               )}
               {categories.map((category, index) => (
@@ -275,78 +324,7 @@ function HeaderBar() {
       </div>
 
       {/* Auth Modal */}
-      {showAuth && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-8 max-w-md w-full mx-4">
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-2xl font-bold">
-                {authMode === 'login' ? 'Sign In' : 'Sign Up'}
-              </h2>
-              <button
-                onClick={() => {
-                  setShowAuth(false);
-                  setError('');
-                  setEmail('');
-                  setPassword('');
-                }}
-                className="text-gray-400 hover:text-gray-600 text-3xl"
-              >
-                ×
-              </button>
-            </div>
-
-            {error && (
-              <div className="mb-4 p-3 bg-red-100 text-red-700 rounded-md text-sm">
-                {error}
-              </div>
-            )}
-
-            <form onSubmit={handleAuth} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Email
-                </label>
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Password
-                </label>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  required
-                />
-              </div>
-
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full px-4 py-2 bg-red-500 text-white rounded-md hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {loading ? 'Loading...' : (authMode === 'login' ? 'Sign In' : 'Sign Up')}
-              </button>
-            </form>
-
-            <div className="mt-4 text-center">
-              <p className="text-sm text-gray-600">
-                {authMode === 'login'
-                  ? "Need an admin account? Contact your administrator."
-                  : "Already have an account?"}
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
+      <AuthModal isOpen={showAuthModal} onClose={() => setShowAuthModal(false)} />
     </header>
   );
 }
