@@ -922,6 +922,30 @@ export const getDesignerUrl = (productKey, color = null, view = null) => {
   return url;
 };
 
+/**
+ * Get print pricing data for a product
+ * Used by ProductDetailPage to show position/colour/coverage selectors and calculate print costs.
+ * @param {string} productId - Catalog product UUID
+ * @returns {Promise<Array>} Array of print pricing rows
+ */
+export const getProductPrintPricing = async (productId) => {
+  if (isMockAuth) return [];
+
+  try {
+    const client = getSupabaseClient();
+    const { data, error } = await client
+      .from('catalog_print_pricing')
+      .select('*')
+      .eq('catalog_product_id', productId);
+
+    if (error) throw error;
+    return data || [];
+  } catch (error) {
+    console.error('Error fetching print pricing:', error);
+    return [];
+  }
+};
+
 // =====================================================
 // EXPORT ALL FUNCTIONS
 // =====================================================
@@ -949,6 +973,7 @@ export default {
   // Pricing
   getProductPricingTiers,
   calculatePriceForQuantity,
+  getProductPrintPricing,
 
   // Colors & Images
   getProductColors,

@@ -26,6 +26,7 @@ import {
   ChevronUp,
   Plus,
   Minus,
+  X,
   AlertCircle,
   Loader,
   Palette
@@ -34,11 +35,17 @@ import {
   getCatalogProductBySlug,
   calculatePriceForQuantity,
   checkProductCustomizable,
-  getDesignerUrl
+  getDesignerUrl,
+  getProductPrintPricing
 } from '../services/productCatalogService';
 
 // Helper constants and functions for apparel size selector
 const APPAREL_SIZES = ['S', 'M', 'L', 'XL', 'XXL'];
+
+// Print position labels (clothing model) — sliced by max_print_positions
+const ALL_POSITION_LABELS = ['Front', 'Back', 'Left Breast', 'Right Breast', 'Right Arm'];
+// Colour count options for each print position dropdown
+const COLOUR_OPTIONS = ['None', '1 col', '2 col', '3 col', '4 col', '5 col', '6 col'];
 const isApparelProduct = (product) => {
   if (!product) return false;
   const apparelSlugs = ['hoodie', 't-shirts', 'polo', 'sweatshirts'];
@@ -144,6 +151,15 @@ const ProductDetailPage = ({ productSlug }) => {
   const [features, setFeatures] = useState([]);
   const [specifications, setSpecifications] = useState({});
   const [currentPrice, setCurrentPrice] = useState(null);
+  // Print pricing state
+  const [printPricingData, setPrintPricingData] = useState([]);
+  // Clothing model: { 'Front': '1 col', 'Back': 'None', ... }
+  const [printPositions, setPrintPositions] = useState({});
+  // Flat model: whether second position is toggled on
+  const [secondPosition, setSecondPosition] = useState(false);
+  // Coverage model: selected coverage type
+  const [coverageType, setCoverageType] = useState('front_only');
+
   // Multi-color selections for apparel (replaces simple sizeQuantities)
   const [colorSelections, setColorSelections] = useState([
     {
@@ -156,6 +172,12 @@ const ProductDetailPage = ({ productSlug }) => {
   ]);
   const [nextColorId, setNextColorId] = useState(2);
   const [showAllColors, setShowAllColors] = useState(false);
+
+  // Clothing model: colour order rows (id, colorId, colorName, colorCode, sizes)
+  const [colorOrderRows, setColorOrderRows] = useState([
+    { id: 1, colorId: null, colorName: '', colorCode: '', sizes: { S: 0, M: 0, L: 0, XL: 0, XXL: 0 } }
+  ]);
+  const [nextColorOrderId, setNextColorOrderId] = useState(2);
 
   // Get available colors (exclude already selected ones)
   const getAvailableColors = (currentSelectionId) => {
@@ -185,15 +207,16 @@ const ProductDetailPage = ({ productSlug }) => {
     return Object.values(selection.sizes).some(qty => qty > 0);
   };
 
-  // Check if order is valid for apparel
+  // Total units across all colour order rows and sizes (clothing model)
+  const getRowSubtotal = (row) => Object.values(row.sizes || {}).reduce((sum, v) => sum + (v || 0), 0);
+  const clothingTotalQty = colorOrderRows.reduce((sum, r) => sum + getRowSubtotal(r), 0);
+
+  // Check if order meets minimum quantity
   const isOrderValid = () => {
-    if (totalQuantity < (product?.min_order_quantity || 0)) return false;
-
-    if (isApparelProduct(product)) {
-      return colorSelections.some(sel => sel.colorId && getColorSubtotal(sel) > 0);
+    if (product?.pricing_model === 'clothing') {
+      return clothingTotalQty >= 25;
     }
-
-    return true;
+    return quantity >= (product?.min_order_quantity || 0);
   };
 
   /**
@@ -294,6 +317,45 @@ const ProductDetailPage = ({ productSlug }) => {
         setQuantityInput(data.min_order_quantity.toString());
       }
 
+      // Initialise colour order rows with the default colour (White for apparel, first otherwise)
+      if (data.pricing_model === 'clothing' && data.colors && data.colors.length > 0) {
+        const apparelSlugs = ['hoodie', 't-shirts', 'polo', 'sweatshirts'];
+        const isApparel = data.category?.slug === 'clothing' || apparelSlugs.includes(data.slug);
+        let defaultColor = data.colors[0];
+        if (isApparel) {
+          const whiteColor = data.colors.find(c =>
+            c.color_name?.toLowerCase() === 'white' || c.color_code?.toLowerCase() === 'white'
+          );
+          if (whiteColor) defaultColor = whiteColor;
+        }
+        setColorOrderRows([{
+          id: 1,
+          colorId: defaultColor.id,
+          colorName: defaultColor.color_name || '',
+          colorCode: defaultColor.color_code || '',
+          sizes: { S: 0, M: 0, L: 0, XL: 0, XXL: 0 }
+        }]);
+        setNextColorOrderId(2);
+      }
+
+      // Load print pricing data (falls back to [] gracefully if table doesn't exist yet)
+      try {
+        const printData = await getProductPrintPricing(data.id);
+        setPrintPricingData(printData);
+        console.log('[PrintPricing] Loaded', printData.length, 'rows for product', data.id);
+
+        // Initialise print position selectors for clothing model
+        if (data.pricing_model === 'clothing') {
+          const labels = ALL_POSITION_LABELS.slice(0, data.max_print_positions || 4);
+          const initial = {};
+          labels.forEach((lbl, i) => { initial[lbl] = i === 0 ? '1 col' : 'None'; });
+          setPrintPositions(initial);
+          console.log('[PrintPricing] Initial positions:', initial);
+        }
+      } catch (printErr) {
+        console.warn('[PrintPricing] Could not load print pricing (table may not exist yet):', printErr.message);
+      }
+
       setLoading(false);
     } catch (err) {
       console.error('Error loading product data:', err);
@@ -308,14 +370,8 @@ const ProductDetailPage = ({ productSlug }) => {
   const updatePrice = async () => {
     if (!product) return;
 
-    const qty = isApparelProduct(product)
-      ? colorSelections.reduce((total, selection) => {
-          return total + getColorSubtotal(selection);
-        }, 0)
-      : quantity;
-
     try {
-      const priceInfo = await calculatePriceForQuantity(product.id, qty);
+      const priceInfo = await calculatePriceForQuantity(product.id, quantity);
       setCurrentPrice(priceInfo);
     } catch (err) {
       console.error('Error calculating price:', err);
@@ -327,19 +383,19 @@ const ProductDetailPage = ({ productSlug }) => {
     loadProductData();
   }, [productSlug]);
 
-  // Update price when quantity changes
+  // Update price when quantity or print selections change
   useEffect(() => {
     if (product) {
       updatePrice();
     }
-  }, [quantity, product, colorSelections]);
+  }, [quantity, product, colorSelections, printPositions, secondPosition, coverageType, selectedColor, colorOrderRows]);
 
-  // Animate price changes
+  // Animate price changes (quantity, colour switch, or order row update)
   useEffect(() => {
     setAnimatePrice(true);
     const timer = setTimeout(() => setAnimatePrice(false), 300);
     return () => clearTimeout(timer);
-  }, [quantity]);
+  }, [quantity, selectedColor, colorOrderRows]);
 
   // Reset image selection when color changes
   useEffect(() => {
@@ -488,6 +544,53 @@ const ProductDetailPage = ({ productSlug }) => {
     setColorSelections(prev => prev.filter(sel => sel.id !== selectionId));
   };
 
+  // Handle print position colour count change (clothing model)
+  const handlePositionChange = (label, value) => {
+    setPrintPositions(prev => ({ ...prev, [label]: value }));
+  };
+
+  // Colour order row handlers (clothing model)
+  const handleColorOrderColorChange = (rowId, colorCode) => {
+    const colorObj = colors.find(c => c.color_code === colorCode);
+    setColorOrderRows(prev => prev.map(row =>
+      row.id === rowId
+        ? { ...row, colorId: colorObj?.id || null, colorName: colorObj?.color_name || '', colorCode }
+        : row
+    ));
+  };
+
+  const handleColorOrderSizeChange = (rowId, size, value) => {
+    const qty = Math.max(0, parseInt(value) || 0);
+    setColorOrderRows(prev => prev.map(row =>
+      row.id === rowId ? { ...row, sizes: { ...row.sizes, [size]: qty } } : row
+    ));
+  };
+
+  const handleColorOrderAdd = () => {
+    const usedCodes = colorOrderRows.map(r => r.colorCode).filter(Boolean);
+    const nextColor = colors.find(c => !usedCodes.includes(c.color_code));
+    setColorOrderRows(prev => [...prev, {
+      id: nextColorOrderId,
+      colorId: nextColor?.id || null,
+      colorName: nextColor?.color_name || '',
+      colorCode: nextColor?.color_code || '',
+      sizes: { S: 0, M: 0, L: 0, XL: 0, XXL: 0 }
+    }]);
+    setNextColorOrderId(prev => prev + 1);
+  };
+
+  const handleColorOrderRemove = (rowId) => {
+    if (colorOrderRows.length <= 1) {
+      setColorOrderRows([{
+        id: nextColorOrderId, colorId: null, colorName: '', colorCode: '',
+        sizes: { S: 0, M: 0, L: 0, XL: 0, XXL: 0 }
+      }]);
+      setNextColorOrderId(prev => prev + 1);
+      return;
+    }
+    setColorOrderRows(prev => prev.filter(row => row.id !== rowId));
+  };
+
   // Handle clicking a color swatch in Available Colors section
   const handleColorSwatchClick = (color) => {
     console.log('[Color Swatch Click] Color:', color.color_name, 'ID:', color.id);
@@ -515,14 +618,8 @@ const ProductDetailPage = ({ productSlug }) => {
       return { price_per_unit: 0 };
     }
 
-    const qty = isApparelProduct(product)
-      ? colorSelections.reduce((total, selection) => {
-          return total + getColorSubtotal(selection);
-        }, 0)
-      : quantity;
-
     return pricingTiers.find(tier =>
-      qty >= tier.min_quantity && (tier.max_quantity === null || qty <= tier.max_quantity)
+      quantity >= tier.min_quantity && (tier.max_quantity === null || quantity <= tier.max_quantity)
     ) || pricingTiers[0];
   };
 
@@ -688,13 +785,173 @@ const ProductDetailPage = ({ productSlug }) => {
   };
 
   const currentTier = getCurrentTier();
-  const totalQuantity = isApparelProduct(product)
-    ? colorSelections.reduce((total, selection) => {
-        return total + getColorSubtotal(selection);
-      }, 0)
+  // For clothing, use sum of colour order rows (fall back to quantity for tier preview when no rows filled)
+  const totalQuantity = product?.pricing_model === 'clothing'
+    ? (clothingTotalQty > 0 ? clothingTotalQty : quantity)
     : quantity;
   const totalPrice = currentPrice ? currentPrice.total.toFixed(2) : (currentTier.price_per_unit * totalQuantity).toFixed(2);
   const isCustomizable = product ? checkProductCustomizable(product) : false;
+
+  // Helper: get active print position labels based on max_print_positions
+  const getPrintPositionLabels = () => {
+    const count = product?.max_print_positions || 4;
+    return ALL_POSITION_LABELS.slice(0, count);
+  };
+
+  // Determine colour_variant for print pricing lookup.
+  // Check both color_code and color_name (case-insensitive) so 'White', 'WHITE', 'white' all match.
+  // 'natural' explicitly uses 'coloured' pricing.
+  const selectedColorObj = colors.find(c => c.color_code === selectedColor) || colors[0] || {};
+  const isWhiteColour =
+    selectedColorObj?.color_code?.toLowerCase() === 'white' ||
+    selectedColorObj?.color_name?.toLowerCase() === 'white';
+  const colourVariant = isWhiteColour ? 'white' : 'coloured';
+
+  console.log(
+    `[ColourVariant] color_code="${selectedColor}" color_name="${selectedColorObj?.color_name}" → variant="${colourVariant}"`
+  );
+
+  // Filter print pricing rows to only those matching the current colour variant
+  const activePrintPricing = printPricingData.filter(p => p.colour_variant === colourVariant);
+  console.log(`[ColourVariant] activePrintPricing rows: ${activePrintPricing.length} (total: ${printPricingData.length})`);
+
+  // Helper: find matching print pricing row by quantity, colour_count, and variant (already filtered)
+  const findPrintRow = (colCount, qty) =>
+    activePrintPricing.find(p =>
+      p.colour_count === colCount &&
+      p.print_cost_per_position !== null &&
+      (p.min_quantity == null || qty >= p.min_quantity) &&
+      (p.max_quantity == null || qty <= p.max_quantity)
+    );
+
+  // Helper: find garment cost row for a given qty (garment_cost same across colour_counts for that tier)
+  const findGarmentRow = (qty) =>
+    activePrintPricing.find(p =>
+      p.garment_cost != null &&
+      (p.min_quantity == null || qty >= p.min_quantity) &&
+      (p.max_quantity == null || qty <= p.max_quantity)
+    );
+
+  // Determine colour_variant for a specific colour code (used in blended price calculation)
+  const getRowVariant = (colorCode) => {
+    if (!colorCode) return 'coloured';
+    const colorObj = colors.find(c => c.color_code === colorCode);
+    const isWhite = colorObj?.color_code?.toLowerCase() === 'white' || colorObj?.color_name?.toLowerCase() === 'white';
+    return isWhite ? 'white' : 'coloured';
+  };
+
+  // Calculate weighted-average price across all colour order rows (clothing model only)
+  // Each row uses its own white/coloured variant pricing for garment cost + print cost
+  const getClothingBlendedPrice = () => {
+    const rowsWithQty = colorOrderRows.filter(r => getRowSubtotal(r) > 0 && r.colorCode);
+    if (rowsWithQty.length === 0) return null;
+    const totalQty = rowsWithQty.reduce((sum, r) => sum + getRowSubtotal(r), 0);
+    if (totalQty === 0) return null;
+
+    let weightedSum = 0;
+    rowsWithQty.forEach(row => {
+      const rowSubtotal = getRowSubtotal(row);
+      const variant = getRowVariant(row.colorCode);
+      const variantRows = printPricingData.filter(p => p.colour_variant === variant);
+      if (variantRows.length === 0) return;
+
+      const garmentRow = variantRows.find(p =>
+        p.garment_cost != null &&
+        (p.min_quantity == null || totalQty >= p.min_quantity) &&
+        (p.max_quantity == null || totalQty <= p.max_quantity)
+      );
+      const garmentCost = parseFloat(garmentRow?.garment_cost ?? 0);
+
+      let printCost = 0;
+      Object.entries(printPositions).forEach(([, colOpt]) => {
+        if (colOpt === 'None') return;
+        const colCount = parseInt(colOpt);
+        const printRow = variantRows.find(p =>
+          p.colour_count === colCount &&
+          p.print_cost_per_position != null &&
+          (p.min_quantity == null || totalQty >= p.min_quantity) &&
+          (p.max_quantity == null || totalQty <= p.max_quantity)
+        );
+        printCost += parseFloat(printRow?.print_cost_per_position ?? 0);
+      });
+
+      const rowPrice = garmentCost + printCost;
+      console.log(`[BlendedPrice] ${row.colorName} (${variant}) × ${rowSubtotal} @ £${rowPrice.toFixed(2)}`);
+      weightedSum += rowPrice * rowSubtotal;
+    });
+
+    const blended = weightedSum / totalQty;
+    console.log(`[BlendedPrice] Weighted avg: £${blended.toFixed(2)} (${totalQty} units)`);
+    return blended;
+  };
+
+  // Calculate effective price per unit including print costs
+  const getEffectivePricePerUnit = () => {
+    // Fallback to tier price when no print pricing data exists for this product
+    const tierBase = parseFloat(currentPrice?.price_per_unit || currentTier.price_per_unit) || 0;
+
+    if (!product || activePrintPricing.length === 0) {
+      if (printPricingData.length > 0) {
+        console.log(`[PrintCost] variant="${colourVariant}" — no rows matched, falling back to tier price £${tierBase}`);
+      }
+      return tierBase;
+    }
+
+    if (product.pricing_model === 'clothing') {
+      // Use weighted-average blended price when colour order rows have quantities filled in
+      const blended = getClothingBlendedPrice();
+      if (blended !== null) return blended;
+
+      // Single-colour fallback: use the currently selected swatch variant
+      const garmentRow = findGarmentRow(totalQuantity);
+      const garmentCost = parseFloat(garmentRow?.garment_cost ?? 0);
+
+      let totalPrintCost = 0;
+      Object.entries(printPositions).forEach(([pos, colOpt]) => {
+        if (colOpt === 'None') return;
+        const colCount = parseInt(colOpt);
+        const printRow = findPrintRow(colCount, totalQuantity);
+        const printCost = parseFloat(printRow?.print_cost_per_position ?? 0);
+        console.log(
+          `[PrintCost] ${pos} ${colOpt} col | matched row: qty=${printRow?.min_quantity}-${printRow?.max_quantity ?? '∞'} variant=${colourVariant} → print £${printCost}`
+        );
+        totalPrintCost += printCost;
+      });
+
+      const total = garmentCost + totalPrintCost;
+      console.log(
+        `[PrintCost] TOTAL: garment £${garmentCost} + print £${totalPrintCost} = £${total.toFixed(2)}` +
+        ` (qty=${totalQuantity}, variant="${colourVariant}")`
+      );
+      return total;
+    }
+
+    if (product.pricing_model === 'flat' && (product.max_print_positions || 1) >= 2 && secondPosition) {
+      const row = activePrintPricing.find(p => p.extra_position_price != null);
+      console.log(`[PrintCost] Extra position → £${row?.extra_position_price ?? 0}`);
+      return tierBase + parseFloat(row?.extra_position_price ?? 0);
+    }
+
+    if (product.pricing_model === 'coverage') {
+      const row = activePrintPricing.find(p => p.coverage_type === coverageType);
+      console.log(`[PrintCost] Coverage ${coverageType} → £${row?.coverage_price_per_unit ?? tierBase}`);
+      return row ? parseFloat(row.coverage_price_per_unit) : tierBase;
+    }
+
+    return tierBase;
+  };
+
+  const effectivePricePerUnit = getEffectivePricePerUnit();
+  const effectiveTotalPrice = (effectivePricePerUnit * totalQuantity).toFixed(2);
+
+  // Build breakdown string for clothing model
+  const getPrintBreakdown = () => {
+    if (product?.pricing_model !== 'clothing') return null;
+    const parts = Object.entries(printPositions)
+      .filter(([, v]) => v !== 'None')
+      .map(([pos, col]) => `${pos} (${col})`);
+    return parts.length ? parts.join(' + ') : null;
+  };
   const filteredImages = getFilteredImages();
 
   // Loading State
@@ -1122,192 +1379,181 @@ const ProductDetailPage = ({ productSlug }) => {
 
                 <div className="p-4 lg:p-6 space-y-6">
 
-                  {/* Quantity Selector */}
-                  <div>
-                    {isApparelProduct(product) ? (
-                      <div className='space-y-4'>
-                        <label className='block text-sm font-medium text-gray-700'>
-                          Configure Your Order
-                        </label>
+                  {/* Quantity / Colour Order Selector */}
+                  {product.pricing_model === 'clothing' ? (
+                    /* Clothing: inline colour + size inputs per row */
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Configure Your Order</label>
 
-                        {/* Color Rows */}
-                        <div className='space-y-4'>
-                          {colorSelections.map((selection, index) => (
-                            <div
-                              key={selection.id}
-                              className={`p-4 rounded-xl border space-y-3 transition-all
-                                ${selection.colorHex
-                                  ? 'bg-white border-l-4 border-gray-200'
-                                  : 'bg-gray-50 border-gray-200'}`}
-                              style={selection.colorHex ? { borderLeftColor: selection.colorHex } : {}}
-                            >
-                              {/* Color Header Row */}
-                              <div className='flex items-center justify-between gap-3'>
-                                {/* Color label with prominent swatch */}
-                                <div className='flex items-center gap-3'>
-                                  {/* Color swatch - show selected color or placeholder */}
-                                  <div
-                                    className={`w-6 h-6 rounded-full border-2 transition-all ${
-                                      selection.colorHex
-                                        ? 'border-white shadow-md ring-1 ring-gray-200'
-                                        : 'border-gray-300 bg-gray-200'
-                                    }`}
-                                    style={selection.colorHex ? { backgroundColor: selection.colorHex } : {}}
-                                  />
-                                  <span className='text-sm font-medium text-gray-700'>
-                                    {selection.colorName || `Color ${index + 1}`}
-                                  </span>
-                                </div>
-
-                                {/* Remove Button */}
-                                <button
-                                  onClick={() => handleRemoveColor(selection.id)}
-                                  className='p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50
-                                             rounded-lg transition-colors'
-                                  title='Remove this color'
-                                >
-                                  <svg className='w-4 h-4' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
-                                    <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16' />
-                                  </svg>
-                                </button>
-                              </div>
-
-                              {/* Color Dropdown - full width on its own row */}
-                              <div className='relative'>
+                      <div className="space-y-3">
+                        {colorOrderRows.map((row) => {
+                          const rowSubtotal = getRowSubtotal(row);
+                          const rowColorObj = colors.find(c => c.color_code === row.colorCode);
+                          const dotColor = rowColorObj?.hex_value || '#e5e7eb';
+                          return (
+                            <div key={row.id}>
+                              {/* Line 1: colour dot + dropdown + delete */}
+                              <div className="flex items-center gap-2">
+                                <div
+                                  className="w-3 h-3 rounded-full flex-shrink-0 border border-gray-300"
+                                  style={{ backgroundColor: dotColor }}
+                                />
                                 <select
-                                  value={selection.colorId || ''}
-                                  onChange={(e) => handleColorSelectRow(selection.id, e.target.value)}
-                                  className='w-full appearance-none bg-white border border-gray-300 rounded-lg
-                                             py-2.5 pl-3 pr-8 text-sm font-medium focus:ring-2
-                                             focus:ring-blue-500 focus:border-transparent cursor-pointer'
+                                  value={row.colorCode || ''}
+                                  onChange={(e) => handleColorOrderColorChange(row.id, e.target.value)}
+                                  className="flex-1 border border-gray-300 rounded-lg py-1.5 px-2 text-sm focus:ring-1 focus:ring-blue-500 focus:border-transparent"
                                 >
-                                  <option value=''>Select a color...</option>
-                                  {getAvailableColors(selection.id).map(color => (
-                                    <option key={color.id} value={color.id}>
-                                      {color.color_name}
-                                    </option>
+                                  {colors.map(c => (
+                                    <option key={c.id} value={c.color_code}>{c.color_name}</option>
                                   ))}
                                 </select>
-                                {/* Dropdown arrow */}
-                                <div className='absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none'>
-                                  <svg className='w-4 h-4 text-gray-400' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
-                                    <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M19 9l-7 7-7-7' />
-                                  </svg>
-                                </div>
+                                <button
+                                  onClick={() => handleColorOrderRemove(row.id)}
+                                  className="w-6 h-6 flex items-center justify-center text-gray-300 hover:text-red-400 transition-colors flex-shrink-0"
+                                  title="Remove row"
+                                >
+                                  <X className="h-3.5 w-3.5" />
+                                </button>
                               </div>
-
-                              {/* Size Inputs - Show when color is selected (check for non-empty string) */}
-                              {selection.colorId && selection.colorId !== '' ? (
-                                <>
-                                  {console.log('[Render] Showing size inputs for selection', selection.id, 'colorId:', selection.colorId, 'colorName:', selection.colorName)}
-                                  <div className='grid grid-cols-5 gap-1.5 sm:gap-2 lg:gap-3'>
-                                    {['S', 'M', 'L', 'XL', 'XXL'].map((size) => (
-                                      <div key={size} className='text-center'>
-                                        <label className='block text-[10px] sm:text-xs font-semibold text-gray-500 mb-1'>
-                                          {size}
-                                        </label>
-                                        <input
-                                          type='number'
-                                          min='0'
-                                          value={selection.sizes[size] || ''}
-                                          onChange={(e) => handleColorSizeChange(selection.id, size, e.target.value)}
-                                          placeholder='0'
-                                          className='w-full text-center py-2 sm:py-2.5 px-0.5 sm:px-1
-                                                     border border-gray-300 rounded-lg
-                                                     text-xs sm:text-sm font-semibold
-                                                     focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white
-                                                     [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none'
-                                        />
-                                      </div>
-                                    ))}
+                              {/* Line 2: size inputs with labels above each, centred */}
+                              <div className="mt-1.5 pl-5 flex items-end justify-center gap-3">
+                                {APPAREL_SIZES.map(size => (
+                                  <div key={size} className="flex flex-col items-center gap-0.5">
+                                    <span className="text-[10px] font-medium text-gray-400">{size}</span>
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      value={row.sizes[size] || ''}
+                                      onChange={(e) => handleColorOrderSizeChange(row.id, size, e.target.value)}
+                                      placeholder="0"
+                                      className="w-9 h-8 text-center border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                    />
                                   </div>
-
-                                  {/* Subtotal for this color */}
-                                  <div className='flex justify-between items-center text-sm pt-2 border-t border-gray-200'>
-                                    <span className='text-gray-500'>
-                                      {selection.colorName} subtotal:
-                                    </span>
-                                    <span className='font-semibold text-gray-700'>
-                                      {getColorSubtotal(selection)} units
-                                    </span>
-                                  </div>
-                                </>
-                              ) : (
-                                console.log('[Render] NOT showing size inputs for selection', selection.id, 'colorId:', selection.colorId)
-                              )}
+                                ))}
+                              </div>
                             </div>
-                          ))}
-                        </div>
+                          );
+                        })}
+                      </div>
 
-                        {/* Add Another Color Button */}
-                        {canAddMoreColors() && (
-                          <button
-                            onClick={handleAddColor}
-                            className='w-full py-3 border-2 border-dashed border-gray-300 rounded-xl
-                                       text-sm font-medium text-gray-600 hover:border-blue-400
-                                       hover:text-blue-600 hover:bg-blue-50 transition-all
-                                       flex items-center justify-center gap-2'
-                          >
-                            <svg className='w-5 h-5' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
-                              <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M12 6v6m0 0v6m0-6h6m-6 0H6' />
-                            </svg>
-                            Add Another Color
-                          </button>
-                        )}
+                      <button
+                        onClick={handleColorOrderAdd}
+                        className="mt-2 flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 font-medium"
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                        Add Another Colour
+                      </button>
 
-                        {/* Combined Total Display */}
-                        <div className='p-4 bg-blue-50 rounded-xl border border-blue-200'>
-                          <div className='flex justify-between items-center'>
-                            <span className='text-sm font-medium text-blue-800'>Combined Total:</span>
-                            <span className='text-xl font-bold text-blue-900'>{totalQuantity} units</span>
+                      <div className="mt-3 pt-3 border-t border-gray-200 flex justify-between items-center">
+                        <span className="text-sm font-medium text-gray-700">Combined Total</span>
+                        <span className={`text-2xl font-bold ${clothingTotalQty >= 25 ? 'text-green-600' : 'text-gray-900'}`}>
+                          {clothingTotalQty} <span className="text-sm font-medium">units</span>
+                        </span>
+                      </div>
+                      <p className="text-xs text-gray-500 mt-1">Minimum order: 25 units combined</p>
+                    </div>
+                  ) : (
+                    /* Standard quantity +/- for all other products */
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-3">Quantity</label>
+                      <div className="flex items-center justify-center gap-2">
+                        <button
+                          onClick={() => handleQuantityChange(quantity - 1)}
+                          className="w-9 h-9 flex items-center justify-center bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors border border-gray-200"
+                        >
+                          <Minus className="h-4 w-4" />
+                        </button>
+                        <input
+                          type="text"
+                          value={quantityInput}
+                          onChange={handleQuantityInputChange}
+                          onBlur={handleQuantityBlur}
+                          onKeyDown={handleQuantityKeyDown}
+                          className="w-20 h-9 text-center border border-gray-300 rounded-lg font-semibold text-base focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                          placeholder={product?.min_order_quantity?.toString() || '25'}
+                        />
+                        <button
+                          onClick={() => handleQuantityChange(quantity + 1)}
+                          className="w-9 h-9 flex items-center justify-center bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors border border-gray-200"
+                        >
+                          <Plus className="h-4 w-4" />
+                        </button>
+                      </div>
+                      <p className="text-xs text-gray-500 mt-2 text-center">Minimum order: {product?.min_order_quantity || 25} units</p>
+                    </div>
+                  )}
+
+                  {/* CLOTHING MODEL: Print Positions — always shown for clothing products */}
+                  {product.pricing_model === 'clothing' && (
+                    <div>
+                      <h4 className="text-sm font-medium text-gray-700 mb-3">Print Positions</h4>
+                      <div className="space-y-2">
+                        {getPrintPositionLabels().map((label) => (
+                          <div key={label} className="flex items-center justify-between gap-2">
+                            <span className="text-sm text-gray-600 w-24 flex-shrink-0">{label}</span>
+                            <select
+                              value={printPositions[label] || 'None'}
+                              onChange={(e) => handlePositionChange(label, e.target.value)}
+                              className="flex-1 border border-gray-300 rounded-lg py-1.5 px-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            >
+                              {COLOUR_OPTIONS.map(opt => (
+                                <option key={opt} value={opt}>{opt}</option>
+                              ))}
+                            </select>
                           </div>
-
-                          {/* Minimum order warning */}
-                          {totalQuantity > 0 && totalQuantity < (product?.min_order_quantity || 0) && (
-                            <p className='text-xs text-amber-600 mt-2 flex items-center gap-1'>
-                              <AlertCircle className="h-3 w-3" />
-                              Minimum order: {product.min_order_quantity} units (add {product.min_order_quantity - totalQuantity} more)
-                            </p>
-                          )}
-
-                          {totalQuantity === 0 && (
-                            <p className='text-xs text-blue-600 mt-2'>
-                              Minimum order: {product?.min_order_quantity || 25} units total across all sizes and colors
-                            </p>
-                          )}
-                        </div>
+                        ))}
                       </div>
-                    ) : (
-                      // Keep existing single quantity selector for non-apparel
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-3">Quantity</label>
-                        <div className="flex items-center justify-center gap-2">
-                          <button
-                            onClick={() => handleQuantityChange(quantity - 1)}
-                            className="w-9 h-9 flex items-center justify-center bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors border border-gray-200"
-                          >
-                            <Minus className="h-4 w-4" />
-                          </button>
-                          <input
-                            type="text"
-                            value={quantityInput}
-                            onChange={handleQuantityInputChange}
-                            onBlur={handleQuantityBlur}
-                            onKeyDown={handleQuantityKeyDown}
-                            className="w-20 h-9 text-center border border-gray-300 rounded-lg font-semibold text-base focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            placeholder={product?.min_order_quantity?.toString() || '25'}
-                          />
-                          <button
-                            onClick={() => handleQuantityChange(quantity + 1)}
-                            className="w-9 h-9 flex items-center justify-center bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors border border-gray-200"
-                          >
-                            <Plus className="h-4 w-4" />
-                          </button>
+                    </div>
+                  )}
+
+                  {/* FLAT / COVERAGE models: only shown when print pricing data exists in DB */}
+                  {printPricingData.length > 0 && (
+                    <>
+                      {/* FLAT MODEL: optional second position checkbox */}
+                      {product.pricing_model === 'flat' && (product.max_print_positions || 1) >= 2 && (
+                        <div>
+                          <label className="flex items-center gap-3 cursor-pointer p-3 rounded-lg border border-gray-200 hover:border-blue-300 transition-colors">
+                            <input
+                              type="checkbox"
+                              checked={secondPosition}
+                              onChange={(e) => setSecondPosition(e.target.checked)}
+                              className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                            />
+                            <div>
+                              <span className="text-sm font-medium text-gray-700">Add second position</span>
+                              <span className="text-sm text-gray-500 ml-1">(Front &amp; Back)</span>
+                            </div>
+                          </label>
                         </div>
-                        <p className="text-xs text-gray-500 mt-2 text-center">Minimum order: {product?.min_order_quantity || 25} units</p>
-                      </div>
-                    )}
-                  </div>
+                      )}
+
+                      {/* COVERAGE MODEL: radio buttons */}
+                      {product.pricing_model === 'coverage' && (
+                        <div>
+                          <h4 className="text-sm font-medium text-gray-700 mb-3">Coverage</h4>
+                          <div className="space-y-2">
+                            {[
+                              { value: 'front_only', label: 'Front Only' },
+                              { value: 'front_back', label: 'Front & Back' },
+                              { value: 'full_wrap', label: 'Full Wrap' },
+                            ].map(({ value, label }) => (
+                              <label key={value} className="flex items-center gap-3 cursor-pointer">
+                                <input
+                                  type="radio"
+                                  name="coverage_type"
+                                  value={value}
+                                  checked={coverageType === value}
+                                  onChange={() => setCoverageType(value)}
+                                  className="w-4 h-4 border-gray-300 text-blue-600 focus:ring-blue-500"
+                                />
+                                <span className="text-sm text-gray-700">{label}</span>
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
 
                   {/* Price Display */}
                   <div className="text-center p-6 bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl">
@@ -1315,41 +1561,29 @@ const ProductDetailPage = ({ productSlug }) => {
                       <span className="text-sm text-gray-600">Price per unit</span>
                     </div>
                     <div className={`text-3xl font-bold text-blue-600 transition-all duration-300 ${animatePrice ? 'scale-110' : 'scale-100'}`}>
-                      £{currentPrice?.price_per_unit || currentTier.price_per_unit}
+                      £{effectivePricePerUnit.toFixed(2)}
                     </div>
                     <div className="mt-4 pt-4 border-t border-gray-200">
                       <div className="flex justify-between items-center">
                         <span className="text-gray-600">Total:</span>
-                        <span className="text-2xl font-bold text-gray-900">£{totalPrice}</span>
+                        <span className="text-2xl font-bold text-gray-900">£{effectiveTotalPrice}</span>
                       </div>
+                      {/* Print breakdown for clothing model */}
+                      {getPrintBreakdown() && (
+                        <p className="text-xs text-gray-500 mt-2 text-center">{getPrintBreakdown()}</p>
+                      )}
+                      {/* Colour/quantity breakdown for clothing model */}
+                      {product?.pricing_model === 'clothing' && (() => {
+                        const parts = colorOrderRows
+                          .filter(r => getRowSubtotal(r) > 0 && r.colorName)
+                          .map(r => `${r.colorName} x ${getRowSubtotal(r)}`);
+                        return parts.length > 0
+                          ? <p className="text-xs text-gray-500 mt-1 text-center">{parts.join(' + ')}</p>
+                          : null;
+                      })()}
                     </div>
                   </div>
 
-                  {/* Pricing Tiers */}
-                  {pricingTiers.length > 0 && (
-                    <div>
-                      <h4 className="text-sm font-medium text-gray-700 mb-3">Volume Discounts</h4>
-                      <div className="space-y-2">
-                        {pricingTiers.map((tier, index) => (
-                          <div
-                            key={tier.id || index}
-                            className={`flex justify-between items-center p-3 rounded-lg transition-all duration-300 ${
-                              totalQuantity >= tier.min_quantity && (tier.max_quantity === null || totalQuantity <= tier.max_quantity)
-                                ? 'bg-blue-100 border-2 border-blue-300 shadow-md'
-                                : 'bg-gray-50 border border-gray-200'
-                            }`}
-                          >
-                            <span className="text-sm font-medium">
-                              {tier.min_quantity}+ units
-                            </span>
-                            <span className="font-bold text-blue-600">
-                              £{tier.price_per_unit}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
 
                   {/* Action Buttons */}
                   <div className="space-y-3">
@@ -1363,7 +1597,7 @@ const ProductDetailPage = ({ productSlug }) => {
                     >
                       <ShoppingCart className="h-5 w-5" />
                       <span>{!isOrderValid()
-                        ? `Add ${(product?.min_order_quantity || 25) - totalQuantity} more units`
+                        ? `Add ${(product?.pricing_model === 'clothing' ? 25 : (product?.min_order_quantity || 25)) - (product?.pricing_model === 'clothing' ? clothingTotalQty : totalQuantity)} more units`
                         : 'Add to Quote'}</span>
                     </button>
 
