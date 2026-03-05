@@ -1,9 +1,10 @@
 // src/components/HeaderBar.jsx
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
-import { Phone, Search, ShoppingCart, User, LogOut, Menu, X, ChevronDown, Package, FileText, MapPin, Settings } from 'lucide-react';
+import { Phone, Search, ShoppingCart, User, LogOut, Menu, X, ChevronDown, Package, FileText, MapPin, Settings, Palette } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useCart } from '../context/CartContext';
+import { supabase } from '../services/supabaseService';
 import AuthModal from './auth/AuthModal';
 
 const categories = [
@@ -31,6 +32,40 @@ function HeaderBar() {
 
   // Calculate cart count - number of unique items (line items)
   const cartCount = cart.length;
+
+  // Draft quote count
+  const [quoteCount, setQuoteCount] = useState(0);
+
+  const fetchQuoteCount = useCallback(async () => {
+    if (!user) {
+      setQuoteCount(0);
+      return;
+    }
+    try {
+      const { count, error } = await supabase
+        .from('quotes')
+        .select('*', { count: 'exact', head: true })
+        .eq('customer_id', user.id)
+        .eq('status', 'draft');
+
+      if (!error) {
+        setQuoteCount(count || 0);
+      }
+    } catch (err) {
+      console.error('[HeaderBar] Error fetching quote count:', err);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    fetchQuoteCount();
+  }, [fetchQuoteCount]);
+
+  // Listen for custom event to refresh quote count (fired from ProductDetailPage)
+  useEffect(() => {
+    const handler = () => fetchQuoteCount();
+    window.addEventListener('quoteCountChanged', handler);
+    return () => window.removeEventListener('quoteCountChanged', handler);
+  }, [fetchQuoteCount]);
 
   const handleSignOut = async () => {
     try {
@@ -123,6 +158,14 @@ function HeaderBar() {
                         <span>My Quotes</span>
                       </Link>
                       <Link
+                        to="/account/designs"
+                        onClick={() => setShowUserMenu(false)}
+                        className="flex items-center space-x-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                      >
+                        <Palette className="h-4 w-4" />
+                        <span>My Designs</span>
+                      </Link>
+                      <Link
                         to="/account/addresses"
                         onClick={() => setShowUserMenu(false)}
                         className="flex items-center space-x-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
@@ -160,6 +203,24 @@ function HeaderBar() {
                 </button>
               )}
             </div>
+
+            {/* Quotes Button */}
+            {user && (
+              <Link
+                to="/account/quotes"
+                className="flex items-center space-x-2 text-gray-700 hover:text-red-500 transition-colors relative"
+              >
+                <div className="relative">
+                  <FileText className="h-6 w-6" />
+                  {quoteCount > 0 && (
+                    <span className="absolute -top-2 -right-2 bg-blue-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center font-semibold">
+                      {quoteCount}
+                    </span>
+                  )}
+                </div>
+                <span className="hidden md:inline">Quotes</span>
+              </Link>
+            )}
 
             {/* Cart Button */}
             <button

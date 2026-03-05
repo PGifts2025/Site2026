@@ -1794,74 +1794,121 @@ export const saveUserDesign = async (designData) => {
     if (!designData.canvas) {
       throw new Error('Canvas is required');
     }
-    if (!designData.productTemplateId) {
-      throw new Error('Product template ID is required');
-    }
 
     console.log('[saveUserDesign] ✅ Validation passed');
 
-    // Get canvas JSON
-    console.log('[saveUserDesign] Converting canvas to JSON...');
-    const canvasJSON = designData.canvas.toJSON(['id', 'name', 'lockMovementX', 'lockMovementY', 'lockScalingX', 'lockScalingY', 'lockRotation', 'selectable']);
-    console.log('[saveUserDesign] ✅ Canvas JSON generated, objects count:', canvasJSON?.objects?.length);
+    // Sanitise text objects to fix invalid textBaseline values before serialisation
+    const validBaselines = ['top', 'hanging', 'middle', 'alphabetic', 'ideographic', 'bottom'];
+    designData.canvas.getObjects().forEach(obj => {
+      if (obj.type === 'textbox' || obj.type === 'i-text' || obj.type === 'text') {
+        if (!validBaselines.includes(obj.textBaseline)) {
+          console.log('[saveUserDesign] Fixing invalid textBaseline:', obj.textBaseline, '→ alphabetic');
+          obj.textBaseline = 'alphabetic';
+        }
+      }
+    });
 
-    // Generate thumbnail
+    // Get canvas JSON — use pre-captured snapshot if available
+    console.log('[saveUserDesign] Converting canvas to JSON...');
+    const canvasJSON = designData.design_data || designData.canvas.toJSON(['id', 'name', 'lockMovementX', 'lockMovementY', 'lockScalingX', 'lockScalingY', 'lockRotation', 'selectable', 'isPrintAreaGuide', 'excludeFromExport']);
+    console.log('[saveUserDesign] Canvas data source:', designData.design_data ? 'pre-captured snapshot' : 'live canvas.toJSON');
+    console.log('[saveUserDesign] Canvas JSON objects count:', canvasJSON?.objects?.length);
+
+    // Generate thumbnail — use pre-captured if available
     let thumbnailUrl = null;
     try {
-      const thumbnailBlob = await generateDesignThumbnail(designData.canvas);
+      if (designData.thumbnail) {
+        // Use pre-captured thumbnail data URL — upload as blob
+        console.log('[saveUserDesign] Using pre-captured thumbnail');
+        const res = await fetch(designData.thumbnail);
+        const thumbnailBlob = await res.blob();
 
-      // Upload thumbnail to storage
-      const fileName = `design-${Date.now()}.png`;
-      const filePath = `design-thumbnails/${fileName}`;
+        const fileName = `design-${Date.now()}.png`;
+        const filePath = `design-thumbnails/${fileName}`;
 
-      const { error: uploadError } = await client.storage
-        .from('catalog-images')
-        .upload(filePath, thumbnailBlob, {
-          cacheControl: '3600',
-          upsert: false
-        });
-
-      if (uploadError) {
-        console.warn('Failed to upload thumbnail:', uploadError);
-      } else {
-        const { data: { publicUrl } } = client.storage
+        const { error: uploadError } = await client.storage
           .from('catalog-images')
-          .getPublicUrl(filePath);
+          .upload(filePath, thumbnailBlob, {
+            cacheControl: '3600',
+            upsert: false
+          });
 
-        thumbnailUrl = publicUrl;
+        if (uploadError) {
+          console.warn('Failed to upload thumbnail:', uploadError);
+        } else {
+          const { data: { publicUrl } } = client.storage
+            .from('catalog-images')
+            .getPublicUrl(filePath);
+          thumbnailUrl = publicUrl;
+        }
+      } else {
+        // Fallback: generate from live canvas
+        const thumbnailBlob = await generateDesignThumbnail(designData.canvas);
+
+        const fileName = `design-${Date.now()}.png`;
+        const filePath = `design-thumbnails/${fileName}`;
+
+        const { error: uploadError } = await client.storage
+          .from('catalog-images')
+          .upload(filePath, thumbnailBlob, {
+            cacheControl: '3600',
+            upsert: false
+          });
+
+        if (uploadError) {
+          console.warn('Failed to upload thumbnail:', uploadError);
+        } else {
+          const { data: { publicUrl } } = client.storage
+            .from('catalog-images')
+            .getPublicUrl(filePath);
+          thumbnailUrl = publicUrl;
+        }
       }
     } catch (thumbError) {
       console.warn('Failed to generate/upload thumbnail:', thumbError);
       // Continue without thumbnail
     }
 
-    // Insert design into database
+    // Look up the correct catalog_products id by slug
+    const productKey = designData.productKey || null;
+    let productId = null;
+    if (productKey) {
+      const { data: catalogProduct } = await client
+        .from('catalog_products')
+        .select('id')
+        .eq('slug', productKey)
+        .single();
+      productId = catalogProduct?.id || null;
+      console.log('[saveUserDesign] Product lookup: slug =', productKey, '→ catalog_products.id =', productId);
+    }
+
+    // Insert design into database — columns must match user_designs table exactly
     const insertData = {
       user_id: userId,
       session_id: sessionId,
-      product_template_id: designData.productTemplateId,
-      variant_id: designData.variantId || null,
+      product_id: productId,
+      product_key: designData.productKey || null,
       design_name: designData.designName || 'Untitled Design',
       design_data: canvasJSON,
       thumbnail_url: thumbnailUrl,
-      view_name: designData.viewName || null,
-      is_public: designData.isPublic || false,
-      product_key: designData.productKey || null,
       color_code: designData.colorCode || null,
       color_name: designData.colorName || null,
-      print_area: designData.printArea || null
+      print_area: designData.printArea || null,
+      status: designData.status || 'draft',
+      version: 1
     };
 
     console.log('[saveUserDesign] 💾 Inserting into user_designs table...');
     console.log('[saveUserDesign] Insert data:', {
       user_id: insertData.user_id,
       session_id: insertData.session_id,
-      product_template_id: insertData.product_template_id,
-      design_name: insertData.design_name,
+      product_id: insertData.product_id,
       product_key: insertData.product_key,
+      design_name: insertData.design_name,
       color_code: insertData.color_code,
       color_name: insertData.color_name,
       print_area: insertData.print_area,
+      status: insertData.status,
       has_design_data: !!insertData.design_data,
       thumbnail_url: insertData.thumbnail_url
     });
@@ -1966,25 +2013,15 @@ export const getUserDesign = async (designId) => {
   try {
     const client = getSupabaseClient();
 
+    console.log('[getUserDesign] Looking up design ID:', designId);
+
     const { data, error } = await client
       .from('user_designs')
-      .select(`
-        *,
-        product_template:product_templates(
-          id,
-          product_key,
-          name
-        ),
-        variant:product_template_variants(
-          id,
-          color_name,
-          color_code,
-          view_name,
-          template_url
-        )
-      `)
+      .select('*')
       .eq('id', designId)
       .single();
+
+    console.log('[getUserDesign] Supabase response:', { data: data ? { id: data.id, design_name: data.design_name, product_key: data.product_key, has_design_data: !!data.design_data } : null, error });
 
     if (error) {
       if (error.code === 'PGRST116' || error.message.includes('no rows')) {
@@ -2025,11 +2062,6 @@ export const updateUserDesign = async (designId, designData) => {
       updateData.design_name = designData.designName;
     }
 
-    // Update public flag if provided
-    if (designData.isPublic !== undefined) {
-      updateData.is_public = designData.isPublic;
-    }
-
     // Update additional fields if provided
     if (designData.productKey !== undefined) {
       updateData.product_key = designData.productKey;
@@ -2043,12 +2075,22 @@ export const updateUserDesign = async (designId, designData) => {
     if (designData.printArea !== undefined) {
       updateData.print_area = designData.printArea;
     }
-    if (designData.viewName !== undefined) {
-      updateData.view_name = designData.viewName;
+    if (designData.status !== undefined) {
+      updateData.status = designData.status;
     }
 
     // Update canvas data if provided
     if (designData.canvas) {
+      // Sanitise text objects to fix invalid textBaseline values
+      const validBaselines = ['top', 'hanging', 'middle', 'alphabetic', 'ideographic', 'bottom'];
+      designData.canvas.getObjects().forEach(obj => {
+        if (obj.type === 'textbox' || obj.type === 'i-text' || obj.type === 'text') {
+          if (!validBaselines.includes(obj.textBaseline)) {
+            obj.textBaseline = 'alphabetic';
+          }
+        }
+      });
+
       const canvasJSON = designData.canvas.toJSON(['id', 'name', 'lockMovementX', 'lockMovementY', 'lockScalingX', 'lockScalingY', 'lockRotation', 'selectable']);
       updateData.design_data = canvasJSON;
 
@@ -2750,6 +2792,136 @@ export async function copyColorsFromProduct(sourceProductId, targetProductId) {
   } catch (err) {
     console.error('[copyColorsFromProduct] Exception:', err);
     return { data: null, error: err };
+  }
+}
+
+// =====================================================
+// Artwork Upload Operations
+// =====================================================
+
+/**
+ * Upload artwork file for an order.
+ * Stores file in order-artwork/{userId}/{orderId}/{filename},
+ * inserts a row into order_artwork, and updates orders.artwork_status.
+ */
+export async function uploadOrderArtwork(orderId, userId, file) {
+  if (isMockAuth) return { data: null, error: new Error('Mock auth mode') };
+  try {
+    const client = getSupabaseClient();
+
+    // Build a unique storage path to avoid collisions
+    const ext = file.name.split('.').pop();
+    const safeName = `${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+    const storagePath = `${userId}/${orderId}/${safeName}`;
+
+    console.log('[uploadOrderArtwork] Uploading to path:', storagePath);
+
+    // 1. Upload file to storage
+    const { data: storageData, error: storageError } = await client.storage
+      .from('order-artwork')
+      .upload(storagePath, file, { upsert: false, contentType: file.type });
+
+    if (storageError) throw storageError;
+
+    // 2. Get public (signed) URL — bucket is private so we store the path and generate URLs on demand
+    const { data: urlData } = client.storage
+      .from('order-artwork')
+      .getPublicUrl(storagePath);
+
+    const fileUrl = urlData?.publicUrl || storagePath;
+
+    // 3. Insert row into order_artwork
+    const { data: artworkRow, error: insertError } = await client
+      .from('order_artwork')
+      .insert({
+        order_id: orderId,
+        user_id: userId,
+        file_name: file.name,
+        file_url: fileUrl,
+        file_type: file.type,
+        file_size: file.size,
+        status: 'uploaded',
+      })
+      .select()
+      .single();
+
+    if (insertError) throw insertError;
+
+    // 4. Update order artwork_status
+    const { error: orderError } = await client
+      .from('orders')
+      .update({ artwork_status: 'artwork_uploaded' })
+      .eq('id', orderId);
+
+    if (orderError) console.warn('[uploadOrderArtwork] Could not update artwork_status:', orderError);
+
+    console.log('[uploadOrderArtwork] ✅ Upload complete:', artworkRow.id);
+    return { data: artworkRow, error: null };
+  } catch (err) {
+    console.error('[uploadOrderArtwork] Error:', err);
+    return { data: null, error: err };
+  }
+}
+
+/**
+ * Fetch all artwork rows for a given order.
+ */
+export async function getOrderArtwork(orderId) {
+  if (isMockAuth) return { data: [], error: null };
+  try {
+    const client = getSupabaseClient();
+    const { data, error } = await client
+      .from('order_artwork')
+      .select('*')
+      .eq('order_id', orderId)
+      .order('uploaded_at', { ascending: false });
+
+    if (error) throw error;
+    console.log('[getOrderArtwork] Fetched', data?.length, 'rows for order', orderId);
+    return { data: data || [], error: null };
+  } catch (err) {
+    console.error('[getOrderArtwork] Error:', err);
+    return { data: [], error: err };
+  }
+}
+
+/**
+ * Delete an artwork file from storage and remove its DB row.
+ * fileUrl should be the full public URL or the storage path.
+ */
+export async function deleteOrderArtwork(artworkId, fileUrl) {
+  if (isMockAuth) return { error: null };
+  try {
+    const client = getSupabaseClient();
+
+    // Derive the storage path from the URL (everything after /order-artwork/)
+    const marker = '/order-artwork/';
+    const storagePath = fileUrl.includes(marker)
+      ? fileUrl.split(marker)[1]
+      : fileUrl;
+
+    console.log('[deleteOrderArtwork] Removing storage path:', storagePath);
+
+    // 1. Delete from storage
+    const { error: storageError } = await client.storage
+      .from('order-artwork')
+      .remove([storagePath]);
+
+    if (storageError) console.warn('[deleteOrderArtwork] Storage delete error:', storageError);
+
+    // 2. Delete DB row
+    const { error: dbError } = await client
+      .from('order_artwork')
+      .delete()
+      .eq('id', artworkId);
+
+    if (dbError) throw dbError;
+
+    console.log('[deleteOrderArtwork] ✅ Deleted artwork', artworkId);
+    return { error: null };
+  } catch (err) {
+    console.error('[deleteOrderArtwork] Error:', err);
+    return { error: err };
   }
 }
 

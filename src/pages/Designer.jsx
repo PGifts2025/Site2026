@@ -68,6 +68,10 @@ const Designer = () => {
   const fileInputRef = useRef(null);
   const canvasReady = useRef(false);
   const renderingRef = useRef(false);
+  const designLoadedRef = useRef(false); // Guards canvas reset when editing a saved design
+  const pendingSaveCanvasJSON = useRef(null);
+  const pendingSaveThumbnail = useRef(null);
+  const [pendingDesignData, setPendingDesignData] = useState(null); // Stores design_data until print areas are ready
   const [canvas, setCanvas] = useState(null);
   const [canvasSize, setCanvasSize] = useState(800);
   const [selectedProduct, setSelectedProduct] = useState('tshirt');
@@ -307,12 +311,16 @@ const Designer = () => {
         console.log('[Designer]   - setUseDatabase(true)');
         setUseDatabase(true);
 
-        // Set first product as selected if available
+        // Set first product as selected if available — but skip if loading a saved design
+        const designFromUrl = searchParams.get('design');
         const firstKey = Object.keys(productsMap)[0];
         console.log('[Designer] [TARGET] Setting initial product selection...');
         console.log('[Designer]   - First product key:', firstKey);
+        console.log('[Designer]   - Design from URL:', designFromUrl);
 
-        if (firstKey) {
+        if (designFromUrl) {
+          console.log('[Designer]   - Skipping default product selection (loading saved design:', designFromUrl, ')');
+        } else if (firstKey) {
           console.log('[Designer]   - setSelectedProduct:', firstKey);
           setSelectedProduct(firstKey);
 
@@ -1051,6 +1059,12 @@ const Designer = () => {
   // Load product template when product or view changes (NOT color - color handled separately)
   useEffect(() => {
     if (canvas && canvasReady.current && currentProduct) {
+      // Skip canvas reset if a saved design was just loaded
+      if (designLoadedRef.current) {
+        console.log('[Designer] TEMPLATE LOAD EFFECT BLOCKED - designLoadedRef is true, skipping canvas reset for saved design');
+        return;
+      }
+
       console.log('[Designer] TEMPLATE LOAD EFFECT TRIGGERED:', {
         selectedProduct,
         selectedView,
@@ -1281,6 +1295,11 @@ const Designer = () => {
 
   // Render print area overlays when print areas load
   useEffect(() => {
+    if (pendingDesignData !== null) {
+      console.log('[RENDER] Skipping - design pending load');
+      return;
+    }
+
     console.log('[RENDER] === RENDER EFFECT TRIGGERED ===');
     console.log('[RENDER] Canvas exists:', !!canvas);
     console.log('[RENDER] Canvas ready:', canvasReady.current);
@@ -1496,7 +1515,9 @@ const Designer = () => {
         evented: false,
         backgroundColor: 'rgba(255, 255, 255, 0.8)',
         name: `print-area-label-${area.name}`,
-        id: `print-area-label-${area.name}`
+        id: `print-area-label-${area.name}`,
+        isPrintAreaGuide: true,
+        excludeFromExport: true
       });
 
       console.log('[Designer] Created label for:', area.name);
@@ -1547,6 +1568,24 @@ const Designer = () => {
     }
   }, [printAreasLoaded, canvas, canvasReady.current]); // Only trigger when these change
 
+  // Apply pending saved design data AFTER print areas have loaded
+  useEffect(() => {
+    if (pendingDesignData === null) return;
+    if (!canvas || !canvasReady.current) return;
+    if (!printAreasLoaded || !printAreas || printAreas.length === 0) return;
+
+    const designData = pendingDesignData;
+    setPendingDesignData(null); // Clear before loading to prevent re-entry
+
+    console.log('[Designer] Print areas ready (count:', printAreas.length, ') - now applying pending design data to canvas');
+
+    canvas.loadFromJSON(designData, () => {
+      canvas.renderAll();
+      designLoadedRef.current = true;
+      console.log('[Designer] Deferred canvas.loadFromJSON complete, designLoadedRef set to true');
+    });
+  }, [pendingDesignData, printAreasLoaded, printAreas, canvas]);
+
   // Constrain objects to print area
   useEffect(() => {
     if (!canvas || !canvasReady.current) return;
@@ -1595,15 +1634,11 @@ const Designer = () => {
           obj.name === 'template-image' || obj.id === 'template-image'
         );
 
-        // Exit if template not loaded yet (only for non-cup products)
-        if (!templateImg) {
-          console.log('[constrainToPrintArea] Template not loaded yet, skipping constraints');
-          return;
+        if (templateImg) {
+          canvasOffsetX = templateImg.left || 0;
+          canvasOffsetY = templateImg.top || 0;
         }
-
-        // Use template's actual position as offset
-        canvasOffsetX = templateImg.left || 0;
-        canvasOffsetY = templateImg.top || 0;
+        // No return/bail — constraints apply even if template image isn't present yet
       }
 
       // Calculate scaled print area bounds on canvas
@@ -1670,7 +1705,37 @@ const Designer = () => {
     };
 
     const handleObjectScaling = (e) => {
-      constrainToPrintArea(e.target);
+      const obj = e.target;
+      if (!obj || obj.isPrintAreaGuide || obj.selectable === false ||
+          obj.id === 'watermark' || obj.id === 'template-image' || obj.id === 'printAreaOverlay') return;
+      if (isPanoramicMode) return;
+
+      const templateImg = canvas.getObjects().find(o =>
+        o.name === 'template-image' || o.id === 'template-image'
+      );
+      const canvasOffsetX = templateImg ? (templateImg.left || 0) : 0;
+      const canvasOffsetY = templateImg ? (templateImg.top || 0) : 0;
+
+      const pa = printAreas && printAreas.length > 0 ? printAreas[0] : null;
+      if (!pa) return;
+
+      const maxW = pa.width * imageScale;
+      const maxH = pa.height * imageScale;
+
+      // Cap scaleX and scaleY directly so the object cannot grow beyond the print area
+      const currentW = obj.width * obj.scaleX;
+      const currentH = obj.height * obj.scaleY;
+
+      if (currentW > maxW) {
+        obj.scaleX = maxW / obj.width;
+      }
+      if (currentH > maxH) {
+        obj.scaleY = maxH / obj.height;
+      }
+
+      // Also constrain position
+      constrainToPrintArea(obj);
+      obj.setCoords();
       canvas.renderAll();
     };
 
@@ -2018,6 +2083,11 @@ const Designer = () => {
    * @param {string} printAreaName - Name of the print area (e.g., 'Center Chest')
    */
   const restoreDesignsForPrintArea = async (printAreaName) => {
+    if (designLoadedRef.current) {
+      console.log('[restoreDesignsForPrintArea] SKIPPING - design loaded from DB, not restoring from localStorage');
+      return;
+    }
+
     if (!canvas || !printAreaName) {
       console.log('[restoreDesignsForPrintArea] No canvas or print area');
       return;
@@ -2563,6 +2633,12 @@ const Designer = () => {
   const loadProductTemplate = async () => {
     if (!canvas || !canvasReady.current || !currentProduct) {
       console.warn('[Designer] Canvas not ready for template loading');
+      return;
+    }
+
+    // Guard: don't clear canvas if a saved design was just loaded
+    if (designLoadedRef.current) {
+      console.log('[Designer] loadProductTemplate BLOCKED - designLoadedRef is true, protecting saved design canvas');
       return;
     }
 
@@ -3448,69 +3524,6 @@ const Designer = () => {
     console.log('================================================');
   };
 
-  /**
-   * Manual save button handler
-   */
-  const handleSavePosition = () => {
-    console.log('===================================');
-    console.log('[handleSavePosition] Save button clicked');
-    console.log('[handleSavePosition] Active print area:', activePrintArea);
-    console.log('[handleSavePosition] Print areas visible:', printAreasVisible);
-
-    // Check if there's an active print area
-    if (!activePrintArea || !printAreasVisible) {
-      console.log('[handleSavePosition] Å’ No active print area');
-      setSaveStatus({
-        type: 'error',
-        message: '[WARN]  Please select a print area first'
-      });
-      setTimeout(() => setSaveStatus(null), 3000);
-      return;
-    }
-
-    // Check if this print area already has saved designs
-    const printAreaKey = activePrintArea.toLowerCase().replace(/\s+/g, '-');
-    const colorName = currentColorData?.color_name?.toLowerCase().replace(/\s+/g, '-') || 'default';
-    const variantKey = `${selectedProduct}-${colorName}-${selectedView}-${printAreaKey}`;
-
-    let isUpdate = false;
-    try {
-      const allDesigns = JSON.parse(localStorage.getItem('userDesigns') || '{}');
-      isUpdate = !!allDesigns[variantKey];
-      console.log('[handleSavePosition] Is update:', isUpdate, 'for key:', variantKey);
-    } catch (err) {
-      console.error('[handleSavePosition] Error checking existing:', err);
-    }
-
-    // Save designs
-    console.log('[handleSavePosition] Calling saveCurrentDesigns...');
-    const designs = saveCurrentDesigns();
-
-    console.log('[handleSavePosition] Saved', designs.length, 'designs');
-
-    // Show feedback with appropriate action word
-    if (designs.length > 0) {
-      const action = isUpdate ? 'Updated' : 'Saved';
-      setSaveStatus({
-        type: 'success',
-        message: `Å“[OK] ${action} ${designs.length} design(s) to ${activePrintArea}`
-      });
-      console.log(`[handleSavePosition] [OK] ${action}!`);
-    } else {
-      setSaveStatus({
-        type: 'success',
-        message: `Å“[OK] Position saved (no designs)`
-      });
-      console.log('[handleSavePosition] [OK] Saved empty state');
-    }
-
-    // Clear status after 3 seconds
-    setTimeout(() => {
-      setSaveStatus(null);
-    }, 3000);
-
-    console.log('===================================');
-  };
 
   /**
    * Add current design to shopping cart
@@ -3663,6 +3676,7 @@ const Designer = () => {
       setTemplateRendering(true);
 
       // Change view (this triggers template load)
+      designLoadedRef.current = false;
       setSelectedView(viewToLoad);
 
       // FIX: Force print area visibility after view changes
@@ -3850,6 +3864,7 @@ const Designer = () => {
   }, []);
 
   // Load design from URL parameter
+  // Wait for canvas AND products to be loaded so currentProduct has a real DB id
   useEffect(() => {
     const loadDesignFromUrl = async () => {
       const designId = searchParams.get('design');
@@ -3858,35 +3873,46 @@ const Designer = () => {
         return;
       }
 
+      // Wait for products to finish loading so currentProduct will have a DB id for print areas
+      if (loadingProducts || Object.keys(products).length === 0) {
+        console.log('[Designer] Design load deferred - products not ready yet, loadingProducts:', loadingProducts);
+        return;
+      }
+
+      // Don't re-load if already loaded this design
+      if (currentDesignId === designId) {
+        return;
+      }
+
       try {
-        console.log('[Designer] Loading design from URL:', designId);
+        console.log('[Designer] Loading design from URL, id:', designId, 'canvas ready:', !!canvas, 'products loaded:', Object.keys(products).length);
 
         // Fetch design from database
         const design = await getUserDesign(designId);
+        console.log('[Designer] getUserDesign returned:', design ? { id: design.id, name: design.design_name, product_key: design.product_key, has_design_data: !!design.design_data, design_data_type: typeof design.design_data } : null);
 
         if (!design) {
           alert('Design not found');
           return;
         }
 
-        console.log('[Designer] Design loaded:', design);
-
         // Set design ID and name for editing mode
         setCurrentDesignId(design.id);
         setDesignName(design.design_name);
 
-        // Load the design data onto canvas
+        // Mark BEFORE setting product - prevents template effect from clearing canvas
+        designLoadedRef.current = true;
+
+        // Store design data for deferred load — will be applied after print areas are ready
         if (design.design_data) {
-          canvas.loadFromJSON(design.design_data, () => {
-            canvas.renderAll();
-            console.log('[Designer] Canvas loaded from design data');
-          });
+          setPendingDesignData(design.design_data);
+          console.log('[Designer] Design data stored in pendingDesignData state, waiting for print areas to load');
         }
 
-        // Set product if available
+        // Set product - this will trigger loadVariantData which now has products loaded
         if (design.product_key && design.product_key !== selectedProduct) {
-          // TODO: Switch to the correct product
-          console.log('[Designer] Design product:', design.product_key);
+          console.log('[Designer] Setting product from saved design:', design.product_key);
+          setSelectedProduct(design.product_key);
         }
 
         // Set color if available
@@ -3915,7 +3941,7 @@ const Designer = () => {
     };
 
     loadDesignFromUrl();
-  }, [searchParams, canvas]); // Run when URL params or canvas changes
+  }, [searchParams, canvas, loadingProducts, products]); // Also depend on products being loaded
 
   // TEMPORARILY DISABLED: Load user's saved designs
   // const loadUserDesigns = async () => {
@@ -4297,6 +4323,74 @@ const Designer = () => {
     canvas.renderAll();
   };
 
+  /**
+   * Export with watermark for non-signed-in users, or normal export for signed-in users who have saved.
+   * Signed-in users must save first (currentDesignId must exist).
+   */
+  const handleExportWithWatermark = (format) => {
+    if (!canvas) return;
+
+    // Signed-in users must save before exporting
+    if (user && !currentDesignId) {
+      setSaveStatus({ type: 'error', message: 'Please save your design first' });
+      setTimeout(() => setSaveStatus(null), 3000);
+      return;
+    }
+
+    if (user) {
+      // Signed-in user with saved design - export normally
+      if (format === 'pdf') {
+        exportPDF();
+      } else {
+        exportDesign();
+      }
+      return;
+    }
+
+    // Non-signed-in user - export with watermark
+    const overlay = canvas.getObjects().find(obj => obj.id === 'printAreaOverlay');
+    if (overlay) overlay.set('visible', false);
+    const existingWatermark = canvas.getObjects().find(obj => obj.id === 'watermark');
+    if (existingWatermark && !watermarkVisible) existingWatermark.set('visible', false);
+
+    // Add temporary watermark
+    const watermarkText = new fabric.Text('promo-gifts.co', {
+      fontSize: 48,
+      fill: 'rgba(0,0,0,0.15)',
+      fontFamily: 'Arial',
+      fontWeight: 'bold',
+      angle: -35,
+      originX: 'center',
+      originY: 'center',
+      left: canvas.width / 2,
+      top: canvas.height / 2,
+      selectable: false,
+      evented: false,
+      id: 'exportWatermark'
+    });
+    canvas.add(watermarkText);
+    canvas.renderAll();
+
+    if (format === 'pdf') {
+      const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+      const imgData = canvas.toDataURL('image/png');
+      pdf.addImage(imgData, 'PNG', 10, 10, 190, 190);
+      pdf.save(`${currentProduct.name.toLowerCase().replace(/\s+/g, '-')}-design.pdf`);
+    } else {
+      const dataURL = canvas.toDataURL({ format: 'png', quality: 1, multiplier: 1 });
+      const link = document.createElement('a');
+      link.download = `${currentProduct.name.toLowerCase().replace(/\s+/g, '-')}-design.png`;
+      link.href = dataURL;
+      link.click();
+    }
+
+    // Remove temporary watermark and restore
+    canvas.remove(watermarkText);
+    if (overlay) overlay.set('visible', true);
+    if (existingWatermark) existingWatermark.set('visible', watermarkVisible);
+    canvas.renderAll();
+  };
+
   // Generate 3D preview texture from canvas design elements
   const generate3DPreviewTexture = () => {
     console.log('[3D Preview] Starting texture generation');
@@ -4643,12 +4737,60 @@ const Designer = () => {
 
   // Design Save Functions
   const saveDesign = () => {
+    console.log('[Designer] saveDesign() called, canvas:', !!canvas);
     if (!canvas) {
       alert('Canvas not ready');
       return;
     }
 
+    // Capture canvas state NOW before modal opens (canvas may remount while modal is open)
+    try {
+      const snapGuideObjs = canvas.getObjects().filter(obj =>
+        obj.isPrintAreaGuide ||
+        obj.excludeFromExport ||
+        (obj.id && (obj.id === 'template-image' || obj.id === 'watermark' ||
+          obj.id === 'printAreaOverlay' || obj.id.startsWith('print-area-'))) ||
+        (obj.name && (obj.name === 'template-image' || obj.name.startsWith('print-area-')))
+      );
+      // Build JSON from user objects only — never remove/add objects (breaks z-order)
+      const allCanvasObjects = canvas.getObjects();
+      const userObjects = allCanvasObjects.filter(obj =>
+        !obj.isPrintAreaGuide &&
+        !obj.excludeFromExport &&
+        !(obj.id && (
+          obj.id.startsWith('print-area-guide-') ||
+          obj.id.startsWith('print-area-label-') ||
+          obj.id === 'template-image' ||
+          obj.id === 'watermark' ||
+          obj.id === 'printAreaOverlay' ||
+          obj.id.startsWith('print-area-')
+        )) &&
+        !(obj.name && (obj.name === 'template-image' || obj.name.startsWith('print-area-')))
+      );
+      const baseJSON = canvas.toJSON(['id', 'name', 'isPrintAreaGuide', 'excludeFromExport']);
+      baseJSON.objects = userObjects.map(obj => obj.toObject(['id', 'name', 'isPrintAreaGuide', 'excludeFromExport']));
+      pendingSaveCanvasJSON.current = baseJSON;
+      // Thumbnail: hide guides/watermark/overlays but KEEP template-image visible
+      const thumbHideObjs = snapGuideObjs.filter(obj =>
+        !(obj.id === 'template-image' || obj.name === 'template-image')
+      );
+      thumbHideObjs.forEach(obj => { obj.visible = false; });
+      const origBg2 = canvas.backgroundColor;
+      canvas.backgroundColor = 'transparent';
+      canvas.renderAll();
+      pendingSaveThumbnail.current = canvas.toDataURL({ format: 'png', quality: 1, multiplier: 1.5 });
+      thumbHideObjs.forEach(obj => { obj.visible = true; });
+      canvas.backgroundColor = origBg2;
+      canvas.renderAll();
+      console.log('[Designer] Canvas snapshot captured before modal open, objects:', pendingSaveCanvasJSON.current?.objects?.length);
+    } catch (snapErr) {
+      console.warn('[Designer] Failed to snapshot canvas before modal:', snapErr);
+      pendingSaveCanvasJSON.current = null;
+      pendingSaveThumbnail.current = null;
+    }
+
     // Show save modal to get design name
+    console.log('[Designer] Opening save modal');
     setShowSaveModal(true);
   };
 
@@ -4706,46 +4848,32 @@ const Designer = () => {
 
       console.log('[Designer] ✅ Product template ID:', productTemplate.id);
 
-      // Get canvas JSON data
-      const canvasJSON = canvas.toJSON();
-      console.log('[Designer] Canvas JSON generated:', Object.keys(canvasJSON));
-
-      // Generate thumbnail
-      let thumbnailDataURL = null;
-      try {
-        thumbnailDataURL = canvas.toDataURL({
-          format: 'png',
-          quality: 0.8,
-          multiplier: 0.3 // Scale down for smaller file size
-        });
-        console.log('[Designer] ✅ Thumbnail generated, length:', thumbnailDataURL?.length);
-      } catch (thumbError) {
-        console.warn('[Designer] ⚠️ Failed to generate thumbnail:', thumbError);
-      }
+      // Use pre-captured snapshot from when Save was clicked (canvas may have remounted since)
+      const canvasJSON = pendingSaveCanvasJSON.current || canvas.toJSON(['id', 'name']);
+      const thumbnailDataURL = pendingSaveThumbnail.current;
+      console.log('[Designer] Using pre-captured canvas snapshot, objects:', canvasJSON?.objects?.length);
 
       const designData = {
         canvas,
+        design_data: canvasJSON,
+        thumbnail: thumbnailDataURL,
         designName: designName.trim(),
-        productTemplateId: productTemplate.id,
-        variantId: currentVariant?.id || selectedColorId || null,
-        viewName: selectedView,
-        isPublic: false,
-        // Additional fields for better tracking
+        productId: productTemplate.id,
         productKey: selectedProduct,
         colorCode: selectedColor,
         colorName: currentColorData?.color_name || selectedColor,
-        printArea: activePrintArea
+        printArea: activePrintArea,
+        status: 'draft'
       };
 
       console.log('[Designer] 📦 Design data prepared:', {
         designName: designData.designName,
-        productTemplateId: designData.productTemplateId,
-        variantId: designData.variantId,
-        viewName: designData.viewName,
+        productId: designData.productId,
         productKey: designData.productKey,
         colorCode: designData.colorCode,
         colorName: designData.colorName,
-        printArea: designData.printArea
+        printArea: designData.printArea,
+        status: designData.status
       });
 
       if (currentDesignId) {
@@ -4811,19 +4939,7 @@ const Designer = () => {
             </div>
 
             <div className="flex items-center space-x-4">
-              {user ? (
-                <div className="flex items-center space-x-2">
-                  <User className="w-5 h-5" />
-                  <span className="text-sm text-gray-600">{user.email}</span>
-                  <button
-                    onClick={handleSignOut}
-                    className="flex items-center space-x-1 px-3 py-1 text-sm text-red-600 hover:text-red-800"
-                  >
-                    <LogOut className="w-4 h-4" />
-                    <span>Sign Out</span>
-                  </button>
-                </div>
-              ) : (
+              {!user && (
                 <button
                   onClick={() => setShowAuth(true)}
                   className="flex items-center space-x-1 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
@@ -4857,6 +4973,7 @@ const Designer = () => {
                         value={selectedProduct}
                         onChange={(e) => {
                           console.log('[Designer] Dropdown changed to:', e.target.value);
+                          designLoadedRef.current = false;
                           setSelectedProduct(e.target.value);
                           setAllProductPrintAreas([]); // Clear all print areas when product changes
                           const newProduct = useDatabase ? products[e.target.value] : productsConfig[e.target.value];
@@ -4882,22 +4999,6 @@ const Designer = () => {
                         }
                       </select>
 
-                      {/* DEBUG INFO */}
-                      <div className="mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded text-xs">
-                        <p className="font-bold text-yellow-900">º DEBUG INFO:</p>
-                        <p className="text-yellow-800">* useDatabase: <span className="font-mono">{String(useDatabase)}</span></p>
-                        <p className="text-yellow-800">* loadingProducts: <span className="font-mono">{String(loadingProducts)}</span></p>
-                        <p className="text-yellow-800">* products count: <span className="font-mono">{Object.keys(products).length}</span></p>
-                        <p className="text-yellow-800">* product keys: <span className="font-mono">{Object.keys(products).join(', ') || 'none'}</span></p>
-                        <p className="text-yellow-800">* selectedProduct: <span className="font-mono">{selectedProduct}</span></p>
-                        <p className="text-yellow-800">* productsConfig keys: <span className="font-mono">{Object.keys(productsConfig).join(', ')}</span></p>
-                        <details className="mt-1">
-                          <summary className="cursor-pointer text-yellow-900 font-medium">View full products object</summary>
-                          <pre className="mt-1 p-2 bg-white rounded overflow-auto max-h-40 text-xs">
-                            {JSON.stringify(products, null, 2)}
-                          </pre>
-                        </details>
-                      </div>
                     </>
                   )}
                 </div>
@@ -5223,6 +5324,21 @@ const Designer = () => {
                   Hide
                 </button>
               </div>
+
+              {/* Print area max size info */}
+              {(() => {
+                const areaData = printAreas?.find(a => a.name === activePrintArea) || printAreas?.[0];
+                if (!areaData) return null;
+                const w = areaData.width_mm || Math.round(areaData.width);
+                const h = areaData.height_mm || Math.round(areaData.height);
+                const unit = areaData.width_mm ? 'mm' : 'px';
+                return (
+                  <div className="mt-3 p-2 bg-gray-50 border border-gray-200 rounded text-xs text-gray-600">
+                    <p className="font-medium text-gray-700">{areaData.name}</p>
+                    <p>Max print size: {w}{unit} &times; {h}{unit}</p>
+                  </div>
+                );
+              })()}
             </div>
 
             {/* 3D Preview (show for water bottles and chi cups) */}
@@ -5353,22 +5469,41 @@ const Designer = () => {
                     </div>
                   </div>
 
-                  {/* Save & Cart Buttons - Compact in Header */}
+                  {/* Action Buttons - Compact in Header */}
                   <div className="flex items-center gap-2 flex-shrink-0">
                     <button
-                      onClick={handleSavePosition}
-                      className="px-2 py-1.5 sm:px-3 sm:py-2 bg-blue-500 text-white font-semibold text-xs rounded-md shadow hover:bg-blue-600 transition-all flex items-center gap-1.5"
-                      title="Save current designs for this print area"
+                      onClick={user ? saveDesign : () => setShowAuth(true)}
+                      disabled={savingDesign}
+                      className="px-2 py-1.5 sm:px-3 sm:py-2 bg-green-600 text-white font-semibold text-xs rounded-md shadow hover:bg-green-700 transition-all flex items-center gap-1.5 disabled:opacity-50"
+                      title={user ? "Save design to your account" : "Sign in to save designs"}
                     >
-                      <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" className="w-3 h-3">
-                        <path d="M13.854 3.646a.5.5 0 0 1 0 .708l-7 7a.5.5 0 0 1-.708 0l-3.5-3.5a.5.5 0 1 1 .708-.708L6.5 10.293l6.646-6.647a.5.5 0 0 1 .708 0z"/>
-                      </svg>
-                      <span>Save</span>
+                      <Save className="w-3 h-3" />
+                      <span>{savingDesign ? 'Saving...' : 'Save'}</span>
+                    </button>
+
+                    <button
+                      onClick={() => handleExportWithWatermark('png')}
+                      disabled={user && !currentDesignId}
+                      className="px-2 py-1.5 sm:px-3 sm:py-2 bg-blue-600 text-white font-semibold text-xs rounded-md shadow hover:bg-blue-700 transition-all flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                      title={user && !currentDesignId ? "Save your design first before exporting" : "Export as PNG"}
+                    >
+                      <FileImage className="w-3 h-3" />
+                      <span>PNG</span>
+                    </button>
+
+                    <button
+                      onClick={() => handleExportWithWatermark('pdf')}
+                      disabled={user && !currentDesignId}
+                      className="px-2 py-1.5 sm:px-3 sm:py-2 bg-red-600 text-white font-semibold text-xs rounded-md shadow hover:bg-red-700 transition-all flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                      title={user && !currentDesignId ? "Save your design first before exporting" : "Export as PDF"}
+                    >
+                      <FileText className="w-3 h-3" />
+                      <span>PDF</span>
                     </button>
 
                     <button
                       onClick={handleAddToCart}
-                      className="px-2 py-1.5 sm:px-3 sm:py-2 bg-green-500 text-white font-semibold text-xs rounded-md shadow hover:bg-green-600 transition-all flex items-center gap-1.5"
+                      className="px-2 py-1.5 sm:px-3 sm:py-2 bg-gray-700 text-white font-semibold text-xs rounded-md shadow hover:bg-gray-800 transition-all flex items-center gap-1.5"
                       title="Add design to shopping cart"
                     >
                       <ShoppingCart className="w-3 h-3" />
@@ -5713,50 +5848,7 @@ const Designer = () => {
                   </div>
                 )}
 
-                {/* Export Tools */}
-                <div>
-                  <h4 className="text-sm font-medium text-gray-700 mb-2">Export</h4>
-                  <div className="space-y-2">
-                    <button
-                      onClick={exportDesign}
-                      className="w-full flex items-center justify-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
-                    >
-                      <FileImage className="w-4 h-4" />
-                      <span>Export PNG</span>
-                    </button>
-                    
-                    <button
-                      onClick={exportPDF}
-                      className="w-full flex items-center justify-center space-x-2 px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700"
-                    >
-                      <FileText className="w-4 h-4" />
-                      <span>Export PDF</span>
-                    </button>
-
-                    <button
-                      onClick={saveDesign}
-                      disabled={savingDesign}
-                      className="w-full flex items-center justify-center space-x-2 px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {savingDesign ? (
-                        <>
-                          <Loader className="w-4 h-4 animate-spin" />
-                          <span>Saving...</span>
-                        </>
-                      ) : designSaveStatus === 'saved' ? (
-                        <>
-                          <Save className="w-4 h-4" />
-                          <span>Saved!</span>
-                        </>
-                      ) : (
-                        <>
-                          <Save className="w-4 h-4" />
-                          <span>Save Design</span>
-                        </>
-                      )}
-                    </button>
-                  </div>
-                </div>
+                {/* Export/Save moved to toolbar header */}
 
                 {/* TEMPORARILY DISABLED: My Designs */}
                 {/* <div>

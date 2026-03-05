@@ -38,6 +38,8 @@ import {
   getDesignerUrl,
   getProductPrintPricing
 } from '../services/productCatalogService';
+import { supabase } from '../services/supabaseService';
+import { useAuth } from '../context/AuthContext';
 
 // Helper constants and functions for apparel size selector
 const APPAREL_SIZES = ['S', 'M', 'L', 'XL', 'XXL'];
@@ -54,6 +56,9 @@ const isApparelProduct = (product) => {
 
 const ProductDetailPage = ({ productSlug }) => {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const [addingToQuote, setAddingToQuote] = useState(false);
+  const [quoteSuccess, setQuoteSuccess] = useState(null); // {quoteNumber, productName, unitPrice}
 
   /**
    * Apply STRONG color overlay with 95% intensity for vibrant colors
@@ -791,6 +796,128 @@ const ProductDetailPage = ({ productSlug }) => {
     : quantity;
   const totalPrice = currentPrice ? currentPrice.total.toFixed(2) : (currentTier.price_per_unit * totalQuantity).toFixed(2);
   const isCustomizable = product ? checkProductCustomizable(product) : false;
+
+  // ==================== ADD TO QUOTE ====================
+  const handleAddToQuote = async () => {
+    console.log('[AddToQuote] ========== CLICKED ==========');
+    console.log('[AddToQuote] User:', user?.id, user?.email);
+    console.log('[AddToQuote] Product:', product?.id, product?.name);
+    console.log('[AddToQuote] Quantity:', totalQuantity);
+    console.log('[AddToQuote] Total Price:', totalPrice);
+    console.log('[AddToQuote] Selected Color:', selectedColor);
+    console.log('[AddToQuote] Print Positions:', printPositions);
+
+    if (!user) {
+      console.log('[AddToQuote] ❌ User not logged in');
+      alert('Please sign in to add items to a quote.');
+      return;
+    }
+
+    if (!product) {
+      console.log('[AddToQuote] ❌ No product loaded');
+      alert('Product not loaded yet.');
+      return;
+    }
+
+    setAddingToQuote(true);
+
+    try {
+      // Generate a unique quote number
+      const quoteNumber = `QT-${Date.now().toString(36).toUpperCase()}`;
+      console.log('[AddToQuote] Generated quote number:', quoteNumber);
+
+      // Get color info
+      const selectedColorObj = colors.find(c => c.color_code === selectedColor) || {};
+      const colorName = selectedColorObj.color_name || selectedColor || null;
+      console.log('[AddToQuote] Color info:', colorName, selectedColor);
+
+      // Build print areas summary
+      const printAreasSummary = Object.entries(printPositions)
+        .filter(([, val]) => val && val !== 'None')
+        .map(([pos, val]) => `${pos}: ${val}`)
+        .join(', ') || null;
+      console.log('[AddToQuote] Print areas:', printAreasSummary);
+
+      // Calculate unit price — use effectivePricePerUnit (already computed for display)
+      // with fallbacks to currentTier and product base price
+      let unitPrice = effectivePricePerUnit;
+      if (!unitPrice || isNaN(unitPrice)) {
+        unitPrice = getCurrentTier()?.price_per_unit;
+      }
+      if (!unitPrice || isNaN(unitPrice)) {
+        unitPrice = product?.base_price || 0;
+      }
+      unitPrice = parseFloat(unitPrice) || 0;
+      console.log('[AddToQuote] Unit price (final):', unitPrice);
+
+      // Step 1: Create the quote
+      console.log('[AddToQuote] 💾 Inserting quote...');
+      const { data: quote, error: quoteError } = await supabase
+        .from('quotes')
+        .insert({
+          quote_number: quoteNumber,
+          customer_id: user.id,
+          status: 'draft',
+          total_amount: parseFloat(totalPrice),
+          notes: null
+        })
+        .select()
+        .single();
+
+      console.log('[AddToQuote] Quote insert result:', { quote, quoteError });
+
+      if (quoteError) {
+        console.error('[AddToQuote] ❌ Quote insert error:', quoteError);
+        throw quoteError;
+      }
+
+      console.log('[AddToQuote] ✅ Quote created:', quote.id);
+
+      // Step 2: Create the quote item
+      console.log('[AddToQuote] 💾 Inserting quote item...');
+      const { data: quoteItem, error: itemError } = await supabase
+        .from('quote_items')
+        .insert({
+          quote_id: quote.id,
+          product_id: product.id,
+          product_name: product.name,
+          quantity: totalQuantity,
+          unit_price: unitPrice,
+          color: colorName,
+          print_areas: printAreasSummary,
+          notes: null
+        })
+        .select()
+        .single();
+
+      console.log('[AddToQuote] Quote item insert result:', { quoteItem, itemError });
+
+      if (itemError) {
+        console.error('[AddToQuote] ❌ Quote item insert error:', itemError);
+        throw itemError;
+      }
+
+      console.log('[AddToQuote] ✅ Quote item created:', quoteItem.id);
+      console.log('[AddToQuote] ========== SUCCESS ==========');
+
+      setQuoteSuccess({
+        quoteNumber,
+        productName: product.name,
+        unitPrice: unitPrice.toFixed(2),
+        quantity: totalQuantity
+      });
+
+      // Notify HeaderBar to refresh quote count
+      window.dispatchEvent(new Event('quoteCountChanged'));
+
+    } catch (error) {
+      console.error('[AddToQuote] ❌❌❌ ERROR:', error);
+      console.error('[AddToQuote] Error message:', error.message);
+      alert(`Error adding to quote: ${error.message}`);
+    } finally {
+      setAddingToQuote(false);
+    }
+  };
 
   // Helper: get active print position labels based on max_print_positions
   const getPrintPositionLabels = () => {
@@ -1588,17 +1715,27 @@ const ProductDetailPage = ({ productSlug }) => {
                   {/* Action Buttons */}
                   <div className="space-y-3">
                     <button
-                      disabled={!isOrderValid()}
+                      onClick={handleAddToQuote}
+                      disabled={!isOrderValid() || addingToQuote}
                       className={`w-full py-4 rounded-xl font-semibold transition-all duration-300 shadow-lg hover:shadow-xl transform hover:scale-105 flex items-center justify-center space-x-2 ${
-                        !isOrderValid()
+                        !isOrderValid() || addingToQuote
                           ? 'bg-gray-300 cursor-not-allowed text-gray-500'
                           : 'bg-gradient-to-r from-blue-600 via-purple-600 to-blue-700 text-white hover:from-blue-700 hover:via-purple-700 hover:to-blue-800'
                       }`}
                     >
-                      <ShoppingCart className="h-5 w-5" />
-                      <span>{!isOrderValid()
-                        ? `Add ${(product?.pricing_model === 'clothing' ? 25 : (product?.min_order_quantity || 25)) - (product?.pricing_model === 'clothing' ? clothingTotalQty : totalQuantity)} more units`
-                        : 'Add to Quote'}</span>
+                      {addingToQuote ? (
+                        <>
+                          <Loader className="h-5 w-5 animate-spin" />
+                          <span>Adding...</span>
+                        </>
+                      ) : (
+                        <>
+                          <ShoppingCart className="h-5 w-5" />
+                          <span>{!isOrderValid()
+                            ? `Add ${(product?.pricing_model === 'clothing' ? 25 : (product?.min_order_quantity || 25)) - (product?.pricing_model === 'clothing' ? clothingTotalQty : totalQuantity)} more units`
+                            : 'Add to Quote'}</span>
+                        </>
+                      )}
                     </button>
 
                     <button className="w-full border-2 border-gray-300 text-gray-700 py-4 rounded-xl font-semibold hover:border-gray-400 hover:bg-gray-50 transition-all duration-300">
@@ -1634,6 +1771,42 @@ const ProductDetailPage = ({ productSlug }) => {
           </div>
         </div>
       </div>
+
+      {/* Quote Success Modal */}
+      {quoteSuccess && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-8 text-center">
+            <div className="mb-4">
+              <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto">
+                <Check className="h-8 w-8 text-green-600" />
+              </div>
+            </div>
+            <h3 className="text-2xl font-bold text-gray-900 mb-2">Added to Quotes!</h3>
+            <p className="text-gray-600 mb-4">Quote {quoteSuccess.quoteNumber}</p>
+            <div className="bg-gray-50 rounded-lg p-4 mb-6 text-sm">
+              <p className="font-semibold text-gray-900">{quoteSuccess.productName}</p>
+              <p className="text-gray-600">{quoteSuccess.quantity} units @ £{quoteSuccess.unitPrice} each</p>
+            </div>
+            <div className="flex space-x-3">
+              <button
+                onClick={() => {
+                  setQuoteSuccess(null);
+                  navigate('/account/quotes');
+                }}
+                className="flex-1 px-4 py-3 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 transition-colors"
+              >
+                View My Quotes
+              </button>
+              <button
+                onClick={() => setQuoteSuccess(null)}
+                className="flex-1 px-4 py-3 border-2 border-gray-300 text-gray-700 rounded-lg font-semibold hover:bg-gray-50 transition-colors"
+              >
+                Continue Shopping
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
