@@ -598,7 +598,8 @@ const ProductDetailPage = ({ productSlug }) => {
 
   // Handle clicking a color swatch in Available Colors section
   const handleColorSwatchClick = (color) => {
-    console.log('[Color Swatch Click] Color:', color.color_name, 'ID:', color.id);
+    console.log('[Swatch clicked]', color.color_name, '| color_code:', color.color_code, '| ID:', color.id);
+    console.log('[Swatch] colorOrderRows before update:', JSON.stringify(colorOrderRows.map(r => ({ id: r.id, colorCode: r.colorCode, colorName: r.colorName }))));
 
     // Update the selected color for image display
     setSelectedColor(color.color_code);
@@ -608,10 +609,13 @@ const ProductDetailPage = ({ productSlug }) => {
       handleColorSelect(color.color_code);
     }
 
-    // If first color row has no color selected, auto-fill it
-    if (colorSelections.length > 0 && !colorSelections[0].colorId) {
-      console.log('[Color Swatch Click] Auto-filling first row with color ID:', color.id);
-      handleColorSelectRow(colorSelections[0].id, color.id);  // Pass UUID string directly
+    // Auto-update the first colour row in Configure Your Order to match the swatch
+    if (colorSelections.length > 0) {
+      handleColorSelectRow(colorSelections[0].id, color.id);
+    }
+    if (colorOrderRows.length > 0) {
+      console.log('[Swatch] Updating first colorOrderRow (id:', colorOrderRows[0].id, ') to color_code:', color.color_code);
+      handleColorOrderColorChange(colorOrderRows[0].id, color.color_code);
     }
   };
 
@@ -929,14 +933,24 @@ const ProductDetailPage = ({ productSlug }) => {
   // Check both color_code and color_name (case-insensitive) so 'White', 'WHITE', 'white' all match.
   // 'natural' explicitly uses 'coloured' pricing.
   const selectedColorObj = colors.find(c => c.color_code === selectedColor) || colors[0] || {};
-  const isWhiteColour =
-    selectedColorObj?.color_code?.toLowerCase() === 'white' ||
-    selectedColorObj?.color_name?.toLowerCase() === 'white';
-  const colourVariant = isWhiteColour ? 'white' : 'coloured';
+  const getColourVariant = (colorObj) => {
+    if (!colorObj) return 'coloured';
+    const name = (colorObj.color_name || '').toLowerCase();
+    const code = (colorObj.color_code || '').toLowerCase();
+    if (product?.slug === 'hi-vis-vest') {
+      const isYellowOrange = name.includes('yellow') || name.includes('orange') ||
+              code.includes('yellow') || code.includes('orange');
+      console.log(`[ColourVariant] Hi-Vis check: name="${name}" code="${code}" isYellowOrange=${isYellowOrange}`);
+      return isYellowOrange ? 'white' : 'coloured';
+    }
+    return (code === 'white' || name === 'white') ? 'white' : 'coloured';
+  };
+  const colourVariant = getColourVariant(selectedColorObj);
 
   console.log(
-    `[ColourVariant] color_code="${selectedColor}" color_name="${selectedColorObj?.color_name}" → variant="${colourVariant}"`
+    `[ColourVariant] Product="${product?.slug}" color_code="${selectedColor}" color_name="${selectedColorObj?.color_name}" → variant="${colourVariant}"`
   );
+  console.log(`[ColourVariant] printPricingData total: ${printPricingData.length}, activePrintPricing (${colourVariant}): ${printPricingData.filter(p => p.colour_variant === colourVariant).length}`);
 
   // Filter print pricing rows to only those matching the current colour variant
   const activePrintPricing = printPricingData.filter(p => p.colour_variant === colourVariant);
@@ -963,8 +977,7 @@ const ProductDetailPage = ({ productSlug }) => {
   const getRowVariant = (colorCode) => {
     if (!colorCode) return 'coloured';
     const colorObj = colors.find(c => c.color_code === colorCode);
-    const isWhite = colorObj?.color_code?.toLowerCase() === 'white' || colorObj?.color_name?.toLowerCase() === 'white';
-    return isWhite ? 'white' : 'coloured';
+    return getColourVariant(colorObj);
   };
 
   // Calculate weighted-average price across all colour order rows (clothing model only)
@@ -1255,9 +1268,9 @@ const ProductDetailPage = ({ productSlug }) => {
 
               {/* Customize Button (if customizable) */}
               {isCustomizable && (
-                <div className="mt-6 bg-gradient-to-br from-purple-50 to-pink-50 rounded-2xl p-6 border border-purple-200/50 shadow-lg">
+                <div className="mt-6 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-2xl p-6 border border-blue-200/50 shadow-lg">
                   <div className="flex items-center space-x-3 mb-4">
-                    <div className="bg-gradient-to-r from-purple-500 to-pink-500 w-10 h-10 rounded-lg flex items-center justify-center">
+                    <div className="bg-gradient-to-br from-blue-500 to-indigo-600 w-10 h-10 rounded-lg flex items-center justify-center shadow-md">
                       <Palette className="h-5 w-5 text-white" />
                     </div>
                     <div>
@@ -1268,7 +1281,7 @@ const ProductDetailPage = ({ productSlug }) => {
 
                   <button
                     onClick={handleCustomize}
-                    className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-3 px-4 rounded-lg font-semibold hover:from-purple-600 hover:to-pink-600 transition-all duration-300 shadow-md hover:shadow-lg transform hover:scale-105"
+                    className="w-full bg-gradient-to-r from-blue-500 to-indigo-600 text-white py-3 px-4 rounded-lg font-semibold hover:from-blue-600 hover:to-indigo-700 transition-all duration-300 shadow-md hover:shadow-lg transform hover:scale-105"
                   >
                     Open Designer
                   </button>
@@ -1318,7 +1331,7 @@ const ProductDetailPage = ({ productSlug }) => {
                     return visibleColors.map((color) => (
                       <button
                         key={color.id}
-                        onClick={() => handleColorSelect(color.color_code)}
+                        onClick={() => handleColorSwatchClick(color)}
                         disabled={isApplyingOverlay}
                         className={`relative w-12 h-12 rounded-full border-2 transition-all duration-300 flex items-center justify-center ${
                           selectedColor === color.color_code
@@ -1536,27 +1549,30 @@ const ProductDetailPage = ({ productSlug }) => {
                                 </select>
                                 <button
                                   onClick={() => handleColorOrderRemove(row.id)}
-                                  className="w-6 h-6 flex items-center justify-center text-gray-300 hover:text-red-400 transition-colors flex-shrink-0"
+                                  className="w-7 h-7 flex items-center justify-center text-red-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors flex-shrink-0"
                                   title="Remove row"
                                 >
-                                  <X className="h-3.5 w-3.5" />
+                                  <X className="h-4.5 w-4.5" strokeWidth={2.5} />
                                 </button>
                               </div>
                               {/* Line 2: size inputs with labels above each, centred */}
-                              <div className="mt-1.5 pl-5 flex items-end justify-center gap-3">
-                                {APPAREL_SIZES.map(size => (
-                                  <div key={size} className="flex flex-col items-center gap-0.5">
-                                    <span className="text-[10px] font-medium text-gray-400">{size}</span>
-                                    <input
-                                      type="number"
-                                      min="0"
-                                      value={row.sizes[size] || ''}
-                                      onChange={(e) => handleColorOrderSizeChange(row.id, size, e.target.value)}
-                                      placeholder="0"
-                                      className="w-9 h-8 text-center border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
-                                    />
-                                  </div>
-                                ))}
+                              <div className="mt-2 flex flex-col items-center">
+                                <div className="flex items-end justify-center gap-2.5">
+                                  {APPAREL_SIZES.map(size => (
+                                    <div key={size} className="flex flex-col items-center gap-1">
+                                      <span className="text-xs font-semibold text-gray-500">{size}</span>
+                                      <input
+                                        type="number"
+                                        min="0"
+                                        value={row.sizes[size] || ''}
+                                        onChange={(e) => handleColorOrderSizeChange(row.id, size, e.target.value)}
+                                        placeholder="0"
+                                        className="w-11 h-10 text-center border border-gray-300 rounded-md text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent placeholder-gray-300"
+                                      />
+                                    </div>
+                                  ))}
+                                </div>
+                                <p className="text-xs text-gray-400 mt-1.5">Enter qty per size to build your order</p>
                               </div>
                             </div>
                           );
@@ -1572,12 +1588,14 @@ const ProductDetailPage = ({ productSlug }) => {
                       </button>
 
                       <div className="mt-3 pt-3 border-t border-gray-200 flex justify-between items-center">
-                        <span className="text-sm font-medium text-gray-700">Combined Total</span>
-                        <span className={`text-2xl font-bold ${clothingTotalQty >= 25 ? 'text-green-600' : 'text-gray-900'}`}>
-                          {clothingTotalQty} <span className="text-sm font-medium">units</span>
+                        <span className="text-sm font-semibold text-gray-700">Combined Total</span>
+                        <span className={`text-3xl font-extrabold ${clothingTotalQty >= 25 ? 'text-green-600' : 'text-red-500'}`}>
+                          {clothingTotalQty} <span className="text-sm font-semibold">units</span>
                         </span>
                       </div>
-                      <p className="text-xs text-gray-500 mt-1">Minimum order: 25 units combined</p>
+                      <p className={`text-xs mt-1 ${clothingTotalQty >= 25 ? 'text-gray-500' : 'text-red-400 font-medium'}`}>
+                        Minimum order: 25 units combined
+                      </p>
                     </div>
                   ) : (
                     /* Standard quantity +/- for all other products */
