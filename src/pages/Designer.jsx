@@ -4275,7 +4275,7 @@ const Designer = () => {
     const dataURL = canvas.toDataURL({
       format: 'png',
       quality: 1,
-      multiplier: 1
+      multiplier: 3
     });
 
     // Create download link
@@ -4313,7 +4313,7 @@ const Designer = () => {
       format: 'a4'
     });
 
-    const imgData = canvas.toDataURL('image/png');
+    const imgData = canvas.toDataURL({ format: 'png', quality: 1, multiplier: 3 });
     pdf.addImage(imgData, 'PNG', 10, 10, 190, 190);
     pdf.save(`${currentProduct.name.toLowerCase().replace(/\s+/g, '-')}-design.pdf`);
 
@@ -4353,39 +4353,48 @@ const Designer = () => {
     const existingWatermark = canvas.getObjects().find(obj => obj.id === 'watermark');
     if (existingWatermark && !watermarkVisible) existingWatermark.set('visible', false);
 
-    // Add temporary watermark
-    const watermarkText = new fabric.Text('promo-gifts.co', {
-      fontSize: 48,
-      fill: 'rgba(0,0,0,0.15)',
-      fontFamily: 'Arial',
-      fontWeight: 'bold',
-      angle: -35,
-      originX: 'center',
-      originY: 'center',
-      left: canvas.width / 2,
-      top: canvas.height / 2,
-      selectable: false,
-      evented: false,
-      id: 'exportWatermark'
+    // Add temporary watermarks
+    const wmPositions = [
+      { left: canvas.width * 0.25, top: canvas.height * 0.3 },
+      { left: canvas.width * 0.5,  top: canvas.height * 0.55 },
+      { left: canvas.width * 0.75, top: canvas.height * 0.8 },
+    ];
+    const watermarkObjects = wmPositions.map(pos => {
+      const wm = new fabric.Text('promo-gifts.co', {
+        fontSize: 36,
+        fill: 'rgba(255,255,255,0.55)',
+        fontFamily: 'Arial',
+        fontWeight: 'bold',
+        angle: -35,
+        originX: 'center',
+        originY: 'center',
+        left: pos.left,
+        top: pos.top,
+        selectable: false,
+        evented: false,
+        shadow: 'rgba(0,0,0,0.6) 2px 2px 4px',
+        id: 'exportWatermark'
+      });
+      canvas.add(wm);
+      return wm;
     });
-    canvas.add(watermarkText);
     canvas.renderAll();
 
     if (format === 'pdf') {
       const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-      const imgData = canvas.toDataURL('image/png');
+      const imgData = canvas.toDataURL({ format: 'png', quality: 1, multiplier: 3 });
       pdf.addImage(imgData, 'PNG', 10, 10, 190, 190);
       pdf.save(`${currentProduct.name.toLowerCase().replace(/\s+/g, '-')}-design.pdf`);
     } else {
-      const dataURL = canvas.toDataURL({ format: 'png', quality: 1, multiplier: 1 });
+      const dataURL = canvas.toDataURL({ format: 'png', quality: 1, multiplier: 3 });
       const link = document.createElement('a');
       link.download = `${currentProduct.name.toLowerCase().replace(/\s+/g, '-')}-design.png`;
       link.href = dataURL;
       link.click();
     }
 
-    // Remove temporary watermark and restore
-    canvas.remove(watermarkText);
+    // Remove temporary watermarks and restore
+    watermarkObjects.forEach(wm => canvas.remove(wm));
     if (overlay) overlay.set('visible', true);
     if (existingWatermark) existingWatermark.set('visible', watermarkVisible);
     canvas.renderAll();
