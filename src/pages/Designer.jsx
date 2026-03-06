@@ -4347,57 +4347,13 @@ const Designer = () => {
       return;
     }
 
-    // Non-signed-in user - export with watermark
-    const overlay = canvas.getObjects().find(obj => obj.id === 'printAreaOverlay');
-    if (overlay) overlay.set('visible', false);
-    const existingWatermark = canvas.getObjects().find(obj => obj.id === 'watermark');
-    if (existingWatermark && !watermarkVisible) existingWatermark.set('visible', false);
-
-    // Add temporary watermarks
-    const wmPositions = [
-      { left: canvas.width * 0.25, top: canvas.height * 0.3 },
-      { left: canvas.width * 0.5,  top: canvas.height * 0.55 },
-      { left: canvas.width * 0.75, top: canvas.height * 0.8 },
-    ];
-    const watermarkObjects = wmPositions.map(pos => {
-      const wm = new fabric.Text('promo-gifts.co', {
-        fontSize: 36,
-        fill: 'rgba(255,255,255,0.55)',
-        fontFamily: 'Arial',
-        fontWeight: 'bold',
-        angle: -35,
-        originX: 'center',
-        originY: 'center',
-        left: pos.left,
-        top: pos.top,
-        selectable: false,
-        evented: false,
-        shadow: 'rgba(0,0,0,0.6) 2px 2px 4px',
-        id: 'exportWatermark'
-      });
-      canvas.add(wm);
-      return wm;
+    // Non-signed-in user - prompt to create account
+    setSaveStatus({
+      type: 'info',
+      message: 'Create a free account to download your design'
     });
-    canvas.renderAll();
-
-    if (format === 'pdf') {
-      const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-      const imgData = canvas.toDataURL({ format: 'png', quality: 1, multiplier: 3 });
-      pdf.addImage(imgData, 'PNG', 10, 10, 190, 190);
-      pdf.save(`${currentProduct.name.toLowerCase().replace(/\s+/g, '-')}-design.pdf`);
-    } else {
-      const dataURL = canvas.toDataURL({ format: 'png', quality: 1, multiplier: 3 });
-      const link = document.createElement('a');
-      link.download = `${currentProduct.name.toLowerCase().replace(/\s+/g, '-')}-design.png`;
-      link.href = dataURL;
-      link.click();
-    }
-
-    // Remove temporary watermarks and restore
-    watermarkObjects.forEach(wm => canvas.remove(wm));
-    if (overlay) overlay.set('visible', true);
-    if (existingWatermark) existingWatermark.set('visible', watermarkVisible);
-    canvas.renderAll();
+    setTimeout(() => setSaveStatus(null), 4000);
+    return;
   };
 
   // Generate 3D preview texture from canvas design elements
