@@ -140,9 +140,96 @@ const CustomerDesigns = ({ user }) => {
     }
   };
 
-  const handleAddToQuote = (design) => {
-    // TODO: Implement add to quote functionality
-    alert('Add to Quote feature coming soon!');
+  const handleAddToQuote = async (design) => {
+    const CLOTHING_PRODUCTS = ['t-shirts', 'hoodie', 'sweatshirts', 'polo', 'hi-vis-vest'];
+
+    if (CLOTHING_PRODUCTS.includes(design.product_key)) {
+      // Clothing — redirect to product page with design pre-selected
+      navigate(`/products/${design.product_key}?design=${design.id}`);
+      return;
+    }
+
+    // Non-clothing — create quote + quote_item directly, then navigate
+    try {
+      // Fetch product id and name
+      const { data: product } = await supabase
+        .from('catalog_products')
+        .select('id, name')
+        .eq('slug', design.product_key)
+        .single();
+
+      if (!product) {
+        alert('Could not find product. Please try again.');
+        return;
+      }
+
+      // Fetch lowest pricing tier (true minimum order qty)
+      const { data: tierRows } = await supabase
+        .from('catalog_pricing_tiers')
+        .select('min_quantity, price_per_unit')
+        .eq('catalog_product_id', product.id)
+        .order('min_quantity', { ascending: true })
+        .limit(1);
+
+      const minQty = tierRows?.[0]?.min_quantity ?? null;
+      const unitPrice = tierRows?.[0]?.price_per_unit ?? 0;
+
+      console.log('[CustomerDesigns] Min qty:', minQty, 'Unit price:', unitPrice);
+
+      // Create quote
+      const quoteNumber = 'Q-' + Date.now().toString().slice(-6);
+      const { data: newQuote, error: quoteError } = await supabase
+        .from('quotes')
+        .insert({
+          quote_number: quoteNumber,
+          customer_id: user.id,
+          status: 'draft',
+          total_amount: 0,
+          notes: `Design: ${design.design_name || 'Untitled'}`
+        })
+        .select()
+        .single();
+
+      if (quoteError || !newQuote) {
+        console.error('[CustomerDesigns] Failed to create quote:', quoteError);
+        alert('Failed to create quote. Please try again.');
+        return;
+      }
+
+      // Create quote item
+      const itemPayload = {
+        quote_id: newQuote.id,
+        product_id: product.id,
+        product_name: product.name,
+        quantity: minQty || 1,
+        unit_price: unitPrice,
+        color: design.color_name || design.color_code || null,
+        print_areas: design.print_area || null,
+        notes: `Design: ${design.design_name || 'Untitled'}`
+      };
+      console.log('[CustomerDesigns] quote_items insert payload:', itemPayload);
+
+      const { data: newItem, error: itemError } = await supabase
+        .from('quote_items')
+        .insert(itemPayload)
+        .select()
+        .single();
+
+      if (itemError) {
+        console.error('[CustomerDesigns] quote_items insert FAILED:', itemError.message, itemError.details, itemError.hint);
+        alert(`Failed to add item to quote: ${itemError.message}`);
+        return;
+      }
+      console.log('[CustomerDesigns] quote_items insert SUCCESS:', newItem);
+
+      // Notify header to refresh badge count
+      window.dispatchEvent(new Event('quoteCountChanged'));
+
+      navigate('/account/quotes');
+    } catch (err) {
+      console.error('[CustomerDesigns] Error creating quote:', err);
+      alert('Failed to create quote. Please try again.');
+    }
   };
 
   return (

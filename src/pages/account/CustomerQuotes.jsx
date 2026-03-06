@@ -12,6 +12,7 @@ const CustomerQuotes = ({ user }) => {
   const [convertingQuote, setConvertingQuote] = useState(null); // quote object for confirmation modal
   const [converting, setConverting] = useState(false);
   const [orderSuccess, setOrderSuccess] = useState(null); // { orderId, orderNumber }
+  const [productMinQtys, setProductMinQtys] = useState({});
 
   useEffect(() => {
     if (user) fetchQuotes();
@@ -33,7 +34,34 @@ const CustomerQuotes = ({ user }) => {
 
       if (error) throw error;
 
+      console.log('[CustomerQuotes] Raw quotes data:', JSON.stringify(data?.map(q => ({
+        id: q.id, quote_number: q.quote_number,
+        quote_items: q.quote_items,
+        keys: Object.keys(q)
+      })), null, 2));
+
       setQuotes(data || []);
+
+      // Fetch min order quantities for all products in these quotes
+      const productIds = [...new Set(
+        (data || []).flatMap(q => (q.quote_items || []).map(item => item.product_id))
+      )].filter(Boolean);
+
+      if (productIds.length > 0) {
+        const { data: tierData } = await supabase
+          .from('catalog_pricing_tiers')
+          .select('catalog_product_id, min_quantity')
+          .in('catalog_product_id', productIds)
+          .order('min_quantity', { ascending: true });
+
+        const minQtyMap = {};
+        tierData?.forEach(tier => {
+          if (!minQtyMap[tier.catalog_product_id]) {
+            minQtyMap[tier.catalog_product_id] = tier.min_quantity;
+          }
+        });
+        setProductMinQtys(minQtyMap);
+      }
     } catch (error) {
       console.error('[CustomerQuotes] Error fetching quotes:', error);
     } finally {
@@ -183,7 +211,7 @@ const CustomerQuotes = ({ user }) => {
 
   const getQuoteTotal = (items) => {
     if (!items || items.length === 0) return 0;
-    return items.reduce((sum, item) => sum + (item.quantity * item.unit_price), 0);
+    return items.reduce((sum, item) => sum + ((item.quantity || 0) * (item.unit_price || 0)), 0);
   };
 
   // Loading skeleton
@@ -265,21 +293,70 @@ const CustomerQuotes = ({ user }) => {
               {items.length > 0 && (
                 <div className="divide-y divide-gray-50">
                   {items.map(item => {
-                    const lineTotal = item.quantity * item.unit_price;
+                    const lineTotal = (item.quantity || 0) * (item.unit_price || 0);
                     return (
                       <div key={item.id} className="px-5 py-3 flex items-center justify-between">
                         <div className="flex-1">
                           <p className="font-medium text-gray-900">{item.product_name}</p>
-                          <div className="flex items-center space-x-3 text-sm text-gray-500 mt-0.5">
-                            {item.color && <span>{item.color}</span>}
-                            <span>{item.quantity} units</span>
-                            <span>@ {formatCurrency(item.unit_price)} each</span>
-                            {item.print_areas && (
-                              <span className="text-xs bg-gray-100 px-2 py-0.5 rounded">{item.print_areas}</span>
-                            )}
+                          {item.color && <span className="text-sm text-gray-500">{item.color}</span>}
+                          {item.print_areas && (
+                            <span className="text-xs bg-gray-100 px-2 py-0.5 rounded ml-2">{item.print_areas}</span>
+                          )}
+                          <div className="flex items-center gap-2 mt-1">
+                            <label className="text-sm text-gray-500">Qty:</label>
+                            <input
+                              type="number"
+                              min="1"
+                              defaultValue={item.quantity || ''}
+                              placeholder={productMinQtys[item.product_id] ? `Min. ${productMinQtys[item.product_id]}` : 'Enter qty'}
+                              className="w-20 px-2 py-1 text-sm border border-gray-300 rounded"
+                              onBlur={async (e) => {
+                                const newQty = parseInt(e.target.value);
+                                const minQty = productMinQtys[item.product_id] || 1;
+
+                                if (!newQty || newQty < 1) return;
+
+                                if (newQty < minQty) {
+                                  alert(`Minimum order quantity for this product is ${minQty} units.`);
+                                  e.target.value = minQty;
+                                  return;
+                                }
+
+                                if (newQty === item.quantity) return;
+
+                                // Find correct unit price for this quantity
+                                const { data: tierData } = await supabase
+                                  .from('catalog_pricing_tiers')
+                                  .select('min_quantity, max_quantity, price_per_unit')
+                                  .eq('catalog_product_id', item.product_id)
+                                  .order('min_quantity', { ascending: true });
+
+                                let unitPrice = item.unit_price;
+                                if (tierData) {
+                                  const matchedTier = tierData.find(tier =>
+                                    newQty >= tier.min_quantity &&
+                                    (tier.max_quantity === null || newQty <= tier.max_quantity)
+                                  );
+                                  if (matchedTier) unitPrice = matchedTier.price_per_unit;
+                                }
+
+                                await supabase
+                                  .from('quote_items')
+                                  .update({ quantity: newQty, unit_price: unitPrice })
+                                  .eq('id', item.id);
+                                fetchQuotes();
+                              }}
+                            />
+                            <span className="text-sm text-gray-500">
+                              @ {formatCurrency(item.unit_price)} each
+                            </span>
                           </div>
                         </div>
-                        <p className="font-semibold text-gray-900 ml-4">{formatCurrency(lineTotal)}</p>
+                        {item.quantity && item.unit_price ? (
+                          <p className="font-semibold text-gray-900 ml-4">{formatCurrency(lineTotal)}</p>
+                        ) : (
+                          <p className="text-sm text-gray-400 ml-4">Enter qty</p>
+                        )}
                       </div>
                     );
                   })}

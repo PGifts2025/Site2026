@@ -77,7 +77,7 @@ function HeaderBar() {
   };
 
   return (
-    <header className="bg-white shadow-sm border-b">
+    <header className="bg-white shadow-sm border-b sticky top-0 z-[100]">
       <div className="max-w-7xl mx-auto px-4">
         {/* Top Header */}
         <div className="flex justify-between items-center py-4">
@@ -129,7 +129,7 @@ function HeaderBar() {
 
                   {/* Dropdown Menu */}
                   {showUserMenu && (
-                    <div className="absolute right-0 mt-2 w-56 bg-white rounded-lg shadow-xl border border-gray-200 py-2 z-50">
+                    <div className="absolute right-0 mt-2 w-56 bg-white rounded-lg shadow-xl border border-gray-200 py-2 z-[9999]">
                       <div className="px-4 py-2 border-b border-gray-200">
                         <p className="text-sm font-semibold text-gray-900">{user.email}</p>
                       </div>
