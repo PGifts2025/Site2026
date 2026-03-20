@@ -234,16 +234,6 @@ const ProductDetailPage = ({ productSlug }) => {
     }
   }, [productSlug]);
 
-  // Debug: Log when colors are loaded from database
-  useEffect(() => {
-    if (colors && colors.length > 0) {
-      console.log('[ProductDetail] Product colors loaded:', colors.length);
-      console.log('[ProductDetail] Sample color:', colors[0]);
-      console.log('[ProductDetail] Color ID type:', typeof colors[0]?.id);
-      console.log('[ProductDetail] All color IDs:', colors.map(c => c.id));
-    }
-  }, [colors]);
-
   /**
    * Load product data from database
    */
@@ -281,10 +271,6 @@ const ProductDetailPage = ({ productSlug }) => {
       setGalleryImages(gallery);
       setProductImages(productImgs);
 
-      console.log('[ProductDetail] Gallery images:', gallery.length);
-      console.log('[ProductDetail] Product images:', productImgs.length);
-      console.log('[ProductDetail] All images:', data.images || []);
-
       // Set initial selected color - WHITE for apparel, first color for others
       const apparelSlugs = ['hoodie', 't-shirts', 'polo', 'sweatshirts'];
       const isApparel = data.category?.slug === 'clothing' || apparelSlugs.includes(data.slug);
@@ -298,20 +284,16 @@ const ProductDetailPage = ({ productSlug }) => {
           );
 
           if (whiteColor) {
-            console.log('[ProductDetail] 🎯 APPAREL: Setting white as default color');
             setSelectedColor(whiteColor.color_code);
 
             // Set white template URL directly (no overlay needed for white)
             const whiteTemplateUrl = `https://cbcevjhvgmxrxeeyldza.supabase.co/storage/v1/object/public/product-templates/${data.slug}/white-front.png`;
-            console.log('[ProductDetail] 🎯 Setting white template URL:', whiteTemplateUrl);
             setOverlayImageUrl(whiteTemplateUrl);
           } else {
-            console.log('[ProductDetail] ⚠️ White color not found, using first color');
             setSelectedColor(data.colors[0].color_code);
           }
         } else {
           // For non-apparel, use first color
-          console.log('[ProductDetail] Non-apparel: Setting first color');
           setSelectedColor(data.colors[0].color_code);
         }
       }
@@ -347,7 +329,6 @@ const ProductDetailPage = ({ productSlug }) => {
       try {
         const printData = await getProductPrintPricing(data.id);
         setPrintPricingData(printData);
-        console.log('[PrintPricing] Loaded', printData.length, 'rows for product', data.id);
 
         // Initialise print position selectors for clothing model
         if (data.pricing_model === 'clothing') {
@@ -355,7 +336,6 @@ const ProductDetailPage = ({ productSlug }) => {
           const initial = {};
           labels.forEach((lbl, i) => { initial[lbl] = i === 0 ? '1 col' : 'None'; });
           setPrintPositions(initial);
-          console.log('[PrintPricing] Initial positions:', initial);
         }
       } catch (printErr) {
         console.warn('[PrintPricing] Could not load print pricing (table may not exist yet):', printErr.message);
@@ -678,7 +658,6 @@ const ProductDetailPage = ({ productSlug }) => {
     setViewingGallery(true);
     setSelectedGalleryImage(image.medium_url || image.image_url);
     setSelectedGalleryIndex(index);
-    console.log('[ProductDetail] Viewing gallery image:', image.alt_text || index);
   };
 
   /**
@@ -723,12 +702,6 @@ const ProductDetailPage = ({ productSlug }) => {
       setOverlayImageUrl(null); // Clear previous overlay
 
       try {
-        console.log('[ProductDetail] Applying color overlay:', {
-          color: selectedColorObj.color_name,
-          hex: selectedColorObj.hex_value,
-          template: whiteTemplateUrl
-        });
-
         // Apply strong color overlay (same as Designer)
         const coloredImageUrl = await applyStrongColorOverlay(
           whiteTemplateUrl,
@@ -736,8 +709,6 @@ const ProductDetailPage = ({ productSlug }) => {
         );
 
         setOverlayImageUrl(coloredImageUrl);
-
-        console.log('[ProductDetail] ✅ Color overlay applied successfully');
       } catch (error) {
         console.error('[ProductDetail] Failed to apply color overlay:', error);
         // Fallback: clear overlay and show default image
@@ -803,22 +774,12 @@ const ProductDetailPage = ({ productSlug }) => {
 
   // ==================== ADD TO QUOTE ====================
   const handleAddToQuote = async () => {
-    console.log('[AddToQuote] ========== CLICKED ==========');
-    console.log('[AddToQuote] User:', user?.id, user?.email);
-    console.log('[AddToQuote] Product:', product?.id, product?.name);
-    console.log('[AddToQuote] Quantity:', totalQuantity);
-    console.log('[AddToQuote] Total Price:', totalPrice);
-    console.log('[AddToQuote] Selected Color:', selectedColor);
-    console.log('[AddToQuote] Print Positions:', printPositions);
-
     if (!user) {
-      console.log('[AddToQuote] ❌ User not logged in');
       alert('Please sign in to add items to a quote.');
       return;
     }
 
     if (!product) {
-      console.log('[AddToQuote] ❌ No product loaded');
       alert('Product not loaded yet.');
       return;
     }
@@ -828,19 +789,16 @@ const ProductDetailPage = ({ productSlug }) => {
     try {
       // Generate a unique quote number
       const quoteNumber = `QT-${Date.now().toString(36).toUpperCase()}`;
-      console.log('[AddToQuote] Generated quote number:', quoteNumber);
 
       // Get color info
       const selectedColorObj = colors.find(c => c.color_code === selectedColor) || {};
       const colorName = selectedColorObj.color_name || selectedColor || null;
-      console.log('[AddToQuote] Color info:', colorName, selectedColor);
 
       // Build print areas summary
       const printAreasSummary = Object.entries(printPositions)
         .filter(([, val]) => val && val !== 'None')
         .map(([pos, val]) => `${pos}: ${val}`)
         .join(', ') || null;
-      console.log('[AddToQuote] Print areas:', printAreasSummary);
 
       // Calculate unit price — use effectivePricePerUnit (already computed for display)
       // with fallbacks to currentTier and product base price
@@ -852,10 +810,8 @@ const ProductDetailPage = ({ productSlug }) => {
         unitPrice = product?.base_price || 0;
       }
       unitPrice = parseFloat(unitPrice) || 0;
-      console.log('[AddToQuote] Unit price (final):', unitPrice);
 
       // Step 1: Create the quote
-      console.log('[AddToQuote] 💾 Inserting quote...');
       const { data: quote, error: quoteError } = await supabase
         .from('quotes')
         .insert({
@@ -868,17 +824,11 @@ const ProductDetailPage = ({ productSlug }) => {
         .select()
         .single();
 
-      console.log('[AddToQuote] Quote insert result:', { quote, quoteError });
-
       if (quoteError) {
-        console.error('[AddToQuote] ❌ Quote insert error:', quoteError);
         throw quoteError;
       }
 
-      console.log('[AddToQuote] ✅ Quote created:', quote.id);
-
       // Step 2: Create the quote item
-      console.log('[AddToQuote] 💾 Inserting quote item...');
       const { data: quoteItem, error: itemError } = await supabase
         .from('quote_items')
         .insert({
@@ -894,15 +844,9 @@ const ProductDetailPage = ({ productSlug }) => {
         .select()
         .single();
 
-      console.log('[AddToQuote] Quote item insert result:', { quoteItem, itemError });
-
       if (itemError) {
-        console.error('[AddToQuote] ❌ Quote item insert error:', itemError);
         throw itemError;
       }
-
-      console.log('[AddToQuote] ✅ Quote item created:', quoteItem.id);
-      console.log('[AddToQuote] ========== SUCCESS ==========');
 
       setQuoteSuccess({
         quoteNumber,
@@ -940,21 +884,14 @@ const ProductDetailPage = ({ productSlug }) => {
     if (product?.slug === 'hi-vis-vest') {
       const isYellowOrange = name.includes('yellow') || name.includes('orange') ||
               code.includes('yellow') || code.includes('orange');
-      console.log(`[ColourVariant] Hi-Vis check: name="${name}" code="${code}" isYellowOrange=${isYellowOrange}`);
       return isYellowOrange ? 'white' : 'coloured';
     }
     return (code === 'white' || name === 'white') ? 'white' : 'coloured';
   };
   const colourVariant = getColourVariant(selectedColorObj);
 
-  console.log(
-    `[ColourVariant] Product="${product?.slug}" color_code="${selectedColor}" color_name="${selectedColorObj?.color_name}" → variant="${colourVariant}"`
-  );
-  console.log(`[ColourVariant] printPricingData total: ${printPricingData.length}, activePrintPricing (${colourVariant}): ${printPricingData.filter(p => p.colour_variant === colourVariant).length}`);
-
   // Filter print pricing rows to only those matching the current colour variant
   const activePrintPricing = printPricingData.filter(p => p.colour_variant === colourVariant);
-  console.log(`[ColourVariant] activePrintPricing rows: ${activePrintPricing.length} (total: ${printPricingData.length})`);
 
   // Helper: find matching print pricing row by quantity, colour_count, and variant (already filtered)
   const findPrintRow = (colCount, qty) =>

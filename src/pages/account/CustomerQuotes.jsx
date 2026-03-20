@@ -128,8 +128,7 @@ const CustomerQuotes = ({ user }) => {
           customer_id: user.id,
           status: 'pending',
           artwork_status: 'pending_artwork',
-          total_amount: quoteTotal,
-          notes: `Converted from quote ${quote.quote_number}`
+          total_amount: quoteTotal
         })
         .select()
         .single();
@@ -192,13 +191,6 @@ const CustomerQuotes = ({ user }) => {
         || `${supabaseConfig.url}/functions/v1`;
 
       const anonKey = supabaseConfig.anonKey || import.meta.env.VITE_SUPABASE_ANON_KEY;
-
-      console.log('[PayNow] Calling URL:', functionsUrl + '/create-checkout-session');
-      console.log('[PayNow] VITE_SUPABASE_FUNCTIONS_URL:', import.meta.env.VITE_SUPABASE_FUNCTIONS_URL);
-      console.log('[PayNow] Full env:', {
-        functionsUrl: import.meta.env.VITE_SUPABASE_FUNCTIONS_URL,
-        supabaseUrl: import.meta.env.VITE_SUPABASE_URL
-      });
 
       const res = await fetch(`${functionsUrl}/create-checkout-session`, {
         method: 'POST',
