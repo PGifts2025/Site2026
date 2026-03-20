@@ -324,10 +324,14 @@ Objects can still be scaled beyond print area boundary. Suggested fix: switch fr
 
 ### PHASE 4 — Stripe Integration
 
-7. ✅ Stripe Checkout — create-checkout-session and confirm-payment Edge Functions deployed, Pay Now button in CustomerQuotes.jsx, OrderConfirmation.jsx page built
-8. ✅ Post-payment confirmation page with soft artwork upload prompt
-9. Order confirmation email with artwork upload link
-10. Admin flag: only trigger production once artwork received
+7. ✅ Stripe Checkout — create-checkout-session and confirm-payment Edge Functions deployed
+8. ✅ Pay Now button in CustomerQuotes.jsx
+9. ✅ OrderConfirmation.jsx page built
+10. ✅ order_items populated on payment confirmation
+11. ✅ Convert to Order schema error fixed (notes column removed)
+12. ✅ Idempotency — duplicate order prevention in confirm-payment
+13. Post-payment confirmation email with artwork upload link
+14. Cart button in Designer wired to checkout
 
 ### PHASE 5 (future)
 
@@ -487,3 +491,62 @@ Do not change the schema of quote_items, orders, or any other table.
 - [ ] Quote status changes to 'converted' after payment
 - [ ] Stripe dashboard shows the test payment
 - [ ] Test with Ocean Octopus product first (simple flat pricing)
+
+---
+
+## 17. ORDER FLOW — COMPLETE ARCHITECTURE (as of March 2026)
+
+### 17.1 Two paths to an order
+
+Path A — Pay Now (Stripe):
+  Quote → Pay Now button → create-checkout-session Edge Function
+  → Stripe Checkout → confirm-payment Edge Function
+  → Order created + order_items inserted + quote marked converted
+  → /order-confirmation page shown
+
+Path B — Convert to Order (manual, admin use):
+  Quote → Convert to Order button → direct Supabase INSERT
+  → Order created, quote marked converted
+  → No payment taken
+
+### 17.2 Edge Functions
+
+| Function | Location | Purpose |
+|---|---|---|
+| create-checkout-session | supabase/functions/create-checkout-session/index.ts | Reads quote, creates Stripe Checkout session, returns URL |
+| confirm-payment | supabase/functions/confirm-payment/index.ts | Verifies Stripe payment, creates order + order_items, marks quote converted |
+
+Both use fetch() to call Stripe REST API — NOT the npm Stripe package.
+Both require CORS headers and OPTIONS preflight handling.
+
+### 17.3 order_items table
+
+order_items is populated by confirm-payment Edge Function after
+successful payment. Required columns include line_total (NOT NULL)
+calculated as ROUND(quantity * unit_price, 2).
+
+If adding new columns to order_items, always check NOT NULL
+constraints and update the Edge Function INSERT accordingly.
+
+### 17.4 Supabase Secrets (production)
+
+| Secret | Value | Set via |
+|---|---|---|
+| STRIPE_SECRET_KEY | sk_test_... (rotate before go-live) | supabase secrets set |
+| SITE_URL | https://promo-gifts.co | supabase secrets set |
+| SUPABASE_SERVICE_ROLE_KEY | auto-available in Edge Functions | automatic |
+
+### 17.5 Vercel Environment Variables
+
+VITE_STRIPE_PUBLISHABLE_KEY — pk_test_... (update to pk_live_ before go-live)
+VITE_SUPABASE_FUNCTIONS_URL — https://cbcevjhvgmxrxeeyldza.supabase.co/functions/v1
+
+### 17.6 Before Going Live (Stripe)
+
+- [ ] Rotate Stripe test secret key (was exposed in terminal)
+- [ ] Replace pk_test_ with pk_live_ in Vercel env vars
+- [ ] Replace sk_test_ with sk_live_ in Supabase secrets
+- [ ] Set SITE_URL to https://promo-gifts.co in Supabase secrets
+- [ ] Test with a real card for a small amount
+- [ ] Enable only GBP in Stripe dashboard
+- [ ] Set up Stripe webhook for payment.succeeded as backup confirmation
