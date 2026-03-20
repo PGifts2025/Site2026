@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { FileText, Trash2, ShoppingCart, Loader, AlertCircle, Check, X } from 'lucide-react';
+import { FileText, Trash2, ShoppingCart, Loader, AlertCircle, Check, X, CreditCard } from 'lucide-react';
 import CustomerLayout from '../../components/customer/CustomerLayout';
 import { supabase } from '../../services/supabaseService';
+import { supabaseConfig } from '../../config/supabase';
 
 const CustomerQuotes = ({ user }) => {
   const navigate = useNavigate();
@@ -13,6 +14,8 @@ const CustomerQuotes = ({ user }) => {
   const [converting, setConverting] = useState(false);
   const [orderSuccess, setOrderSuccess] = useState(null); // { orderId, orderNumber }
   const [productMinQtys, setProductMinQtys] = useState({});
+  const [payingQuoteId, setPayingQuoteId] = useState(null);
+  const [payError, setPayError] = useState(null); // { quoteId, message }
 
   useEffect(() => {
     if (user) fetchQuotes();
@@ -179,6 +182,63 @@ const CustomerQuotes = ({ user }) => {
       setConverting(false);
     }
   };
+
+  const handlePayNow = async (quote) => {
+    setPayError(null);
+    setPayingQuoteId(quote.id);
+
+    try {
+      const functionsUrl = import.meta.env.VITE_SUPABASE_FUNCTIONS_URL
+        || `${supabaseConfig.url}/functions/v1`;
+
+      const anonKey = supabaseConfig.anonKey || import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+      console.log('[PayNow] Calling URL:', functionsUrl + '/create-checkout-session');
+      console.log('[PayNow] VITE_SUPABASE_FUNCTIONS_URL:', import.meta.env.VITE_SUPABASE_FUNCTIONS_URL);
+      console.log('[PayNow] Full env:', {
+        functionsUrl: import.meta.env.VITE_SUPABASE_FUNCTIONS_URL,
+        supabaseUrl: import.meta.env.VITE_SUPABASE_URL
+      });
+
+      const res = await fetch(`${functionsUrl}/create-checkout-session`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${anonKey}`,
+        },
+        body: JSON.stringify({
+          quote_id: quote.id,
+          customer_email: user?.email || null,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        setPayError({ quoteId: quote.id, message: data.error || 'Payment request failed. Please try again.' });
+        setPayingQuoteId(null);
+        return;
+      }
+
+      if (data.url) {
+        window.location.href = data.url;
+      } else {
+        setPayError({ quoteId: quote.id, message: 'Could not start payment. Please try again.' });
+        setPayingQuoteId(null);
+      }
+    } catch (err) {
+      console.error('[handlePayNow] Error:', err);
+      setPayError({ quoteId: quote.id, message: 'Could not start payment. Please try again.' });
+      setPayingQuoteId(null);
+    }
+  };
+
+  // Auto-clear pay error after 5 seconds
+  useEffect(() => {
+    if (!payError) return;
+    const timer = setTimeout(() => setPayError(null), 5000);
+    return () => clearTimeout(timer);
+  }, [payError]);
 
   const formatDate = (dateString) => {
     return new Date(dateString).toLocaleDateString('en-GB', {
@@ -377,14 +437,32 @@ const CustomerQuotes = ({ user }) => {
                 ) : (
                   <>
                     <button
+                      onClick={() => handlePayNow(quote)}
+                      disabled={payingQuoteId === quote.id}
+                      className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-semibold hover:bg-green-700 transition-colors disabled:opacity-50 flex items-center space-x-1"
+                    >
+                      {payingQuoteId === quote.id ? (
+                        <>
+                          <Loader className="h-4 w-4 animate-spin" />
+                          <span>Redirecting to payment...</span>
+                        </>
+                      ) : (
+                        <>
+                          <CreditCard className="h-4 w-4" />
+                          <span>Pay Now</span>
+                        </>
+                      )}
+                    </button>
+                    <button
                       onClick={() => setConvertingQuote(quote)}
-                      className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors"
+                      disabled={payingQuoteId === quote.id}
+                      className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50"
                     >
                       Convert to Order
                     </button>
                     <button
                       onClick={() => handleDelete(quote.id, quote.quote_number)}
-                      disabled={deletingId === quote.id}
+                      disabled={deletingId === quote.id || payingQuoteId === quote.id}
                       className="px-4 py-2 border border-red-300 text-red-600 rounded-lg text-sm font-semibold hover:bg-red-50 transition-colors disabled:opacity-50 flex items-center space-x-1"
                     >
                       {deletingId === quote.id ? (
@@ -397,6 +475,11 @@ const CustomerQuotes = ({ user }) => {
                   </>
                 )}
               </div>
+              {payError && payError.quoteId === quote.id && (
+                <div className="px-5 py-2 bg-red-50 border-t border-red-100">
+                  <p className="text-sm text-red-600 text-right">{payError.message}</p>
+                </div>
+              )}
             </div>
           );
         })}
