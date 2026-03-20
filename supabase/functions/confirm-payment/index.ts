@@ -161,6 +161,31 @@ Deno.serve(async (req: Request) => {
       );
     }
 
+    // Copy quote_items into order_items
+    const { data: quoteItems } = await supabase
+      .from("quote_items")
+      .select("product_id, product_name, quantity, unit_price, color")
+      .eq("quote_id", quoteId);
+
+    if (quoteItems && quoteItems.length > 0) {
+      const orderItems = quoteItems.map((item: any) => ({
+        order_id: newOrder.id,
+        product_id: item.product_id,
+        product_name: item.product_name,
+        quantity: item.quantity,
+        unit_price: item.unit_price,
+        color: item.color || null,
+      }));
+
+      const { error: itemsError } = await supabase
+        .from("order_items")
+        .insert(orderItems);
+
+      if (itemsError) {
+        console.error("Order items copy error:", itemsError);
+      }
+    }
+
     return new Response(
       JSON.stringify({
         success: true,
