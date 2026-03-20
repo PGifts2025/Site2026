@@ -143,6 +143,7 @@ const CustomerQuotes = ({ user }) => {
         product_name: item.product_name,
         quantity: item.quantity,
         unit_price: item.unit_price,
+        line_total: Math.round((item.quantity || 0) * (item.unit_price || 0) * 100) / 100,
         color: item.color || null
       }));
 
