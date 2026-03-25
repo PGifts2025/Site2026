@@ -298,6 +298,14 @@ const ProductDetailPage = ({ productSlug }) => {
         }
       }
 
+      // Derive min order quantity from the lowest pricing tier if available,
+      // otherwise fall back to the product's min_order_quantity column
+      const tiers = data.pricing || [];
+      if (tiers.length > 0) {
+        const lowestTierMin = Math.min(...tiers.map(t => t.min_quantity));
+        data.min_order_quantity = lowestTierMin;
+      }
+
       // Set initial quantity to min order quantity
       if (data.min_order_quantity) {
         setQuantity(data.min_order_quantity);
@@ -607,9 +615,9 @@ const ProductDetailPage = ({ productSlug }) => {
       return { price_per_unit: 0 };
     }
 
-    return pricingTiers.find(tier =>
-      quantity >= tier.min_quantity && (tier.max_quantity === null || quantity <= tier.max_quantity)
-    ) || pricingTiers[0];
+    // Sort descending by min_quantity so we match the highest qualifying tier first
+    const sorted = [...pricingTiers].sort((a, b) => b.min_quantity - a.min_quantity);
+    return sorted.find(tier => quantity >= tier.min_quantity) || pricingTiers[0];
   };
 
   /**

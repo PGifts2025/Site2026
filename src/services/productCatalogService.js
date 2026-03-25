@@ -557,20 +557,23 @@ export const calculatePriceForQuantity = async (productId, quantity) => {
       return null;
     }
 
-    // Find matching tier
-    const matchingTier = tiers.find(tier => {
-      const meetsMin = quantity >= tier.min_quantity;
-      const meetsMax = tier.max_quantity === null || quantity <= tier.max_quantity;
-      return meetsMin && meetsMax;
-    });
+    // Find the highest tier where quantity meets the minimum
+    // Tiers are sorted ascending by min_quantity, so iterate in reverse
+    let matchingTier = null;
+    for (let i = tiers.length - 1; i >= 0; i--) {
+      if (quantity >= tiers[i].min_quantity) {
+        matchingTier = tiers[i];
+        break;
+      }
+    }
 
     if (!matchingTier) {
-      // Use highest tier if quantity exceeds all tiers
-      const highestTier = tiers[tiers.length - 1];
+      // Quantity below all tiers — use the lowest tier
+      const lowestTier = tiers[0];
       return {
-        ...highestTier,
+        ...lowestTier,
         quantity,
-        total: parseFloat(highestTier.price_per_unit) * quantity
+        total: parseFloat(lowestTier.price_per_unit) * quantity
       };
     }
 
