@@ -16,9 +16,24 @@ const CustomerQuotes = ({ user }) => {
   const [productMinQtys, setProductMinQtys] = useState({});
   const [payingQuoteId, setPayingQuoteId] = useState(null);
   const [payError, setPayError] = useState(null); // { quoteId, message }
+  const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => {
-    if (user) fetchQuotes();
+    if (user) {
+      fetchQuotes();
+      // Check if user is admin (team_members with super_admin or staff role)
+      supabase
+        .from('team_members')
+        .select('role')
+        .eq('user_id', user.id)
+        .eq('is_active', true)
+        .maybeSingle()
+        .then(({ data }) => {
+          if (data && (data.role === 'super_admin' || data.role === 'staff')) {
+            setIsAdmin(true);
+          }
+        });
+    }
   }, [user]);
 
   const fetchQuotes = async () => {
@@ -446,13 +461,15 @@ const CustomerQuotes = ({ user }) => {
                         </>
                       )}
                     </button>
-                    <button
-                      onClick={() => setConvertingQuote(quote)}
-                      disabled={payingQuoteId === quote.id}
-                      className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50"
-                    >
-                      Convert to Order
-                    </button>
+                    {isAdmin && (
+                      <button
+                        onClick={() => setConvertingQuote(quote)}
+                        disabled={payingQuoteId === quote.id}
+                        className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50"
+                      >
+                        Convert to Order
+                      </button>
+                    )}
                     <button
                       onClick={() => handleDelete(quote.id, quote.quote_number)}
                       disabled={deletingId === quote.id || payingQuoteId === quote.id}
