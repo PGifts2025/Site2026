@@ -17,6 +17,12 @@ const CustomerQuotes = ({ user }) => {
   const [payingQuoteId, setPayingQuoteId] = useState(null);
   const [payError, setPayError] = useState(null); // { quoteId, message }
   const [isAdmin, setIsAdmin] = useState(false);
+  // "Combine quotes" feature: selection + confirmation state. Only draft quotes
+  // are selectable; the combine merges all selected into the earliest-created.
+  const [selectedQuoteIds, setSelectedQuoteIds] = useState(() => new Set());
+  const [combineConfirmOpen, setCombineConfirmOpen] = useState(false);
+  const [combining, setCombining] = useState(false);
+  const [combineError, setCombineError] = useState(null);
 
   useEffect(() => {
     if (user) {
@@ -110,6 +116,13 @@ const CustomerQuotes = ({ user }) => {
 
       // Remove from local state
       setQuotes(quotes.filter(q => q.id !== quoteId));
+      // Clear from any pending combine selection
+      setSelectedQuoteIds(prev => {
+        if (!prev.has(quoteId)) return prev;
+        const next = new Set(prev);
+        next.delete(quoteId);
+        return next;
+      });
 
       // Notify header to refresh badge count
       window.dispatchEvent(new Event('quoteCountChanged'));
@@ -118,6 +131,85 @@ const CustomerQuotes = ({ user }) => {
       alert('Failed to delete quote. Please try again.');
     } finally {
       setDeletingId(null);
+    }
+  };
+
+  const toggleQuoteSelection = (quoteId) => {
+    setSelectedQuoteIds(prev => {
+      const next = new Set(prev);
+      if (next.has(quoteId)) next.delete(quoteId);
+      else next.add(quoteId);
+      return next;
+    });
+  };
+
+  const handleCombineQuotes = async () => {
+    const ids = Array.from(selectedQuoteIds);
+    if (ids.length < 2) return;
+
+    setCombining(true);
+    setCombineError(null);
+    try {
+      // Server-side safety: re-read statuses; only combine drafts.
+      const { data: rows, error: fetchErr } = await supabase
+        .from('quotes')
+        .select('id, status, created_at')
+        .in('id', ids);
+      if (fetchErr) throw fetchErr;
+      if (!rows || rows.length !== ids.length) {
+        throw new Error('One or more selected quotes could not be loaded.');
+      }
+      if (rows.some(q => q.status !== 'draft')) {
+        throw new Error('Only draft quotes can be combined.');
+      }
+
+      // Target = earliest-created quote; the rest get folded in.
+      const sorted = [...rows].sort(
+        (a, b) => new Date(a.created_at) - new Date(b.created_at)
+      );
+      const targetId = sorted[0].id;
+      const otherIds = sorted.slice(1).map(q => q.id);
+
+      // 1. Move quote_items from the other quotes into the target.
+      const { error: moveErr } = await supabase
+        .from('quote_items')
+        .update({ quote_id: targetId })
+        .in('quote_id', otherIds);
+      if (moveErr) throw moveErr;
+
+      // 2. Recalculate the target's total from its (now merged) items.
+      const { data: allItems, error: itemsErr } = await supabase
+        .from('quote_items')
+        .select('quantity, unit_price')
+        .eq('quote_id', targetId);
+      if (itemsErr) throw itemsErr;
+      const newTotal = (allItems || []).reduce(
+        (sum, i) => sum + (i.quantity || 0) * (i.unit_price || 0),
+        0
+      );
+
+      const { error: updateErr } = await supabase
+        .from('quotes')
+        .update({ total_amount: newTotal })
+        .eq('id', targetId);
+      if (updateErr) throw updateErr;
+
+      // 3. Delete the now-empty other quotes.
+      const { error: delErr } = await supabase
+        .from('quotes')
+        .delete()
+        .in('id', otherIds);
+      if (delErr) throw delErr;
+
+      setSelectedQuoteIds(new Set());
+      setCombineConfirmOpen(false);
+      await fetchQuotes();
+      window.dispatchEvent(new Event('quoteCountChanged'));
+    } catch (error) {
+      console.error('[CustomerQuotes] Combine failed:', error);
+      setCombineError(error.message || 'Failed to combine quotes. Please try again.');
+    } finally {
+      setCombining(false);
     }
   };
 
@@ -335,6 +427,26 @@ const CustomerQuotes = ({ user }) => {
         <p className="text-gray-600 mt-1">{quotes.length} quote{quotes.length !== 1 ? 's' : ''}</p>
       </div>
 
+      {selectedQuoteIds.size >= 2 && (
+        <div className="mb-4 flex items-center justify-between p-4 bg-blue-50 border border-blue-200 rounded-xl">
+          <p className="text-sm text-blue-900 font-medium">
+            {selectedQuoteIds.size} draft quote{selectedQuoteIds.size !== 1 ? 's' : ''} selected
+          </p>
+          <button
+            onClick={() => { setCombineError(null); setCombineConfirmOpen(true); }}
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors"
+          >
+            Combine {selectedQuoteIds.size} selected quotes
+          </button>
+        </div>
+      )}
+
+      {quotes.filter(q => q.status === 'draft').length >= 2 && (
+        <p className="mb-4 text-sm text-blue-500">
+          💡 Tip: Tick multiple quotes to combine them into a single order
+        </p>
+      )}
+
       <div className="space-y-4">
         {quotes.map(quote => {
           const items = quote.quote_items || [];
@@ -344,12 +456,23 @@ const CustomerQuotes = ({ user }) => {
             <div key={quote.id} className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
               {/* Quote Header */}
               <div className="flex items-center justify-between p-5 border-b border-gray-100">
-                <div>
-                  <div className="flex items-center space-x-3">
-                    <h3 className="font-bold text-gray-900">{quote.quote_number}</h3>
-                    {getStatusBadge(quote.status)}
+                <div className="flex items-start gap-3">
+                  {quote.status === 'draft' && (
+                    <input
+                      type="checkbox"
+                      checked={selectedQuoteIds.has(quote.id)}
+                      onChange={() => toggleQuoteSelection(quote.id)}
+                      aria-label={`Select quote ${quote.quote_number} for combining`}
+                      className="mt-1 w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-2 focus:ring-blue-500 cursor-pointer"
+                    />
+                  )}
+                  <div>
+                    <div className="flex items-center space-x-3">
+                      <h3 className="font-bold text-gray-900">{quote.quote_number}</h3>
+                      {getStatusBadge(quote.status)}
+                    </div>
+                    <p className="text-sm text-gray-500 mt-1">{formatDate(quote.created_at)}</p>
                   </div>
-                  <p className="text-sm text-gray-500 mt-1">{formatDate(quote.created_at)}</p>
                 </div>
                 <div className="text-right">
                   <p className="text-lg font-bold text-gray-900">{formatCurrency(quoteTotal)}</p>
@@ -560,6 +683,51 @@ const CustomerQuotes = ({ user }) => {
                   )}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Combine Confirmation Modal */}
+      {combineConfirmOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6">
+            <h3 className="text-lg font-bold text-gray-900 mb-2">
+              Combine {selectedQuoteIds.size} quotes into one?
+            </h3>
+            <p className="text-sm text-gray-600 mb-4">
+              All items will be merged into the earliest-created quote. The other
+              {' '}{selectedQuoteIds.size - 1}{' '}draft quote{selectedQuoteIds.size - 1 !== 1 ? 's' : ''} will be deleted.
+              This cannot be undone.
+            </p>
+            {combineError && (
+              <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded flex items-start space-x-2">
+                <AlertCircle className="h-5 w-5 text-red-600 flex-shrink-0 mt-0.5" />
+                <p className="text-sm text-red-700">{combineError}</p>
+              </div>
+            )}
+            <div className="flex justify-end space-x-3">
+              <button
+                onClick={() => { setCombineConfirmOpen(false); setCombineError(null); }}
+                disabled={combining}
+                className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg text-sm font-semibold hover:bg-gray-50 transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleCombineQuotes}
+                disabled={combining}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50 flex items-center space-x-1"
+              >
+                {combining ? (
+                  <>
+                    <Loader className="h-4 w-4 animate-spin" />
+                    <span>Combining...</span>
+                  </>
+                ) : (
+                  <span>Confirm</span>
+                )}
+              </button>
             </div>
           </div>
         </div>

@@ -324,19 +324,24 @@ Objects can still be scaled beyond print area boundary. Suggested fix: switch fr
 
 ### PHASE 4 — Stripe Integration
 
-7. ✅ Stripe Checkout — create-checkout-session and confirm-payment Edge Functions deployed
-8. ✅ Pay Now button in CustomerQuotes.jsx
-9. ✅ OrderConfirmation.jsx page built
+7.  ✅ Stripe Checkout — create-checkout-session and confirm-payment Edge Functions deployed
+8.  ✅ Pay Now button in CustomerQuotes.jsx
+9.  ✅ OrderConfirmation.jsx page built
 10. ✅ order_items populated on payment confirmation
 11. ✅ Convert to Order schema error fixed (notes column removed)
 12. ✅ Idempotency — duplicate order prevention in confirm-payment
-13. Post-payment confirmation email with artwork upload link
-14. Cart button in Designer wired to checkout
+13. ✅ Atomic payment confirmation via `confirm_payment_atomic` RPC
+    (April 2026) — fixes the silent-failure path where a paid quote could
+    end up without an order and no retry could heal it. See §17.
+14. ✅ `payment_status` backfilled to `'paid'` on pre-RPC Stripe orders
+    that had `stripe_session_id` but were stuck at the default `'pending'`.
+15. Post-payment confirmation email with artwork upload link
+16. Cart button in Designer wired to checkout
 
 ### PHASE 5 (future)
 
-11. Laltex API integration — nightly product/stock sync into Supabase
-12. AI product search assistant (depends on Laltex RAG system)
+17. Laltex API integration — nightly product/stock sync into Supabase
+18. AI product search assistant (depends on Laltex RAG system)
 
 ---
 
@@ -389,7 +394,7 @@ Objects can still be scaled beyond print area boundary. Suggested fix: switch fr
 
 ---
 
-*Last updated: 18 March 2026*
+*Last updated: 17 April 2026 — §11 and §17 revised for atomic confirm-payment RPC*
 *Update this file at the end of every significant session.*
 
 ---
@@ -494,14 +499,19 @@ Do not change the schema of quote_items, orders, or any other table.
 
 ---
 
-## 17. ORDER FLOW — COMPLETE ARCHITECTURE (as of March 2026)
+## 17. ORDER FLOW — COMPLETE ARCHITECTURE (as of April 2026)
 
 ### 17.1 Two paths to an order
 
-Path A — Pay Now (Stripe):
+Path A — Pay Now (Stripe, atomic):
   Quote → Pay Now button → create-checkout-session Edge Function
   → Stripe Checkout → confirm-payment Edge Function
-  → Order created + order_items inserted + quote marked converted
+  → confirm_payment_atomic RPC (single Postgres transaction):
+     • lock the quote row (SELECT ... FOR UPDATE)
+     • idempotency check on orders.stripe_session_id — return existing id if found
+     • update quote: status=converted, stripe_session_id, paid_at, payment_amount
+     • insert order: status=confirmed, payment_status=paid, payment_intent_id
+     • copy quote_items → order_items (line_total computed, all design cols carried)
   → /order-confirmation page shown
 
 Path B — Convert to Order (manual, admin use):
@@ -509,24 +519,40 @@ Path B — Convert to Order (manual, admin use):
   → Order created, quote marked converted
   → No payment taken
 
-### 17.2 Edge Functions
+### 17.2 Edge Functions and RPC
 
-| Function | Location | Purpose |
+| Component | Location | Purpose |
 |---|---|---|
 | create-checkout-session | supabase/functions/create-checkout-session/index.ts | Reads quote, creates Stripe Checkout session, returns URL |
-| confirm-payment | supabase/functions/confirm-payment/index.ts | Verifies Stripe payment, creates order + order_items, marks quote converted |
+| confirm-payment | supabase/functions/confirm-payment/index.ts | Verifies the Stripe session is `paid`, then delegates ALL DB work to `confirm_payment_atomic`. No direct table writes. |
+| confirm_payment_atomic | supabase/migrations/20260417_confirm_payment_atomic.sql | Atomic plpgsql RPC — single transaction, idempotent on `stripe_session_id`. Only writer for Stripe-path orders. |
 
-Both use fetch() to call Stripe REST API — NOT the npm Stripe package.
-Both require CORS headers and OPTIONS preflight handling.
+Both Edge Functions use fetch() to call Stripe REST API — NOT the npm
+Stripe package. Both require CORS headers and OPTIONS preflight handling.
 
-### 17.3 order_items table
+The confirm-payment Edge Function must NOT be refactored to do DB work
+outside the RPC. The whole point of the RPC is atomicity — splitting the
+steps across the function and the DB recreates the ghost-order bug that
+was fixed in April 2026 (see §17.7).
 
-order_items is populated by confirm-payment Edge Function after
-successful payment. Required columns include line_total (NOT NULL)
-calculated as ROUND(quantity * unit_price, 2).
+### 17.3 order_items
 
-If adding new columns to order_items, always check NOT NULL
-constraints and update the Edge Function INSERT accordingly.
+order_items is populated by `confirm_payment_atomic` (Path A) or by the
+Convert-to-Order client code (Path B). It is NOT written by the
+confirm-payment Edge Function directly.
+
+`line_total` is NOT NULL and has no default. On Path A the RPC computes
+it as `ROUND(quantity * unit_price, 2)`. On Path B the client code must
+set it explicitly.
+
+When adding new columns to order_items:
+- NOT NULL columns: update the RPC's INSERT ... SELECT (new migration
+  that replaces the function) and the Path B client insert.
+- Nullable columns: safe to add to both paths independently.
+
+Columns currently copied from quote_items → order_items on Path A:
+product_id, product_name, quantity, unit_price, line_total (computed),
+color, design_data, design_thumbnail, print_areas, notes.
 
 ### 17.4 Supabase Secrets (production)
 
@@ -550,3 +576,43 @@ VITE_SUPABASE_FUNCTIONS_URL — https://cbcevjhvgmxrxeeyldza.supabase.co/functio
 - [ ] Test with a real card for a small amount
 - [ ] Enable only GBP in Stripe dashboard
 - [ ] Set up Stripe webhook for payment.succeeded as backup confirmation
+
+### 17.7 confirm_payment_atomic — invariants (DO NOT BREAK)
+
+Added April 2026 to fix a silent-failure bug: if the pre-RPC flow was
+interrupted between the quote update and the order insert, the quote was
+left marked `converted` with no order, and a `quote.status = 'converted'`
+short-circuit in the Edge Function then returned HTTP 200 `success: true`
+with `order_id: null` on every retry — so no order could ever be created.
+One real ghost (QT-MMZ5OZ4N, paid 2026-03-20) was recovered by calling
+the RPC directly; result is ORD-20260417-0005.
+
+Rules for anyone touching this path:
+
+1. **The RPC is the only writer** for Stripe-path orders and their items.
+   The confirm-payment Edge Function must not UPDATE quotes or INSERT
+   into orders/order_items outside the RPC call.
+
+2. **Idempotency anchor is `orders.stripe_session_id`.** The RPC returns
+   the existing order id if one is found; any retry is safe.
+
+3. **DO NOT reintroduce a `quote.status === 'converted'` short-circuit**
+   anywhere in the Edge Function. `quote.status` is not a valid
+   idempotency signal — this is exactly the bug the RPC replaced.
+
+4. **The quote row is locked `FOR UPDATE`** inside the RPC. Two concurrent
+   invocations cannot both proceed; the second waits, sees the committed
+   order via the idempotency check, and returns it.
+
+5. **`paid_at` is preserved via `COALESCE`.** A retry after a prior
+   quote update must not overwrite the original payment timestamp.
+
+6. **EXECUTE is granted only to `service_role`.** anon and authenticated
+   are revoked. If the Edge Function's auth model changes (e.g., direct
+   client calls instead of going through the Edge Function), review grants.
+
+7. **Schema changes that affect order_items require changing the RPC.**
+   New NOT NULL columns must be added to the RPC's `INSERT ... SELECT`
+   via a replacement migration. Don't try to work around this by doing
+   an `UPDATE orders_items` in the Edge Function after the RPC returns —
+   that re-splits the transaction and is exactly what the RPC prevents.

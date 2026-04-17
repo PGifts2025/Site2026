@@ -10,8 +10,8 @@
  * @param {string} productSlug - Required - The product slug to fetch from database
  */
 
-import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useRef } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Star,
   Heart,
@@ -38,7 +38,7 @@ import {
   getDesignerUrl,
   getProductPrintPricing
 } from '../services/productCatalogService';
-import { supabase } from '../services/supabaseService';
+import { supabase, getUserDesign } from '../services/supabaseService';
 import { useAuth } from '../context/AuthContext';
 
 // Helper constants and functions for apparel size selector
@@ -56,9 +56,17 @@ const isApparelProduct = (product) => {
 
 const ProductDetailPage = ({ productSlug }) => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { user } = useAuth();
   const [addingToQuote, setAddingToQuote] = useState(false);
   const [quoteSuccess, setQuoteSuccess] = useState(null); // {quoteNumber, productName, unitPrice}
+  // Saved design pre-loaded via ?design=<id> (from My Designs → Add to Quote).
+  // Kept whole so design_data + thumbnail_url can attach to the quote_item on save.
+  const [loadedDesign, setLoadedDesign] = useState(null);
+  // When true, the main image slot shows the design thumbnail instead of the
+  // product image. Cleared as soon as the customer changes colour.
+  const [showDesignThumbnail, setShowDesignThumbnail] = useState(false);
+  const designAppliedRef = useRef(false);
 
   /**
    * Apply STRONG color overlay with 95% intensity for vibrant colors
@@ -376,6 +384,52 @@ const ProductDetailPage = ({ productSlug }) => {
     loadProductData();
   }, [productSlug]);
 
+  // Pre-load a saved design from ?design=<id> (My Designs → Add to Quote).
+  // Runs once per page view after product + colors are loaded; failures are silent.
+  useEffect(() => {
+    const designId = searchParams.get('design');
+    if (!designId || designAppliedRef.current) return;
+    if (!product || !colors.length) return;
+    // Scope restricted to clothing products for now, per spec.
+    if (product.pricing_model !== 'clothing') return;
+
+    designAppliedRef.current = true;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const design = await getUserDesign(designId);
+        if (cancelled || !design) return;
+        // Safety: ignore designs for a different product (stale/mistyped URL).
+        if (design.product_key && design.product_key !== product.slug) return;
+
+        setLoadedDesign(design);
+        setShowDesignThumbnail(true);
+
+        // Pre-select the swatch + first colour row if the saved colour
+        // is available on this product. Match by code first, then by name.
+        const savedCode = (design.color_code || '').toLowerCase();
+        const savedName = (design.color_name || '').toLowerCase();
+        const match = colors.find(c =>
+          (savedCode && c.color_code?.toLowerCase() === savedCode) ||
+          (savedName && c.color_name?.toLowerCase() === savedName)
+        );
+        if (match) {
+          setSelectedColor(match.color_code);
+          setColorOrderRows(prev => prev.map((row, idx) =>
+            idx === 0
+              ? { ...row, colorId: match.id, colorName: match.color_name || '', colorCode: match.color_code || '' }
+              : row
+          ));
+        }
+      } catch (err) {
+        console.warn('[ProductDetailPage] preload design failed (non-fatal):', err?.message || err);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [searchParams, product, colors]);
+
   // Update price when quantity or print selections change
   useEffect(() => {
     if (product) {
@@ -544,6 +598,14 @@ const ProductDetailPage = ({ productSlug }) => {
 
   // Colour order row handlers (clothing model)
   const handleColorOrderColorChange = (rowId, colorCode) => {
+    setShowDesignThumbnail(false);
+    // Drive the main image + overlay off the same state as swatch clicks do.
+    setSelectedColor(colorCode);
+    // Regenerate the apparel overlay so the shirt image actually recolours.
+    // Without this, only the "Selected:" label changes; the image stays stale.
+    if (isApparelProduct(product)) {
+      handleColorSelect(colorCode);
+    }
     const colorObj = colors.find(c => c.color_code === colorCode);
     setColorOrderRows(prev => prev.map(row =>
       row.id === rowId
@@ -589,6 +651,9 @@ const ProductDetailPage = ({ productSlug }) => {
     console.log('[Swatch clicked]', color.color_name, '| color_code:', color.color_code, '| ID:', color.id);
     console.log('[Swatch] colorOrderRows before update:', JSON.stringify(colorOrderRows.map(r => ({ id: r.id, colorCode: r.colorCode, colorName: r.colorName }))));
 
+    // Any colour change reverts the main image from design thumbnail to product image.
+    setShowDesignThumbnail(false);
+
     // Update the selected color for image display
     setSelectedColor(color.color_code);
 
@@ -625,11 +690,17 @@ const ProductDetailPage = ({ productSlug }) => {
    */
   const handleCustomize = () => {
     if (product?.designer_product?.product_key) {
-      const url = getDesignerUrl(
+      const designIdFromUrl = searchParams.get('design');
+      const baseUrl = getDesignerUrl(
         product.designer_product.product_key,
         selectedColor,
         'front'
       );
+      // Carry the design id through so the Designer loads the saved design
+      // for editing (and can return us here with the same id after save).
+      const url = designIdFromUrl
+        ? `${baseUrl}&design=${designIdFromUrl}`
+        : baseUrl;
       navigate(url);
     }
   };
@@ -673,6 +744,7 @@ const ProductDetailPage = ({ productSlug }) => {
    */
   const handleColorSelect = async (colorCode) => {
     console.log('[handleColorSelect] 🎨 Color changed to:', colorCode);
+    setShowDesignThumbnail(false);
     setSelectedColor(colorCode);
 
     // Reset gallery view when color is selected
@@ -847,7 +919,9 @@ const ProductDetailPage = ({ productSlug }) => {
           unit_price: unitPrice,
           color: colorName,
           print_areas: printAreasSummary,
-          notes: null
+          notes: null,
+          design_data: loadedDesign?.design_data || null,
+          design_thumbnail: loadedDesign?.thumbnail_url || null
         })
         .select()
         .single();
@@ -1144,6 +1218,13 @@ const ProductDetailPage = ({ productSlug }) => {
                     alt={`${product.name} - Gallery`}
                     className="max-w-full max-h-full object-contain transform transition-all duration-700 group-hover:scale-110 relative z-10"
                   />
+                ) : showDesignThumbnail && loadedDesign?.thumbnail_url ? (
+                  <img
+                    src={loadedDesign.thumbnail_url}
+                    alt={loadedDesign.design_name || 'Saved design'}
+                    className="max-w-full max-h-full object-contain transform transition-all duration-700 group-hover:scale-110 relative z-10"
+                    onError={(e) => { setShowDesignThumbnail(false); e.currentTarget.style.display = 'none'; }}
+                  />
                 ) : overlayImageUrl ? (
                   <img
                     src={overlayImageUrl}
@@ -1228,7 +1309,7 @@ const ProductDetailPage = ({ productSlug }) => {
                     onClick={handleCustomize}
                     className="w-full bg-gradient-to-r from-blue-500 to-indigo-600 text-white py-3 px-4 rounded-lg font-semibold hover:from-blue-600 hover:to-indigo-700 transition-all duration-300 shadow-md hover:shadow-lg transform hover:scale-105"
                   >
-                    Open Designer
+                    {loadedDesign ? 'Edit Design' : 'Open Designer'}
                   </button>
                 </div>
               )}
@@ -1325,6 +1406,15 @@ const ProductDetailPage = ({ productSlug }) => {
                 <p className="text-sm text-gray-600 mt-3 font-medium">
                   Selected: <span className="text-gray-900">{getSelectedColorObj().color_name || 'N/A'}</span>
                   {isApplyingOverlay && <span className="ml-2 text-blue-600">(Applying color...)</span>}
+                  {loadedDesign && !showDesignThumbnail && (
+                    <button
+                      type="button"
+                      onClick={() => setShowDesignThumbnail(true)}
+                      className="ml-3 text-sm text-blue-600 hover:underline cursor-pointer"
+                    >
+                      View design
+                    </button>
+                  )}
                 </p>
               </div>
             )}
@@ -1370,6 +1460,15 @@ const ProductDetailPage = ({ productSlug }) => {
                 {selectedColor && (
                   <p className='text-sm text-gray-600 mt-2'>
                     Selected: <span className='font-medium'>{getSelectedColorObj().color_name}</span>
+                    {loadedDesign && !showDesignThumbnail && (
+                      <button
+                        type="button"
+                        onClick={() => setShowDesignThumbnail(true)}
+                        className="ml-3 text-sm text-blue-600 hover:underline cursor-pointer"
+                      >
+                        View design
+                      </button>
+                    )}
                   </p>
                 )}
               </div>
@@ -1469,6 +1568,9 @@ const ProductDetailPage = ({ productSlug }) => {
                     /* Clothing: inline colour + size inputs per row */
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-2">Configure Your Order</label>
+                      {loadedDesign && (
+                        <p className="text-xs text-blue-600 font-medium mb-2">✓ Design attached</p>
+                      )}
 
                       <div className="space-y-3">
                         {colorOrderRows.map((row) => {

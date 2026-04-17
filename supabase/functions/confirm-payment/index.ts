@@ -7,7 +7,6 @@ const corsHeaders = {
 };
 
 Deno.serve(async (req: Request) => {
-  // Handle CORS preflight
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
@@ -18,38 +17,35 @@ Deno.serve(async (req: Request) => {
     if (!session_id) {
       return new Response(
         JSON.stringify({ error: "session_id is required" }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
 
     const stripeSecretKey = Deno.env.get("STRIPE_SECRET_KEY")!;
 
-    // Retrieve the Stripe Checkout session
     const stripeRes = await fetch(
       `https://api.stripe.com/v1/checkout/sessions/${encodeURIComponent(session_id)}`,
-      {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${stripeSecretKey}`,
-        },
-      }
+      { method: "GET", headers: { Authorization: `Bearer ${stripeSecretKey}` } },
     );
-
     const stripeSession = await stripeRes.json();
 
     if (!stripeRes.ok) {
       console.error("Stripe error:", stripeSession);
       return new Response(
-        JSON.stringify({ error: stripeSession.error?.message || "Failed to retrieve session" }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        JSON.stringify({
+          error: stripeSession.error?.message || "Failed to retrieve session",
+        }),
+        { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
 
-    // Verify payment was successful
     if (stripeSession.payment_status !== "paid") {
       return new Response(
-        JSON.stringify({ error: "Payment not completed", payment_status: stripeSession.payment_status }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        JSON.stringify({
+          error: "Payment not completed",
+          payment_status: stripeSession.payment_status,
+        }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
 
@@ -57,147 +53,60 @@ Deno.serve(async (req: Request) => {
     if (!quoteId) {
       return new Response(
         JSON.stringify({ error: "No quote_id in session metadata" }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    // Create Supabase client with service role key (bypasses RLS)
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
-
-    // Idempotency check: does an order already exist for this stripe session?
-    const { data: existingOrder } = await supabase
-      .from("orders")
-      .select("id")
-      .eq("stripe_session_id", session_id)
-      .maybeSingle();
-
-    if (existingOrder) {
-      return new Response(
-        JSON.stringify({
-          success: true,
-          order_id: existingOrder.id,
-          already_existed: true,
-        }),
-        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    // Get the quote to find customer_id
-    const { data: quote, error: quoteError } = await supabase
-      .from("quotes")
-      .select("id, customer_id, status")
-      .eq("id", quoteId)
-      .single();
-
-    if (quoteError || !quote) {
-      return new Response(
-        JSON.stringify({ error: "Quote not found" }),
-        { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    // Prevent processing an already-converted quote (extra safety)
-    if (quote.status === "converted") {
-      // Quote already converted but no order with this session — edge case
-      // Return success to avoid blocking the customer
-      const { data: existingOrderByQuote } = await supabase
-        .from("orders")
-        .select("id")
-        .eq("quote_id", quoteId)
-        .maybeSingle();
-
-      return new Response(
-        JSON.stringify({
-          success: true,
-          order_id: existingOrderByQuote?.id || null,
-          already_existed: true,
-        }),
-        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
 
     const paymentAmountPounds = stripeSession.amount_total / 100;
+    const paymentIntentId =
+      typeof stripeSession.payment_intent === "string"
+        ? stripeSession.payment_intent
+        : stripeSession.payment_intent?.id ?? null;
 
-    // Update the quote
-    const { error: updateError } = await supabase
-      .from("quotes")
-      .update({
-        status: "converted",
-        stripe_session_id: session_id,
-        paid_at: new Date().toISOString(),
-        payment_amount: paymentAmountPounds,
-      })
-      .eq("id", quoteId);
+    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+    const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    if (updateError) {
-      console.error("Quote update error:", updateError);
+    // All DB work happens atomically inside this RPC. Idempotent on
+    // stripe_session_id. Any failure rolls back the whole transaction.
+    const { data: orderId, error: rpcError } = await supabase.rpc(
+      "confirm_payment_atomic",
+      {
+        p_quote_id: quoteId,
+        p_stripe_session_id: session_id,
+        p_payment_intent_id: paymentIntentId,
+        p_payment_amount: paymentAmountPounds,
+      },
+    );
+
+    if (rpcError) {
+      console.error("confirm_payment_atomic error:", rpcError);
       return new Response(
-        JSON.stringify({ error: "Failed to update quote" }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        JSON.stringify({
+          error: "Failed to confirm payment",
+          details: rpcError.message,
+        }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
 
-    // Create the order record
-    const { data: newOrder, error: orderError } = await supabase
-      .from("orders")
-      .insert({
-        quote_id: quoteId,
-        customer_id: quote.customer_id,
-        status: "confirmed",
-        artwork_status: "pending_artwork",
-        stripe_session_id: session_id,
-        total_amount: paymentAmountPounds,
-      })
-      .select("id")
-      .single();
-
-    if (orderError) {
-      console.error("Order creation error:", orderError);
+    if (!orderId) {
       return new Response(
-        JSON.stringify({ error: "Failed to create order" }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        JSON.stringify({ error: "Order creation returned no id" }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
-    }
-
-    // Copy quote_items into order_items
-    const { data: quoteItems } = await supabase
-      .from("quote_items")
-      .select("product_id, product_name, quantity, unit_price, color")
-      .eq("quote_id", quoteId);
-
-    if (quoteItems && quoteItems.length > 0) {
-      const orderItems = quoteItems.map((item: any) => ({
-        order_id: newOrder.id,
-        product_id: item.product_id,
-        product_name: item.product_name,
-        quantity: item.quantity,
-        unit_price: item.unit_price,
-        color: item.color || null,
-      }));
-
-      const { error: itemsError } = await supabase
-        .from("order_items")
-        .insert(orderItems);
-
-      if (itemsError) {
-        console.error("Order items copy error:", itemsError);
-      }
     }
 
     return new Response(
-      JSON.stringify({
-        success: true,
-        order_id: newOrder.id,
-      }),
-      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      JSON.stringify({ success: true, order_id: orderId }),
+      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (err) {
     console.error("Unexpected error:", err);
+    const detail = err instanceof Error ? err.message : String(err);
     return new Response(
-      JSON.stringify({ error: "Internal server error" }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      JSON.stringify({ error: "Internal server error", details: detail }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   }
 });

@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import { fabric } from 'fabric';
 import { jsPDF } from 'jspdf';
 import { isMockAuth } from '../config/supabase';
@@ -63,6 +63,7 @@ const supabase = isMockAuth ? createMockSupabase() : supabaseClient;
 
 const Designer = () => {
   const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
   const canvasRef = useRef(null);
   const canvasContainerRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -311,21 +312,29 @@ const Designer = () => {
         console.log('[Designer]   - setUseDatabase(true)');
         setUseDatabase(true);
 
-        // Set first product as selected if available — but skip if loading a saved design
+        // Pick the initial product: URL ?product= takes precedence, otherwise
+        // fall back to the first key in the map. Skip both when loading a saved
+        // design — it'll pick its own product via the design-load flow.
         const designFromUrl = searchParams.get('design');
+        const productFromUrl = searchParams.get('product');
         const firstKey = Object.keys(productsMap)[0];
+        const initialKey = productFromUrl && productsMap[productFromUrl]
+          ? productFromUrl
+          : firstKey;
         console.log('[Designer] [TARGET] Setting initial product selection...');
         console.log('[Designer]   - First product key:', firstKey);
         console.log('[Designer]   - Design from URL:', designFromUrl);
+        console.log('[Designer]   - Product from URL:', productFromUrl);
+        console.log('[Designer]   - Resolved initial key:', initialKey);
 
         if (designFromUrl) {
           console.log('[Designer]   - Skipping default product selection (loading saved design:', designFromUrl, ')');
-        } else if (firstKey) {
-          console.log('[Designer]   - setSelectedProduct:', firstKey);
-          setSelectedProduct(firstKey);
+        } else if (initialKey) {
+          console.log('[Designer]   - setSelectedProduct:', initialKey);
+          setSelectedProduct(initialKey);
 
-          const firstProduct = productsMap[firstKey];
-          console.log('[Designer]   - First product data:', firstProduct);
+          const initialProduct = productsMap[initialKey];
+          console.log('[Designer]   - Initial product data:', initialProduct);
 
           // Colors will be loaded separately via getProductColors effect
           console.log('[Designer]   - Colors will be loaded separately via useEffect');
@@ -335,7 +344,7 @@ const Designer = () => {
           setSelectedView('front');
           console.log('[Designer] [OK] Initial selection complete:', {
             view: 'front',
-            product: firstProduct.name
+            product: initialProduct.name
           });
         }
 
@@ -4841,6 +4850,18 @@ const Designer = () => {
         status: designData.status
       });
 
+      // Returns the user to the product detail page if they arrived via the
+      // round-trip flow (product page "Open Designer" / "Edit Design" → Designer).
+      // Scoped to clothing products since that's where the preload is wired up.
+      const returnToProductIfRoundTrip = (designId) => {
+        const productKey = searchParams.get('product');
+        if (!productKey) return;
+        const CLOTHING_PRODUCTS = ['t-shirts', 'hoodie', 'sweatshirts', 'polo', 'hi-vis-vest'];
+        if (!CLOTHING_PRODUCTS.includes(productKey)) return;
+        const prefix = productKey === 'hi-vis-vest' ? '/hi-vis' : '/clothing';
+        navigate(`${prefix}/${productKey}?design=${designId}`);
+      };
+
       if (currentDesignId) {
         // Update existing design
         console.log('[Designer] 🔄 Updating existing design:', currentDesignId);
@@ -4853,6 +4874,7 @@ const Designer = () => {
           alert('Design updated successfully!');
           setTimeout(() => setDesignSaveStatus(''), 2000);
           setShowSaveModal(false);
+          returnToProductIfRoundTrip(currentDesignId);
         } else {
           throw new Error('Failed to update design - no result returned');
         }
@@ -4869,6 +4891,7 @@ const Designer = () => {
           alert('Design saved successfully!');
           setTimeout(() => setDesignSaveStatus(''), 2000);
           setShowSaveModal(false);
+          returnToProductIfRoundTrip(result.id);
         } else {
           throw new Error('Failed to save design - no result returned');
         }
@@ -4952,13 +4975,13 @@ const Designer = () => {
                               console.log('[Designer] Rendering dropdown option:', key, product.name);
                               return (
                                 <option key={key} value={key}>
-                                  {product.name} - ${product.basePrice}
+                                  {product.name}
                                 </option>
                               );
                             })
                           : Object.entries(productsConfig).map(([key, product]) => (
                               <option key={key} value={key}>
-                                {product.name} - ${product.basePrice}
+                                {product.name}
                               </option>
                             ))
                         }

@@ -144,8 +144,10 @@ const CustomerDesigns = ({ user }) => {
     const CLOTHING_PRODUCTS = ['t-shirts', 'hoodie', 'sweatshirts', 'polo', 'hi-vis-vest'];
 
     if (CLOTHING_PRODUCTS.includes(design.product_key)) {
-      // Clothing — redirect to product page with design pre-selected
-      navigate(`/products/${design.product_key}?design=${design.id}`);
+      // Clothing — redirect to product page with design pre-selected.
+      // Routes are category-prefixed: /clothing/:slug for most, /hi-vis/:slug for hi-vis-vest.
+      const prefix = design.product_key === 'hi-vis-vest' ? '/hi-vis' : '/clothing';
+      navigate(`${prefix}/${design.product_key}?design=${design.id}`);
       return;
     }
 
