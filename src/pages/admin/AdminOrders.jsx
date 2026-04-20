@@ -11,6 +11,7 @@ const AdminOrders = ({ user, adminRole }) => {
 
   // Filters
   const [statusFilter, setStatusFilter] = useState('all');
+  const [artworkFilter, setArtworkFilter] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const ordersPerPage = 20;
@@ -21,28 +22,44 @@ const AdminOrders = ({ user, adminRole }) => {
 
   useEffect(() => {
     applyFilters();
-  }, [orders, statusFilter, searchQuery]);
+  }, [orders, statusFilter, artworkFilter, searchQuery]);
 
   const fetchOrders = async () => {
     try {
       setLoading(true);
 
-      const { data, error } = await supabase
+      // No direct FK from orders → customer_profiles (both reference
+      // auth.users), so PostgREST can't auto-embed. Fetch orders and
+      // customer_profiles separately and merge client-side so the existing
+      // JSX can keep reading order.customer_profiles.*.
+      const { data: ordersData, error } = await supabase
         .from('orders')
-        .select(`
-          *,
-          customer_profiles (
-            first_name,
-            last_name,
-            company_name,
-            email
-          )
-        `)
+        .select('*')
         .order('created_at', { ascending: false });
 
       if (error) throw error;
 
-      setOrders(data || []);
+      const customerIds = [...new Set(
+        (ordersData || []).map(o => o.customer_id).filter(Boolean)
+      )];
+      let profilesMap = {};
+      if (customerIds.length) {
+        const { data: profilesData, error: profilesError } = await supabase
+          .from('customer_profiles')
+          .select('id, first_name, last_name, company_name, email')
+          .in('id', customerIds);
+        if (profilesError) throw profilesError;
+        profilesMap = Object.fromEntries(
+          (profilesData || []).map(p => [p.id, p])
+        );
+      }
+
+      const withProfiles = (ordersData || []).map(o => ({
+        ...o,
+        customer_profiles: profilesMap[o.customer_id] || null,
+      }));
+
+      setOrders(withProfiles);
     } catch (error) {
       console.error('[AdminOrders] Error:', error);
     } finally {
@@ -58,22 +75,38 @@ const AdminOrders = ({ user, adminRole }) => {
       filtered = filtered.filter(order => order.status === statusFilter);
     }
 
+    // Artwork-status filter
+    if (artworkFilter !== 'all') {
+      filtered = filtered.filter(order => order.artwork_status === artworkFilter);
+    }
+
     // Search filter
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
       filtered = filtered.filter(order => {
         const orderNum = (order.order_number || '').toLowerCase();
-        const customerName = (
-          order.customer_profiles?.company_name ||
-          `${order.customer_profiles?.first_name} ${order.customer_profiles?.last_name}`
-        ).toLowerCase();
-
+        const customerName = getCustomerDisplayName(order.customer_profiles).toLowerCase();
         return orderNum.includes(query) || customerName.includes(query);
       });
     }
 
     setFilteredOrders(filtered);
     setCurrentPage(1);
+  };
+
+  // Chain: company_name → first+last → email → 'Unknown Customer'.
+  // Guards against null profiles (FK → auth.users, not customer_profiles)
+  // and against missing first/last that would render as "undefined undefined".
+  const getCustomerDisplayName = (profile) => {
+    if (!profile) return 'Unknown Customer';
+    const company = (profile.company_name || '').trim();
+    if (company) return company;
+    const first = (profile.first_name || '').trim();
+    const last = (profile.last_name || '').trim();
+    const fullName = `${first} ${last}`.trim();
+    if (fullName) return fullName;
+    if (profile.email) return profile.email;
+    return 'Unknown Customer';
   };
 
   const getStatusBadgeClass = (status) => {
@@ -87,6 +120,20 @@ const AdminOrders = ({ user, adminRole }) => {
       cancelled: 'bg-red-100 text-red-800'
     };
     return classes[status] || 'bg-gray-100 text-gray-800';
+  };
+
+  // Artwork status badge — distinct palette from order status so staff can
+  // read both pipelines at a glance.
+  const getArtworkStatusBadge = (artworkStatus) => {
+    const config = {
+      pending_artwork:  { cls: 'bg-orange-100 text-orange-800',   label: 'Awaiting Artwork' },
+      artwork_uploaded: { cls: 'bg-blue-100 text-blue-800',       label: 'Artwork Uploaded' },
+      in_review:        { cls: 'bg-yellow-100 text-yellow-800',   label: 'In Review' },
+      proof_sent:       { cls: 'bg-purple-100 text-purple-800',   label: 'Proof Sent' },
+      approved:         { cls: 'bg-green-100 text-green-800',     label: 'Approved' },
+      in_production:    { cls: 'bg-emerald-700 text-white',       label: 'In Production' },
+    };
+    return config[artworkStatus] || null;
   };
 
   const formatCurrency = (amount) => {
@@ -143,6 +190,21 @@ const AdminOrders = ({ user, adminRole }) => {
               <option value="cancelled">Cancelled</option>
             </select>
 
+            <select
+              value={artworkFilter}
+              onChange={(e) => setArtworkFilter(e.target.value)}
+              className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              aria-label="Artwork status filter"
+            >
+              <option value="all">All Artwork</option>
+              <option value="pending_artwork">Awaiting Artwork</option>
+              <option value="artwork_uploaded">Artwork Uploaded</option>
+              <option value="in_review">In Review</option>
+              <option value="proof_sent">Proof Sent</option>
+              <option value="approved">Approved</option>
+              <option value="in_production">In Production</option>
+            </select>
+
             <button className="flex items-center space-x-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors">
               <Download className="h-4 w-4" />
               <span>Export</span>
@@ -176,6 +238,7 @@ const AdminOrders = ({ user, adminRole }) => {
                     <th className="px-6 py-4 font-semibold">Customer</th>
                     <th className="px-6 py-4 font-semibold">Date</th>
                     <th className="px-6 py-4 font-semibold">Status</th>
+                    <th className="px-6 py-4 font-semibold">Artwork</th>
                     <th className="px-6 py-4 font-semibold">Payment</th>
                     <th className="px-6 py-4 font-semibold text-right">Total</th>
                     <th className="px-6 py-4 font-semibold">Actions</th>
@@ -191,15 +254,22 @@ const AdminOrders = ({ user, adminRole }) => {
                         #{order.order_number || order.id.slice(0, 8)}
                       </td>
                       <td className="px-6 py-4 text-sm text-gray-600">
-                        <div>
-                          <p className="font-medium text-gray-900">
-                            {order.customer_profiles?.company_name ||
-                              `${order.customer_profiles?.first_name} ${order.customer_profiles?.last_name}`}
-                          </p>
-                          <p className="text-xs text-gray-500">
-                            {order.customer_profiles?.email}
-                          </p>
-                        </div>
+                        {(() => {
+                          const profile = order.customer_profiles;
+                          const name = getCustomerDisplayName(profile);
+                          // Only show the email sub-line when it's not already
+                          // the primary name (avoids duplicating when email is
+                          // the only identifier we have).
+                          const showEmail = profile?.email && profile.email !== name;
+                          return (
+                            <div>
+                              <p className="font-medium text-gray-900">{name}</p>
+                              {showEmail && (
+                                <p className="text-xs text-gray-500">{profile.email}</p>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </td>
                       <td className="px-6 py-4 text-sm text-gray-600">
                         {formatDate(order.created_at)}
@@ -212,6 +282,18 @@ const AdminOrders = ({ user, adminRole }) => {
                         >
                           {order.status?.replace('_', ' ')}
                         </span>
+                      </td>
+                      <td className="px-6 py-4">
+                        {(() => {
+                          const ab = getArtworkStatusBadge(order.artwork_status);
+                          return ab ? (
+                            <span className={`inline-flex px-3 py-1 text-xs font-semibold rounded-full ${ab.cls}`}>
+                              {ab.label}
+                            </span>
+                          ) : (
+                            <span className="text-xs text-gray-400">—</span>
+                          );
+                        })()}
                       </td>
                       <td className="px-6 py-4">
                         <span className="text-xs px-2 py-1 bg-gray-100 text-gray-700 rounded">

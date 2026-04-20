@@ -2974,6 +2974,35 @@ export async function getArtworkSignedUrl(filePathOrUrl, expiresIn = 3600) {
   }
 }
 
+/**
+ * Trigger a browser download of an artwork file (saves to disk rather than
+ * opening in a tab). Signs the URL, fetches as a blob, and uses a temporary
+ * anchor to fire the download. Cleans up the object URL afterwards.
+ */
+export async function downloadArtworkFile(filePathOrUrl, suggestedFileName = 'artwork') {
+  const { data, error } = await getArtworkSignedUrl(filePathOrUrl);
+  if (error || !data?.signedUrl) {
+    return { error: error || new Error('Could not sign URL') };
+  }
+  try {
+    const res = await fetch(data.signedUrl);
+    if (!res.ok) throw new Error(`Fetch failed (${res.status})`);
+    const blob = await res.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = objectUrl;
+    a.download = suggestedFileName;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(objectUrl);
+    return { error: null };
+  } catch (err) {
+    console.error('[downloadArtworkFile] Error:', err);
+    return { error: err };
+  }
+}
+
 export default {
   // Admin
   isUserAdmin,
