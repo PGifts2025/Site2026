@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { X, Upload, FileImage, Trash2, CheckCircle, AlertCircle, Loader, Info } from 'lucide-react';
-import { uploadOrderArtwork, getOrderArtwork, deleteOrderArtwork } from '../services/supabaseService';
+import { uploadOrderArtwork, getOrderArtwork, deleteOrderArtwork, getArtworkSignedUrl } from '../services/supabaseService';
 
 const ACCEPTED_TYPES = {
   'image/jpeg': 'JPG',
   'image/png': 'PNG',
-  'image/gif': 'GIF',
-  'image/webp': 'WebP',
+  'image/tiff': 'TIFF',
   'image/svg+xml': 'SVG',
   'application/pdf': 'PDF',
   'application/postscript': 'EPS/AI',
@@ -27,9 +27,24 @@ const formatDate = (dateString) => {
   });
 };
 
+// Image MIME types we can preview directly via a signed URL.
+const IMAGE_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/svg+xml', 'image/tiff']);
+
+// Returns a small badge descriptor for non-image formats, or null for
+// types that should fall through to the generic file icon.
+const getFileTypeBadge = (mime) => {
+  if (mime === 'application/pdf') return { label: 'PDF', cls: 'bg-red-100 text-red-700' };
+  if (mime === 'application/postscript' || mime === 'image/x-eps') return { label: 'EPS', cls: 'bg-purple-100 text-purple-700' };
+  if (mime === 'application/illustrator') return { label: 'AI', cls: 'bg-orange-100 text-orange-700' };
+  return null;
+};
+
 const ArtworkUploadModal = ({ order, user, onClose, onUploaded }) => {
   const [existingArtwork, setExistingArtwork] = useState([]);
   const [loadingArtwork, setLoadingArtwork] = useState(true);
+  // Map artwork.id → signed URL for image previews. Populated async after
+  // the artwork list loads so the modal doesn't wait on Supabase.
+  const [thumbnails, setThumbnails] = useState({});
   const [dragOver, setDragOver] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -37,6 +52,10 @@ const ArtworkUploadModal = ({ order, user, onClose, onUploaded }) => {
   const [uploadSuccess, setUploadSuccess] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState(null);
   const [deleting, setDeleting] = useState(false);
+  // Colour spec — mandatory per upload. '' means unselected; must be set
+  // before a file can be accepted. Pantone additionally requires text.
+  const [colourType, setColourType] = useState('');
+  const [pantoneText, setPantoneText] = useState('');
   const fileInputRef = useRef(null);
 
   useEffect(() => {
@@ -49,6 +68,21 @@ const ArtworkUploadModal = ({ order, user, onClose, onUploaded }) => {
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
   }, [onClose]);
+
+  // Fetch signed URLs for image-type artwork so we can render thumbnails.
+  // Non-blocking: each URL lands in `thumbnails` as it arrives.
+  useEffect(() => {
+    if (!existingArtwork.length) return;
+    let cancelled = false;
+    existingArtwork
+      .filter(a => IMAGE_MIME_TYPES.has(a.file_type))
+      .forEach(async (a) => {
+        const { data, error } = await getArtworkSignedUrl(a.file_url, 3600);
+        if (cancelled || error || !data?.signedUrl) return;
+        setThumbnails(prev => ({ ...prev, [a.id]: data.signedUrl }));
+      });
+    return () => { cancelled = true; };
+  }, [existingArtwork]);
 
   const loadExistingArtwork = async () => {
     setLoadingArtwork(true);
@@ -78,6 +112,20 @@ const ArtworkUploadModal = ({ order, user, onClose, onUploaded }) => {
       return;
     }
 
+    // Colour spec is mandatory for new uploads.
+    if (!colourType) {
+      setUploadError('Please specify your colour type before uploading.');
+      return;
+    }
+    if (colourType === 'Pantone' && !pantoneText.trim()) {
+      setUploadError('Please enter your Pantone colour reference(s).');
+      return;
+    }
+
+    const notes = colourType === 'Pantone'
+      ? `Pantone: ${pantoneText.trim()}`
+      : 'CMYK';
+
     setUploadError(null);
     setUploadSuccess(false);
     setUploading(true);
@@ -88,7 +136,7 @@ const ArtworkUploadModal = ({ order, user, onClose, onUploaded }) => {
       setUploadProgress(prev => Math.min(prev + 15, 85));
     }, 400);
 
-    const { data, error } = await uploadOrderArtwork(order.id, user.id, file);
+    const { data, error } = await uploadOrderArtwork(order.id, user.id, file, notes);
 
     clearInterval(progressInterval);
     setUploadProgress(100);
@@ -103,7 +151,7 @@ const ArtworkUploadModal = ({ order, user, onClose, onUploaded }) => {
       // Clear success after a moment
       setTimeout(() => setUploadProgress(0), 800);
     }
-  }, [uploading, order.id, user.id, onUploaded]);
+  }, [uploading, order.id, user.id, onUploaded, colourType, pantoneText]);
 
   const handleDrop = (e) => {
     e.preventDefault();
@@ -124,12 +172,8 @@ const ArtworkUploadModal = ({ order, user, onClose, onUploaded }) => {
   };
 
   const handleDelete = async (artwork) => {
-    if (deleteConfirmId !== artwork.id) {
-      setDeleteConfirmId(artwork.id);
-      return;
-    }
     setDeleting(true);
-    const { error } = await deleteOrderArtwork(artwork.id, artwork.file_url);
+    const { error } = await deleteOrderArtwork(artwork.id, artwork.file_url, order.id);
     setDeleting(false);
     setDeleteConfirmId(null);
     if (!error) {
@@ -152,8 +196,11 @@ const ArtworkUploadModal = ({ order, user, onClose, onUploaded }) => {
     needs_changes: 'bg-orange-100 text-orange-800',
   };
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+  // Render via portal to document.body so the modal escapes any parent
+  // stacking context (sticky header, sidebar wrapper, etc.). z-[200] sits
+  // above the sidebar (z-[101]) and both headers (z-[100] / z-30).
+  return createPortal(
+    <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
       {/* Backdrop */}
       <div className="absolute inset-0 bg-black/50" onClick={onClose} />
 
@@ -214,7 +261,7 @@ const ArtworkUploadModal = ({ order, user, onClose, onUploaded }) => {
               <input
                 ref={fileInputRef}
                 type="file"
-                accept=".pdf,.eps,.ai,.svg,.png,.jpg,.jpeg,.gif,.webp"
+                accept=".pdf,.eps,.ai,.svg,.png,.jpg,.jpeg,.tif,.tiff"
                 onChange={handleFileInput}
                 className="hidden"
               />
@@ -240,7 +287,7 @@ const ArtworkUploadModal = ({ order, user, onClose, onUploaded }) => {
                     <p className="text-xs text-gray-500 mt-1">or click to browse files</p>
                   </div>
                   <p className="text-xs text-gray-400">
-                    PDF, EPS, AI, SVG, PNG, JPG — max 50 MB
+                    PDF, EPS, AI, SVG, PNG, JPG, TIFF — max 50 MB
                   </p>
                 </div>
               )}
@@ -261,6 +308,51 @@ const ArtworkUploadModal = ({ order, user, onClose, onUploaded }) => {
             )}
           </div>
 
+          {/* Colour Specification — mandatory before new uploads */}
+          <div>
+            <h3 className="text-sm font-semibold text-gray-700 mb-3">Colour Specification</h3>
+            <div className="space-y-3 p-4 border border-gray-200 rounded-xl">
+              <label className="flex items-start gap-3 cursor-pointer">
+                <input
+                  type="radio"
+                  name="colourType"
+                  value="CMYK"
+                  checked={colourType === 'CMYK'}
+                  onChange={() => setColourType('CMYK')}
+                  className="mt-0.5"
+                />
+                <div>
+                  <p className="text-sm font-medium text-gray-900">CMYK</p>
+                  <p className="text-xs text-gray-500">Use the colours exactly as they appear in my artwork file.</p>
+                </div>
+              </label>
+
+              <label className="flex items-start gap-3 cursor-pointer">
+                <input
+                  type="radio"
+                  name="colourType"
+                  value="Pantone"
+                  checked={colourType === 'Pantone'}
+                  onChange={() => setColourType('Pantone')}
+                  className="mt-0.5"
+                />
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-gray-900">Pantone</p>
+                  <p className="text-xs text-gray-500">I'll specify exact Pantone colour reference(s).</p>
+                  {colourType === 'Pantone' && (
+                    <input
+                      type="text"
+                      value={pantoneText}
+                      onChange={(e) => setPantoneText(e.target.value)}
+                      placeholder="e.g. PMS 286C, PMS 032C"
+                      className="mt-2 w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    />
+                  )}
+                </div>
+              </label>
+            </div>
+          </div>
+
           {/* Existing Artwork */}
           <div>
             <h3 className="text-sm font-semibold text-gray-700 mb-3">Uploaded Files</h3>
@@ -279,9 +371,36 @@ const ArtworkUploadModal = ({ order, user, onClose, onUploaded }) => {
                     key={artwork.id}
                     className="flex items-center gap-3 p-4 border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors"
                   >
-                    <div className="flex-shrink-0 w-10 h-10 bg-gray-100 rounded-lg flex items-center justify-center">
-                      <FileImage className="h-5 w-5 text-gray-400" />
-                    </div>
+                    {(() => {
+                      const thumbUrl = thumbnails[artwork.id];
+                      const badge = getFileTypeBadge(artwork.file_type);
+                      if (thumbUrl) {
+                        return (
+                          <img
+                            src={thumbUrl}
+                            alt={artwork.file_name}
+                            className="flex-shrink-0 w-16 h-16 rounded-md object-contain bg-gray-50 border border-gray-200"
+                            onError={() => setThumbnails(prev => {
+                              const next = { ...prev };
+                              delete next[artwork.id];
+                              return next;
+                            })}
+                          />
+                        );
+                      }
+                      if (badge) {
+                        return (
+                          <div className={`flex-shrink-0 w-16 h-16 rounded-md flex items-center justify-center font-bold text-sm ${badge.cls}`}>
+                            {badge.label}
+                          </div>
+                        );
+                      }
+                      return (
+                        <div className="flex-shrink-0 w-16 h-16 bg-gray-100 rounded-md flex items-center justify-center">
+                          <FileImage className="h-6 w-6 text-gray-400" />
+                        </div>
+                      );
+                    })()}
 
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium text-gray-900 truncate">{artwork.file_name}</p>
@@ -290,6 +409,9 @@ const ArtworkUploadModal = ({ order, user, onClose, onUploaded }) => {
                         <span className="text-xs text-gray-400">•</span>
                         <span className="text-xs text-gray-500">{formatDate(artwork.uploaded_at)}</span>
                       </div>
+                      {artwork.notes && (
+                        <p className="text-xs text-gray-500 mt-1 italic">{artwork.notes}</p>
+                      )}
                     </div>
 
                     <div className="flex items-center gap-2 flex-shrink-0">
@@ -297,31 +419,52 @@ const ArtworkUploadModal = ({ order, user, onClose, onUploaded }) => {
                         {artworkStatusLabel[artwork.status] || artwork.status}
                       </span>
 
-                      <a
-                        href={artwork.file_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-xs text-blue-600 hover:text-blue-800 font-medium px-2 py-1 rounded hover:bg-blue-50 transition-colors"
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const { data, error } = await getArtworkSignedUrl(artwork.file_url);
+                          if (error || !data?.signedUrl) {
+                            alert('Could not open file. Please try again.');
+                            return;
+                          }
+                          window.open(data.signedUrl, '_blank', 'noopener,noreferrer');
+                        }}
+                        className="text-xs text-blue-600 hover:text-blue-800 font-medium px-2 py-1 rounded hover:bg-blue-50 transition-colors cursor-pointer"
                       >
                         View
-                      </a>
+                      </button>
 
                       {artwork.status === 'uploaded' && (
-                        <button
-                          onClick={() => handleDelete(artwork)}
-                          disabled={deleting}
-                          className={`p-1.5 rounded-lg transition-colors ${
-                            deleteConfirmId === artwork.id
-                              ? 'bg-red-100 text-red-600 hover:bg-red-200'
-                              : 'text-gray-400 hover:text-red-500 hover:bg-red-50'
-                          }`}
-                          title={deleteConfirmId === artwork.id ? 'Click again to confirm delete' : 'Delete'}
-                        >
-                          {deleting && deleteConfirmId === artwork.id
-                            ? <Loader className="h-4 w-4 animate-spin" />
-                            : <Trash2 className="h-4 w-4" />
-                          }
-                        </button>
+                        deleteConfirmId === artwork.id ? (
+                          <div className="flex items-center gap-1 text-xs">
+                            <span className="text-gray-600">Delete?</span>
+                            <button
+                              type="button"
+                              onClick={() => handleDelete(artwork)}
+                              disabled={deleting}
+                              className="px-2 py-1 text-red-600 hover:text-red-800 font-medium hover:bg-red-50 rounded transition-colors disabled:opacity-50"
+                            >
+                              {deleting ? <Loader className="h-4 w-4 animate-spin" /> : 'Yes'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setDeleteConfirmId(null)}
+                              disabled={deleting}
+                              className="px-2 py-1 text-gray-500 hover:text-gray-700 font-medium hover:bg-gray-100 rounded transition-colors disabled:opacity-50"
+                            >
+                              No
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setDeleteConfirmId(artwork.id)}
+                            className="p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors"
+                            title="Delete"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        )
                       )}
                     </div>
                   </div>
@@ -330,17 +473,6 @@ const ArtworkUploadModal = ({ order, user, onClose, onUploaded }) => {
             )}
           </div>
 
-          {/* Notes from team */}
-          {existingArtwork.some(a => a.notes) && (
-            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
-              <h4 className="text-sm font-semibold text-amber-900 mb-2">Notes from our team</h4>
-              {existingArtwork.filter(a => a.notes).map(a => (
-                <div key={a.id} className="text-sm text-amber-800">
-                  <span className="font-medium">{a.file_name}:</span> {a.notes}
-                </div>
-              ))}
-            </div>
-          )}
         </div>
 
         {/* Footer */}
@@ -353,7 +485,8 @@ const ArtworkUploadModal = ({ order, user, onClose, onUploaded }) => {
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };
 

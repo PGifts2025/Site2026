@@ -2804,7 +2804,7 @@ export async function copyColorsFromProduct(sourceProductId, targetProductId) {
  * Stores file in order-artwork/{userId}/{orderId}/{filename},
  * inserts a row into order_artwork, and updates orders.artwork_status.
  */
-export async function uploadOrderArtwork(orderId, userId, file) {
+export async function uploadOrderArtwork(orderId, userId, file, notes = null) {
   if (isMockAuth) return { data: null, error: new Error('Mock auth mode') };
   try {
     const client = getSupabaseClient();
@@ -2823,12 +2823,9 @@ export async function uploadOrderArtwork(orderId, userId, file) {
 
     if (storageError) throw storageError;
 
-    // 2. Get public (signed) URL — bucket is private so we store the path and generate URLs on demand
-    const { data: urlData } = client.storage
-      .from('order-artwork')
-      .getPublicUrl(storagePath);
-
-    const fileUrl = urlData?.publicUrl || storagePath;
+    // 2. Bucket is private; store the path only. Signed URLs are generated
+    //    on demand by getArtworkSignedUrl().
+    const fileUrl = storagePath;
 
     // 3. Insert row into order_artwork
     const { data: artworkRow, error: insertError } = await client
@@ -2841,6 +2838,7 @@ export async function uploadOrderArtwork(orderId, userId, file) {
         file_type: file.type,
         file_size: file.size,
         status: 'uploaded',
+        notes,
       })
       .select()
       .single();
@@ -2889,7 +2887,7 @@ export async function getOrderArtwork(orderId) {
  * Delete an artwork file from storage and remove its DB row.
  * fileUrl should be the full public URL or the storage path.
  */
-export async function deleteOrderArtwork(artworkId, fileUrl) {
+export async function deleteOrderArtwork(artworkId, fileUrl, orderId = null) {
   if (isMockAuth) return { error: null };
   try {
     const client = getSupabaseClient();
@@ -2917,11 +2915,62 @@ export async function deleteOrderArtwork(artworkId, fileUrl) {
 
     if (dbError) throw dbError;
 
+    // 3. If this was the last artwork for the order, revert artwork_status
+    //    back to 'pending_artwork' so the customer sees Upload Artwork again.
+    //    Status-revert failures are warnings, not errors — the delete succeeded.
+    if (orderId) {
+      const { count, error: countError } = await client
+        .from('order_artwork')
+        .select('id', { count: 'exact', head: true })
+        .eq('order_id', orderId);
+
+      if (countError) {
+        console.warn('[deleteOrderArtwork] Could not count remaining artwork:', countError);
+      } else if ((count || 0) === 0) {
+        const { error: statusError } = await client
+          .from('orders')
+          .update({ artwork_status: 'pending_artwork' })
+          .eq('id', orderId);
+        if (statusError) {
+          console.warn('[deleteOrderArtwork] Could not revert artwork_status:', statusError);
+        } else {
+          console.log('[deleteOrderArtwork] Reverted order', orderId, 'to pending_artwork');
+        }
+      }
+    }
+
     console.log('[deleteOrderArtwork] ✅ Deleted artwork', artworkId);
     return { error: null };
   } catch (err) {
     console.error('[deleteOrderArtwork] Error:', err);
     return { error: err };
+  }
+}
+
+/**
+ * Generate a short-lived signed URL for an artwork file in private storage.
+ * Handles both new rows (bare storage path in file_url) and legacy rows
+ * (full public-style URL with a /order-artwork/ marker).
+ */
+export async function getArtworkSignedUrl(filePathOrUrl, expiresIn = 3600) {
+  if (isMockAuth) return { data: null, error: new Error('Mock auth mode') };
+  if (!filePathOrUrl) return { data: null, error: new Error('No file path provided') };
+  try {
+    const client = getSupabaseClient();
+    const marker = '/order-artwork/';
+    const storagePath = filePathOrUrl.includes(marker)
+      ? filePathOrUrl.split(marker)[1]
+      : filePathOrUrl;
+
+    const { data, error } = await client.storage
+      .from('order-artwork')
+      .createSignedUrl(storagePath, expiresIn);
+
+    if (error) throw error;
+    return { data, error: null };
+  } catch (err) {
+    console.error('[getArtworkSignedUrl] Error:', err);
+    return { data: null, error: err };
   }
 }
 
