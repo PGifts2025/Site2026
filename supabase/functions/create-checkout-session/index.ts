@@ -51,7 +51,7 @@ Deno.serve(async (req: Request) => {
 
     // Build Stripe Checkout session via fetch()
     const stripeSecretKey = Deno.env.get("STRIPE_SECRET_KEY")!;
-    const siteUrl = Deno.env.get("SITE_URL") || "https://pgifts.co.uk";
+    const siteUrl = Deno.env.get("SITE_URL") || "https://promo-gifts-co.uk";
 
     const unitAmountPence = Math.round(Number(quote.total_amount) * 100);
 

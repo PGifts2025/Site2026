@@ -2845,6 +2845,18 @@ export async function uploadOrderArtwork(orderId, userId, file, notes = null) {
 
     if (insertError) throw insertError;
 
+    // Detect whether this upload causes the first transition
+    // pending_artwork → artwork_uploaded, so we fire the artwork-received
+    // email only once per order. The Edge Function has its own idempotency
+    // guard too, but keeping the call site clean avoids unnecessary
+    // invocations on each subsequent file upload.
+    const { data: priorOrder } = await client
+      .from('orders')
+      .select('artwork_status')
+      .eq('id', orderId)
+      .maybeSingle();
+    const wasFirstTransition = priorOrder?.artwork_status === 'pending_artwork';
+
     // 4. Update order artwork_status
     const { error: orderError } = await client
       .from('orders')
@@ -2852,6 +2864,24 @@ export async function uploadOrderArtwork(orderId, userId, file, notes = null) {
       .eq('id', orderId);
 
     if (orderError) console.warn('[uploadOrderArtwork] Could not update artwork_status:', orderError);
+
+    // Fire-and-forget: artwork-received email on first transition only.
+    // No await, no blocking. Any failure is logged and swallowed — the
+    // upload must succeed from the user's POV regardless of email.
+    if (!orderError && wasFirstTransition) {
+      try {
+        fetch(`${import.meta.env.VITE_SUPABASE_FUNCTIONS_URL}/send-artwork-received-email`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+          },
+          body: JSON.stringify({ order_id: orderId }),
+        }).catch(err => console.error('[artwork-email] Fire failed:', err));
+      } catch (err) {
+        console.error('[artwork-email] Setup failed:', err);
+      }
+    }
 
     console.log('[uploadOrderArtwork] ✅ Upload complete:', artworkRow.id);
     return { data: artworkRow, error: null };

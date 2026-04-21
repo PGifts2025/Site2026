@@ -559,7 +559,7 @@ color, design_data, design_thumbnail, print_areas, notes.
 | Secret | Value | Set via |
 |---|---|---|
 | STRIPE_SECRET_KEY | sk_test_... (rotate before go-live) | supabase secrets set |
-| SITE_URL | https://promo-gifts.co | supabase secrets set |
+| SITE_URL | https://promo-gifts-co.uk | supabase secrets set |
 | SUPABASE_SERVICE_ROLE_KEY | auto-available in Edge Functions | automatic |
 
 ### 17.5 Vercel Environment Variables
@@ -572,7 +572,7 @@ VITE_SUPABASE_FUNCTIONS_URL — https://cbcevjhvgmxrxeeyldza.supabase.co/functio
 - [ ] Rotate Stripe test secret key (was exposed in terminal)
 - [ ] Replace pk_test_ with pk_live_ in Vercel env vars
 - [ ] Replace sk_test_ with sk_live_ in Supabase secrets
-- [ ] Set SITE_URL to https://promo-gifts.co in Supabase secrets
+- [ ] Set SITE_URL to https://promo-gifts-co.uk in Supabase secrets
 - [ ] Test with a real card for a small amount
 - [ ] Enable only GBP in Stripe dashboard
 - [ ] Set up Stripe webhook for payment.succeeded as backup confirmation

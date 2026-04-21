@@ -142,6 +142,8 @@ const AdminOrderDetail = ({ user, adminRole }) => {
   const handleAdvanceStatus = async () => {
     if (!pendingStatus) return;
     setAdvancingStatus(true);
+    // Capture prior status for first-transition email detection below.
+    const priorStatus = order?.artwork_status;
     try {
       const { error: statusError } = await supabase
         .from('orders')
@@ -158,6 +160,25 @@ const AdminOrderDetail = ({ user, adminRole }) => {
           .update({ reviewed_at: new Date().toISOString() })
           .eq('order_id', id)
           .is('reviewed_at', null);
+      }
+
+      // Fire-and-forget: artwork-received email on first transition from
+      // pending_artwork → artwork_uploaded. No await, no blocking. Any
+      // failure is logged and swallowed — the status change must succeed
+      // from the admin's POV regardless of email.
+      if (priorStatus === 'pending_artwork' && pendingStatus === 'artwork_uploaded') {
+        try {
+          fetch(`${import.meta.env.VITE_SUPABASE_FUNCTIONS_URL}/send-artwork-received-email`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+            },
+            body: JSON.stringify({ order_id: id }),
+          }).catch(err => console.error('[artwork-email] Fire failed:', err));
+        } catch (err) {
+          console.error('[artwork-email] Setup failed:', err);
+        }
       }
 
       setShowStatusConfirm(false);
