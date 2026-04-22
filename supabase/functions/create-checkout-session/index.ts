@@ -49,6 +49,22 @@ Deno.serve(async (req: Request) => {
       );
     }
 
+    // Reject non-positive totals. Stripe auto-completes £0 sessions without
+    // a card charge, so an empty-cart or null-total quote would silently
+    // pass through and produce a "paid" confirmation email. Check against
+    // the same field we send to Stripe (quote.total_amount).
+    const totalAmount = Number(quote.total_amount);
+    if (!Number.isFinite(totalAmount) || totalAmount <= 0) {
+      console.warn(
+        "[create-checkout-session] blocking non-positive total",
+        { quote_id: quote.id, total_amount: quote.total_amount, coerced: totalAmount }
+      );
+      return new Response(
+        JSON.stringify({ error: "Orders must have a total greater than zero." }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     // Build Stripe Checkout session via fetch()
     const stripeSecretKey = Deno.env.get("STRIPE_SECRET_KEY")!;
     const siteUrl = Deno.env.get("SITE_URL") || "https://promo-gifts-co.uk";
