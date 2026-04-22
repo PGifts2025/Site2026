@@ -3,6 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import { ArrowLeft, Loader, Package, User, MapPin, CreditCard, Image as ImageIcon, Download, FileImage, StickyNote } from 'lucide-react';
 import AdminLayout from '../../components/admin/AdminLayout';
 import { supabase, getArtworkSignedUrl, downloadArtworkFile } from '../../services/supabaseService';
+import { supabaseConfig } from '../../config/supabase';
 
 // Artwork helpers (mirrors AdminOrders.jsx — kept local to avoid a shared
 // module we don't have a home for yet).
@@ -168,7 +169,9 @@ const AdminOrderDetail = ({ user, adminRole }) => {
       // from the admin's POV regardless of email.
       if (priorStatus === 'pending_artwork' && pendingStatus === 'artwork_uploaded') {
         try {
-          fetch(`${import.meta.env.VITE_SUPABASE_FUNCTIONS_URL}/send-artwork-received-email`, {
+          const functionsUrl = import.meta.env.VITE_SUPABASE_FUNCTIONS_URL
+            || `${supabaseConfig.url}/functions/v1`;
+          fetch(`${functionsUrl}/send-artwork-received-email`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',

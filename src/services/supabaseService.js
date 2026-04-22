@@ -2870,7 +2870,9 @@ export async function uploadOrderArtwork(orderId, userId, file, notes = null) {
     // upload must succeed from the user's POV regardless of email.
     if (!orderError && wasFirstTransition) {
       try {
-        fetch(`${import.meta.env.VITE_SUPABASE_FUNCTIONS_URL}/send-artwork-received-email`, {
+        const functionsUrl = import.meta.env.VITE_SUPABASE_FUNCTIONS_URL
+          || `${supabaseConfig.url}/functions/v1`;
+        fetch(`${functionsUrl}/send-artwork-received-email`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
