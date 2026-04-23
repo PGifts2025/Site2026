@@ -22,13 +22,15 @@ print, build quotes, and place orders.
 
 | Layer | Technology |
 |---|---|
-| Frontend | React 18 + Vite + Tailwind CSS |
-| Database / Auth / Storage | Supabase (PostgreSQL + Auth + Storage) |
+| Frontend | React 19 + Vite 7 + Tailwind CSS |
+| Database / Auth / Storage | Supabase (PostgreSQL 17 + Auth + Storage + Edge Functions in Deno) |
 | Design canvas | Fabric.js |
 | 3D previews | Three.js / React Three Fiber |
-| Payments (future) | Stripe — Phase 4, not yet started |
+| Payments | Stripe Checkout via Edge Function + `confirm_payment_atomic` RPC (LIVE, currently `pk_test_`/`sk_test_` — rotate before go-live per §17.6) |
+| Transactional email | Resend — both the Supabase Auth sender (custom SMTP, see §21) and the Edge Function emails (confirm-payment, send-artwork-received). Sender addresses: `hello@promo-gifts.co` (auth), `orders@promo-gifts.co` (orders), `artwork@promo-gifts.co` (artwork-received reply-to) |
+| Routing | react-router-dom v7 with `ScrollToTop` helper + `scrollRestoration='manual'` (see §22) |
 | Deployment | GitHub → Vercel (auto on push) |
-| Supplier API (future) | Laltex API (key provisioned, no code yet) |
+| Supplier API (future) | Laltex API — key provisioned, investigation doc at [`docs/PRE_LALTEX_INVESTIGATION.md`](../docs/PRE_LALTEX_INVESTIGATION.md); sync code pending (§18) |
 
 ---
 
@@ -36,14 +38,21 @@ print, build quotes, and place orders.
 
 | File | Purpose |
 |---|---|
-| `src/pages/Designer.jsx` | Main designer tool — Fabric.js canvas, save, export, print areas |
-| `src/components/ProductDetailPage.jsx` | Clothing Configure & Quote card — pricing, size inputs, colour rows |
-| `src/pages/account/CustomerDesigns.jsx` | My Designs — thumbnail grid, Add to Quote, edit, delete |
-| `src/pages/account/CustomerQuotes.jsx` | My Quotes — line items, editable qty, Convert to Order |
+| `src/pages/Designer.jsx` | Main designer tool — Fabric.js canvas, save, export, print areas, Buy Now (§19), shared guest auth gate (§20) |
+| `src/components/ProductDetailPage.jsx` | Now compact layout by default (§24); clothing Configure & Quote — pricing, size inputs, colour rows |
+| `src/pages/account/CustomerDesigns.jsx` | My Designs — thumbnail grid, Add to Quote (delegates to `quoteService`), edit, delete |
+| `src/pages/account/CustomerQuotes.jsx` | My Quotes — line items, editable qty, Pay Now, flash banner on create |
+| `src/services/quoteService.js` | `createQuoteFromDesign()` — shared between CustomerDesigns' Add-to-Quote and Designer's Buy Now. Computes `total_amount` pre-insert (§23) and matches tier to effective qty |
 | `src/services/supabaseService.js` | All Supabase calls — saveUserDesign, getUserDesign, etc. |
-| `src/components/HeaderBar.jsx` | Top nav — sticky, account dropdown z-index fix, quotes badge |
-| `src/context/AuthContext.jsx` | Auth state — user object used throughout |
+| `src/components/ScrollToTop.jsx` | Route-change scroll reset; also sets `history.scrollRestoration='manual'` — see §22 |
+| `src/components/auth/AuthModal.jsx` | Sign in / Sign up / Forgot password flow; `onSuccess` callback supports same-session auto-continue for Buy Now / PNG / PDF |
+| `src/pages/ResetPassword.jsx` | Public page; consumes Supabase recovery session from URL hash, lets user set new password |
+| `src/components/HeaderBar.jsx` | Top nav — sticky, cart + quotes badges. Dead feature-bar strip removed (§4.5 work / §18) |
+| `src/context/AuthContext.jsx` | Auth state — user, signIn, signUp, signOut, `resetPassword` |
+| `supabase/functions/_shared/emailShell.ts` | `renderEmail({...})` — shared HTML/text shell for both Edge Function emails. See §21 |
+| `supabase/email-templates/` | Auth email templates (4 HTML files for Supabase Dashboard) generated from `_shell.html` + `_bodies/*.js` via `npm run build:email-templates`. See §21 |
 | `src/pages/ChiCup3DPreview.jsx` | 3D Chi Cup preview — Three.js, UV mapping, texture layering |
+| `docs/PRE_LALTEX_INVESTIGATION.md` | Pre-integration reconnaissance: schema snapshot, full Laltex API V1.7 reference, field mapping, open questions |
 
 ---
 
@@ -249,15 +258,19 @@ canvas-to-JSON serialisation path.
 
 ### 8.4 Export
 
-- Multiplier: 3× across all export paths (exportDesign, exportPDF, handleExportWithWatermark)
-- Non-logged-in users: "Create a free account" message, no export at all
-- Watermark approach abandoned — AI tools remove overlaid watermarks easily
-- DO NOT reduce multiplier or re-enable guest export
+- Multiplier: **3× across all export paths** (exportDesign, exportPDF). The 3× is load-bearing — DO NOT reduce.
+- Non-logged-in users: the gate opens the **shared AuthModal** (same one Buy Now uses — see §20). Same-session sign-in via `onSuccess` auto-continues the export if the user has a saved design. Sign-up email round-trip carries a `pendingPngIntent` / `pendingPdfIntent` in localStorage and surfaces a "click again to download" toast on return (deliberately does NOT auto-download on mount — surprising UX).
+- Signed-in users must have a saved design (`currentDesignId` set). Same save-first rule as before.
+- Watermark approach abandoned — AI tools remove overlaid watermarks easily. Files export clean, auth is the only protection.
 
 **Key locations in Designer.jsx:**
-- `exportDesign()` — line 4257, PNG export with `multiplier: 3` (line 4278)
-- `exportPDF()` — line 4297, PDF via jsPDF with `multiplier: 3` (line 4316)
-- `handleExportWithWatermark(format)` — line 4330, gate function: requires `user && currentDesignId` for signed-in export, else shows "Create a free account" (line ~4349+)
+- `exportDesign()` — PNG export with `multiplier: 3`
+- `exportPDF()` — PDF via jsPDF with `multiplier: 3`
+- `handleExportWithWatermark(format)` — gate function:
+  - `!user` → `persistExportIntent(format, currentDesignId)` + open shared auth gate with `guestAuthGatePurpose = format`
+  - `user && !currentDesignId` → "Please save your design first" toast
+  - else → `runExport(format)`
+- `runExport(format)` — pure export; no gate, no toast
 
 ### 8.5 Hoodie Cord Overlay
 
@@ -299,12 +312,33 @@ Objects can still be scaled beyond print area boundary. Suggested fix: switch fr
 
 ## 10. AUTHENTICATION & COMMERCE FLOWS
 
-- Anonymous sessions tracked via `session_id` in localStorage
-- On login: `migrateSessionDesignsToUser(sessionId, userId)` migrates anonymous designs
-- Clothing Add to Quote → redirects to `/products/{slug}?design={id}` for Configure & Quote
-- Non-clothing Add to Quote → creates quote + quote_item directly, navigates to My Quotes
+### 10.1 Entry points to the quote pipeline
+There are now **three** entry points into quote creation, all converging on `createQuoteFromDesign()` in `src/services/quoteService.js`:
+
+1. **CustomerDesigns → Add to Quote** (the original path): My Designs → click quote icon
+2. **ProductDetailPage → Add to Quote** (Configure & Quote card, product pages)
+3. **Designer → Buy Now** (§19): the rewired former Cart button in the Designer tool
+
+All three route to `/account/quotes` on success, with a flash banner `"Quote created — ready to pay"` on new-quote paths. The Pay Now button there is the **sole** customer-facing payment trigger.
+
+### 10.2 Clothing vs non-clothing branching
+- **Clothing product** (`product_key ∈ CLOTHING_PRODUCTS` list = t-shirts, hoodie, sweatshirts, polo, hi-vis-vest): `createQuoteFromDesign` returns `{ redirect: '/clothing/:slug?design=<id>' }` so the Configure & Quote card owns sizing / colour-row / print config.
+- **Non-clothing**: `createQuoteFromDesign` inserts a `quotes` row + one `quote_items` row directly, then returns `{ redirect: '/account/quotes' }`. Designer's Buy Now path shows a **MOQ confirmation modal** (see §19) before the insert.
+
+### 10.3 Session + migration
+- Anonymous sessions tracked via `session_id` in localStorage (see `getSessionId()` in `supabaseService.js`)
+- On login: `migrateSessionDesignsToUser(sessionId, userId)` migrates anonymous designs — currently **temporarily disabled** inside Designer's auth useEffect (commented-out block, April 2026). The RPC exists and works; re-enable when ready
 - `quoteCountChanged` event dispatched after quote creation → updates HeaderBar badge
 - Quote number format: `Q-` + last 6 digits of `Date.now()`
+- Quote `total_amount` is computed **pre-insert** by `createQuoteFromDesign` (see §23); the `20260422_quote_total_sync_trigger` is the safety net for item edits
+
+### 10.4 Forgot password — end-to-end
+- Sign-in modal → "Forgot password?" → in-modal email form (`forgotState: 'idle'|'form'|'sent'`)
+- `AuthContext.resetPassword(email)` → `supabase.auth.resetPasswordForEmail(..., { redirectTo: origin + '/reset-password' })`
+- Email arrives (via Resend custom SMTP, sender `hello@promo-gifts.co`) using the branded auth template (§21)
+- Link lands on `/reset-password` (public route, **not** under any auth guard)
+- `ResetPassword.jsx` reads the recovery session from the URL hash via `supabase.auth.onAuthStateChange('PASSWORD_RECOVERY')` + `getSession()`, lets user set a new password via `supabase.auth.updateUser({ password })`, keeps them signed in, navigates to `/account` with a flash
+- Session-expired path routes back home with a friendly toast — never surfaces raw Supabase errors
 
 ---
 
@@ -335,13 +369,19 @@ Objects can still be scaled beyond print area boundary. Suggested fix: switch fr
     end up without an order and no retry could heal it. See §17.
 14. ✅ `payment_status` backfilled to `'paid'` on pre-RPC Stripe orders
     that had `stripe_session_id` but were stuck at the default `'pending'`.
-15. Post-payment confirmation email with artwork upload link
-16. Cart button in Designer wired to checkout
+15. ✅ Post-payment confirmation email — Resend integration in `confirm-payment` Edge Function
+16. ✅ Cart button in Designer **rewired** as Buy Now → routes through quote pipeline (§19)
+17. ✅ Branded transactional email suite — auth (4 templates) + 2 Edge Function emails on shared shell (§21)
+18. ✅ ScrollToTop + scrollRestoration manual — pages now open at top on nav + hard refresh (§22)
+19. ✅ Compact product page layout rolled out globally; star rating + Configure-card trust badges removed (§24)
+20. ✅ Forgot password flow wired end-to-end (§10.4)
 
 ### PHASE 5 (future)
 
-17. Laltex API integration — nightly product/stock sync into Supabase
-18. AI product search assistant (depends on Laltex RAG system)
+21. Laltex API integration — nightly product/stock sync; investigation doc at [`docs/PRE_LALTEX_INVESTIGATION.md`](../docs/PRE_LALTEX_INVESTIGATION.md) (10 internal + 14 Laltex-side open questions)
+22. AI product search assistant — pgvector available v0.8.0 but not yet enabled; hybrid search (vector + tsvector) recommended; depends on Laltex feed for content
+23. Rebuild category filter icons on Laltex taxonomy (replaces removed feature-bar — see §18)
+24. Pre-Laltex schema cleanup: drop `products` (0 rows), `product_template_print_areas` (0 rows), audit `product_configurations` (25 rows, suspected legacy)
 
 ---
 
@@ -351,7 +391,13 @@ Objects can still be scaled beyond print area boundary. Suggested fix: switch fr
 - ❌ Remove pendingDesignData / designLoadedRef guard in Designer.jsx
 - ❌ Move canvas snapshot away from Save button click handler
 - ❌ Reduce export multiplier below 3×
-- ❌ Re-enable export for non-authenticated users
+- ❌ Let guests export without passing through the shared AuthModal — the auth gate is the only non-watermark protection (see §8.4, §20)
+- ❌ Reintroduce a Cart-based checkout path in Designer — Buy Now routes through the quote pipeline only (§19). Site-wide `Cart.jsx` drawer is unrelated and intentionally stays
+- ❌ Re-add `bg-white/80 backdrop-blur-md` on sticky headers — causes content ghosting through on scroll. Solid `bg-white shadow-sm` only (see §25 if added, or the original frosted-glass-fix commit)
+- ❌ Remove `ScrollToTop` or the inline `scrollRestoration='manual'` script in `index.html` (§22) — both needed to prevent mid-scrolled page loads
+- ❌ Bypass the shared `renderEmail()` shell in `_shared/emailShell.ts` by inlining HTML in a new Edge Function email — use the shell (§21)
+- ❌ Edit `supabase/email-templates/auth/*.html` by hand — they're generated. Edit `_bodies/*.js` or `_shell.html` and run `npm run build:email-templates` (§21)
+- ❌ Revert `createQuoteFromDesign`'s pre-insert `total_amount` computation to `0` — the trigger is a safety net, not a substitute (§23)
 - ❌ Change pricing margins (22/20/18%) without explicit instruction
 - ❌ Change Hi-Vis or T-shirt colour_variant resolution logic without instruction
 - ❌ Delete or truncate catalog_print_pricing (252 rows, hard to regenerate)
@@ -370,7 +416,14 @@ Objects can still be scaled beyond print area boundary. Suggested fix: switch fr
 - catalog_pricing_tiers has £0.01 entries → unfilled placeholders, not real prices
 - colour_variant = 'white' for yellow Hi-Vis → intentional DB constraint workaround
 - No auto-save in Designer → deliberate decision
-- Guests get "Create account" on export → deliberate, no watermark fallback
+- Guests trying to export see the **shared AuthModal** (not just a toast) → deliberate auth gate, no watermark fallback (§8.4, §20)
+- Star rating / reviews section missing from product pages → removed 23-Apr-26; database columns `rating` and `review_count` intentionally retained for Home's Best Sellers carousel and future reuse (§24)
+- 🚚 Free Delivery / ⭐ 5-Star Rated badges missing from Configure & Quote card → deliberately removed 23-Apr-26 to tighten the card (§24)
+- "Questions? Call 01844 600900" as a plain one-liner instead of a dark card → deliberate compact treatment, not missing content
+- Sign-up email confirmation does NOT auto-continue Buy Now / PNG / PDF flows — shows a toast on return instead. Same-session sign-in via AuthModal onSuccess DOES auto-continue (§20)
+- `catalog_products.review_count`, `hex_value` on `catalog_product_colors` = `CHAR` (not VARCHAR), `products`/`product_configurations`/`product_template_print_areas` empty tables → legacy quirks, see pre-Laltex investigation doc
+- Feature-bar icon strip at top of pages (Best Sellers / Express Delivery / Made in UK / Eco / Real-Time Proof / New Products) is gone — deliberately removed (§18, §4.5 handover)
+- PG badge renders as a **red square on Outlook desktop** in transactional emails → accepted Word-engine limitation, not a bug (§21)
 
 ---
 
@@ -394,7 +447,7 @@ Objects can still be scaled beyond print area boundary. Suggested fix: switch fr
 
 ---
 
-*Last updated: 17 April 2026 — §11 and §17 revised for atomic confirm-payment RPC*
+*Last updated: 23 April 2026 — §§19-25 added for Buy Now / shared auth gate / transactional email / scroll management / quote total pre-insert / compact product page layout / forgot password. §§2, 3, 8.4, 10, 11, 12, 13, 18 refreshed.*
 *Update this file at the end of every significant session.*
 
 ---
@@ -633,3 +686,250 @@ need refactoring once the Laltex feed lands.
 Note: `catalog_products.is_featured` column stays in use for the
 homepage Best Sellers carousel (see `Home.jsx` and `productCatalogService`)
 — that's independent and not affected by the strip removal.
+
+---
+
+## 19. BUY NOW FLOW (Designer)
+
+The former "Cart" button in the Designer's Tools panel header was a broken third purchase path — it pushed items into a client-only cart (`useCart` / `addToCart`) and routed to `/checkout` bypassing MOQ, quotes, and the customer dashboard. **Replaced 23-Apr-26** with a Buy Now button that funnels through the standard quote pipeline.
+
+### 19.1 Flow overview
+- **Button:** [`Designer.jsx`](../src/pages/Designer.jsx) — "Buy Now" in the Tools panel. Disabled with tooltip `"Save your design first before Buy Now"` when `user && !currentDesignId`. Guest sees it enabled (auth gate fires on click).
+- **Guest path:** `handleBuyNow` calls `persistBuyNowIntent(currentDesignId)` + opens the shared AuthModal with `guestAuthGatePurpose='buyNow'`. Same-session sign-in → `onSuccess` runs `runBuyNow(signedInUser)`. Sign-up round-trip → `consumeBuyNowIntent` useEffect on Designer mount restores the flow.
+- **Signed-in path:** `runBuyNow()` fetches the saved design, then:
+  - Clothing product → `createQuoteFromDesign` returns `{ redirect: '/clothing/:slug?design=<id>' }` (ProductDetailPage's Configure & Quote takes over)
+  - Non-clothing → fetch `catalog_products.min_order_quantity`, open the **MOQ modal** (see §19.2), user confirms qty ≥ MOQ, `createQuoteFromDesign({ design, user, quantityOverride })`, navigate to `/account/quotes` with flash `"Quote created - ready to pay"`
+- **Mutual exclusion:** MOQ modal and AuthModal **cannot be visible simultaneously** — `runBuyNow` calls `setGuestAuthGateOpen(false)` before `setMoqModalData(...)`, and both JSX renders guard on `!moqModalData` / `!guestAuthGateOpen` respectively
+
+### 19.2 MOQ modal
+Small modal at z-50, standard Designer-modal tier (NOT `z-[200]` — that's ArtworkUploadModal's "above-the-header" slot). Body: product name + min-qty message + number input pre-filled at MOQ (cannot go below). Cancel + Continue buttons; Continue disabled when qty < min. Lives in the Designer's JSX near the other modals.
+
+### 19.3 Shared service: [`src/services/quoteService.js`](../src/services/quoteService.js)
+```js
+export const createQuoteFromDesign = async ({ design, user, quantityOverride = null }) => { ... }
+```
+- Returns `{ redirect, quoteId?, quoteNumber?, error? }`
+- Reused by CustomerDesigns (no `quantityOverride`) and Designer Buy Now (with `quantityOverride` from the MOQ modal)
+- Internal helper `pickTierForQty(tiers, qty)` selects the highest-min-quantity tier ≤ qty → fixes mispricing bug that existed when CustomerDesigns was always using the lowest tier regardless of quantity
+- Top-of-file `TODO(MOQ-unification)` comment flags the three-column divergence (`catalog_products.min_order_quantity` vs `catalog_pricing_tiers.min_quantity` vs `product_templates.min_order_qty`) for a future consolidation task
+
+### 19.4 Invariants — DO NOT BREAK
+- Buy Now must never bypass MOQ. The MOQ modal is the enforcement point for non-clothing; for clothing, the redirect to ProductDetailPage delegates enforcement there
+- Buy Now must never skip the quote — orders only exist after Pay Now on the Quotes page (Stripe flow, §17)
+- `total_amount` in `createQuoteFromDesign` is computed pre-insert (§23). Do not revert to `0`
+
+---
+
+## 20. SHARED GUEST AUTH GATE
+
+One `AuthModal` mount in Designer serves **three** guest flows: Buy Now, PNG export, PDF export. Purpose discriminator + mutual-exclusion localStorage intents.
+
+### 20.1 State
+```js
+const [guestAuthGateOpen, setGuestAuthGateOpen] = useState(false);
+const [guestAuthGatePurpose, setGuestAuthGatePurpose] = useState(null); // 'buyNow' | 'png' | 'pdf' | null
+```
+
+### 20.2 Intent persistence (localStorage, 1h TTL)
+Three keys, **mutually exclusive** (setting any one clears all others via `clearAllGuestIntents()`):
+
+- `pendingBuyNowIntent` — shape: `{ designId, ts }`
+- `pendingPngIntent` / `pendingPdfIntent` — shape: `{ format, designId, ts }`
+
+**Rationale for mutual exclusion:** a guest who clicks PNG, cancels the auth modal, then clicks PDF must not trigger a stale PNG export after auth. The write-path clears other intents; the read-path's `consume*Intent()` removes the key BEFORE the TTL check so expired intents are silently swept.
+
+### 20.3 onSuccess dispatch (same-session sign-in)
+AuthModal's `onSuccess` callback fires inline after successful `signIn` with `data.user`. Designer's mount-time handler:
+- Closes the gate + clears purpose
+- Calls `clearAllGuestIntents()` (prevents double-fire from the resume useEffect)
+- Dispatches: `buyNow` → `runBuyNow(user)`, `png`/`pdf` → `runExport(format)` if `currentDesignId`, else "Please save your design first to export" toast
+
+### 20.4 Resume (sign-up email round-trip)
+A single `useEffect([user, loadingProducts])` in Designer consumes whichever intent is found:
+- **Buy Now intent:** auto-runs the flow. If `designId` missing, tries to resurrect the most recent saved/migrated design via `getUserDesigns(user.id, sessionId)`; otherwise toasts "Please save your design first"
+- **PNG/PDF intent:** shows toast `"Signed in - click PNG/PDF again to download"`. **Does NOT auto-fire the download** — an unprompted file-download on page mount is surprising UX, unlike Buy Now's continuation
+
+### 20.5 Why not reuse the Designer's own inline auth form?
+Designer still has its own legacy inline auth at `showAuth` (line ~5980). That's the Save button's auth trigger, unchanged. The **new** shared AuthModal is the Buy Now / PNG / PDF gate, using `useAuth()` + `AuthContext.signIn`. Both coexist; the legacy one will eventually be removed once Save is migrated to the shared gate.
+
+### 20.6 Invariants — DO NOT BREAK
+- AuthModal must not be rendered alongside MoqModal (mutual exclusion — §19.1)
+- `persistBuyNowIntent` / `persistExportIntent` MUST call `clearAllGuestIntents()` first
+- `consume*Intent()` must remove the key BEFORE the TTL check so expired state is silently cleared
+- TTL of 1 hour matches `BUY_NOW_INTENT_TTL_MS`; applies to all three intent types
+
+---
+
+## 21. TRANSACTIONAL EMAIL SYSTEM
+
+Six branded transactional emails on one visual system — 4 Supabase Auth templates + 2 Resend-sent Edge Function emails.
+
+### 21.1 Shared visual shell
+Design tokens documented in [`supabase/email-templates/BRAND_EMAIL_TOKENS.md`](../supabase/email-templates/BRAND_EMAIL_TOKENS.md). Table-based layout (Outlook-safe), 600px max-width, system font stack (no web fonts), CSS-rendered red `#ef4444` "PG" badge at top, black `#1a1a1a` CTA button, muted footer.
+
+Two parallel implementations of the same shell:
+- **HTML** — [`supabase/email-templates/_shell.html`](../supabase/email-templates/_shell.html) for Supabase Dashboard auth templates
+- **TS** — [`supabase/functions/_shared/emailShell.ts`](../supabase/functions/_shared/emailShell.ts) exporting `renderEmail({ preheader, heading, bodyHtml, bodyText, ctaLabel?, ctaUrl?, footerNote?, supportEmail })` → `{ html, text }` for Edge Function emails
+
+**If you change the visual shell, mirror it in both files** — they are the two sources of truth. A logo-asset swap (when a real logo is designed) is a 2-file change.
+
+### 21.2 Auth template generator
+```
+supabase/email-templates/
+├── _shell.html                  # placeholders: {{PREHEADER}} {{HEADING}} {{BODY}} {{CTA_LABEL}} {{CTA_URL}} {{FOOTER_NOTE}} {{SUPPORT_EMAIL}}
+├── _bodies/
+│   ├── confirm-signup.js        # metadata + bodyHtml + plainText per template
+│   ├── reset-password.js
+│   ├── magic-link.js
+│   └── email-change.js
+├── build.mjs                    # node:fs generator with assertions
+└── auth/                        # GENERATED — paste into Supabase Dashboard
+    ├── confirm-signup.html
+    ├── reset-password.html
+    ├── magic-link.html
+    ├── email-change.html
+    └── README.md                # Dashboard paste instructions
+```
+
+**Generator placeholders use `{{NAME}}`** (no leading dot). **Supabase template variables use `{{ .Var }}`** (Go-template syntax, leading dot, spaces) and pass through untouched. Critical: DON'T confuse the two.
+
+**Run:** `npm run build:email-templates` from `site/`. Build assertions:
+- No `{{NAME}}`-style generator placeholder survives in output — catches typos before Dashboard paste
+- `{{ .ConfirmationURL }}` must be present in every auth output — catches the most common break
+
+Generated files carry two top-of-file comments (plain-text fallback + "GENERATED FILE — edit `_bodies/`" warning). When applying via Management API, those comments are stripped; when pasted manually they're harmless.
+
+### 21.3 Per-template support-email routing
+Footer line `"Need help? Reply to this email or contact <supportEmail>."` routes per template:
+
+| Email | Support address | SMTP Reply-To |
+|---|---|---|
+| All 4 auth templates | `hello@promo-gifts.co` | n/a (Supabase-sent) |
+| confirm-payment | `orders@promo-gifts.co` | `orders@promo-gifts.co` |
+| send-artwork-received-email | `artwork@promo-gifts.co` | `artwork@promo-gifts.co` |
+
+**Invariant:** the shell's footer text and the SMTP `Reply-To` header MUST agree. If you change one, change the other.
+
+### 21.4 Supabase Auth SMTP (Resend)
+Custom SMTP configured in Supabase Dashboard → Auth → SMTP Settings, sending via Resend. Sender address `hello@promo-gifts.co`. This replaces the default `noreply@mail.app.supabase.io` sender. DNS (SPF/DKIM/DMARC) verified for `promo-gifts.co` under Resend.
+
+**Applied templates via Management API** on 23-Apr-26. Pre-branding snapshot of the Supabase defaults captured in [`supabase/email-templates/auth/_supabase-defaults-backup.json`](../supabase/email-templates/auth/_supabase-defaults-backup.json) — restore via PATCH to `/v1/projects/.../config/auth` with the same field/value pairs.
+
+### 21.5 Supabase URL configuration
+- **SITE_URL:** `https://promo-gifts-co.uk` (bare — www 307's to bare; confirmed canonical 23-Apr)
+- **URI_ALLOW_LIST:** `https://promo-gifts-co.uk/**, https://www.promo-gifts-co.uk/**, http://localhost:**`
+  - Localhost entry is **permanent for dev convenience** — no production security impact since an attacker can't land a victim on their own localhost
+
+### 21.6 Outlook caveat
+PG badge `border-radius` is stripped by Outlook's Word rendering engine → renders as a **red square** on Outlook desktop. Accepted edge case. No VML fallback. Documented in `BRAND_EMAIL_TOKENS.md`; future logo-asset swap closes this too.
+
+### 21.7 Invariants — DO NOT BREAK
+- Never edit `supabase/email-templates/auth/*.html` by hand. Edit `_bodies/*.js` or `_shell.html` + run generator
+- Keep `_shell.html` and `_shared/emailShell.ts` in sync when either is touched
+- Generator assertions must both pass; do not suppress them
+- `renderEmail`'s `supportEmail` parameter is REQUIRED — do not default it. The type system forces each caller to think about which inbox owns that flow
+- The preview-generator script (`preview-edge-emails.mjs`) mirrors the TS shell logic inline; if you change `emailShell.ts`, update the preview script too (it has an explicit "KEEP IN SYNC" banner)
+
+---
+
+## 22. SCROLL MANAGEMENT
+
+Two pieces working together prevent pages loading mid-scrolled:
+
+### 22.1 `ScrollToTop` component
+[`src/components/ScrollToTop.jsx`](../src/components/ScrollToTop.jsx), mounted in App.jsx inside `<Router>` above `<HeaderBar />`. `useEffect` on `pathname` runs `window.scrollTo(0, 0)` on every route change. **Hash-link guard:** `if (window.location.hash) return;` — lets the browser handle anchor scrolling for any future `/page#section` URLs.
+
+### 22.2 `scrollRestoration = 'manual'` — inline in index.html
+```html
+<script>
+  if ('scrollRestoration' in window.history) {
+    window.history.scrollRestoration = 'manual';
+  }
+</script>
+```
+Placed in `<head>` **before** the bundle's `<script>`. Runs before React boots, so hard-refresh wins the race to disable the browser's default scroll-Y restoration — the bug that was making product pages and Designer open with the viewport already scrolled partway down. Duplicated at the top of `ScrollToTop.jsx` as belt-and-braces for HMR remounts.
+
+### 22.3 Why this matters
+Pre-fix symptom: product pages and Designer opened mid-scrolled with the title cut off above the viewport. Both on first navigation and on hard refresh. React Router v6 preserves scroll position by default; browser scroll-restoration restores pre-refresh Y. Combined: jarring load experience.
+
+Post-fix: every route change and every hard refresh lands at top. Back-navigation also lands at top (accepted behavior for catalogue flow; if future work wants to preserve back-nav scroll, change `'manual'` back to `'auto'` with the loss of hard-refresh-reset).
+
+### 22.4 Innocent, do not rip out
+All four `autoFocus` occurrences in the codebase (`AuthModal`, `CustomerDesigns`, `ResetPassword`, Designer save modal) are safe — inside modals (`fixed inset-0` — focus doesn't scroll) or conditionally rendered. Both `scrollIntoView` calls (Checkout form-error, Home tools-section click) are user-triggered, not on-mount. None caused the original symptom.
+
+---
+
+## 23. QUOTE TOTAL PRE-INSERT PATTERN
+
+`createQuoteFromDesign` in [`src/services/quoteService.js`](../src/services/quoteService.js) computes `total_amount = effectiveQty * unitPrice` pre-insert:
+```js
+const initialTotal = +(effectiveQty * unitPrice).toFixed(2);
+```
+and passes it to the `quotes` INSERT. The `20260422_quote_total_sync_trigger` remains in place as a self-healing safety net for future item edits (it recomputes on any `quote_items` INSERT/UPDATE/DELETE).
+
+Previously, `total_amount: 0` was hardcoded at insert, relying entirely on the trigger to fix it once the first `quote_items` row landed. That left a brief-but-real window with a wrong total in the row, and made the flow brittle to any future trigger change.
+
+### 23.1 Verification
+Verified against live DB 23-Apr-26: pre-items `quote.total_amount` reads the computed value (e.g. 302.50); trigger still fires on items INSERT and UPDATE keeping the total in sync.
+
+### 23.2 Invariants — DO NOT BREAK
+- `createQuoteFromDesign` must compute `initialTotal` and pass it at INSERT — do not revert to `0`
+- The trigger (`recompute_quote_total`) must remain in place — it's the safety net for item edits from other future paths
+- Trigger guards `AND status != 'converted'` — never mutates totals on converted quotes (payment is locked). Don't remove that predicate
+
+---
+
+## 24. PRODUCT PAGE LAYOUT (compact — default for all products)
+
+Rolled out 23-Apr-26 after a pilot on `mr-bio` + `gamma-lite`. The former `PILOT_COMPACT_SLUGS` gating has been fully removed; every product uses the compact layout.
+
+### 24.1 What shipped
+- Outer container `py-4` (was `py-8`); grid `lg:gap-5` (was `lg:gap-8`)
+- Hero image capped at `max-h-[520px]`; container padding `p-6 mb-4` (was `p-12 mb-6`)
+- Product info column `space-y-4` (was `space-y-8`)
+- Customize card `p-4`, button `py-2` (was `p-6`, `py-3`)
+- Key Features block in main flow → **removed**; features render as a bulleted list inside the Product Details tab
+- Three full-width info boxes in Details tab (Premium / Eco / Free Delivery) → **collapsed** to a single horizontal icon strip (same three messages, compact)
+- "Need Help?" dark gradient card → **replaced** with a single-line `"Questions? Call 01844 600900"` link at the bottom of the pricing panel
+- Pricing panel header `p-4` (was `p-6`); Request Sample button `py-2 text-sm` (was `py-4`)
+- **Star rating + "(N reviews)"** display → **removed** from product title block. Database columns `catalog_products.rating` and `review_count` retained (still used by Home's Best Sellers carousel and for future reuse); only the visible render is gone
+- **🚚 Free Delivery / ⭐ 5-Star Rated** trust-badges strip inside Configure & Quote card → **removed**. The "Questions?" line at the bottom is preserved.
+
+### 24.2 What was deliberately NOT touched
+- Configure & Quote card's logic (MOQ, tier lookup, quote creation)
+- ProductDetailPage's clothing configurator card (apparel-specific branch, separate logic)
+- Data fetching in `productCatalogService.js`
+- ProductPageTemplate.jsx and legacy category pages (`Bags.jsx`, `HiVis.jsx`, etc.) — they still reference `rating` / `review_count` in their own rendering; out of scope for this rollout
+- The Premium / Eco / Delivery icon strip inside the Product Details tab — deliberately kept as a trust-signal row
+- Specifications tab — untouched
+
+### 24.3 Sticky header opacity — related fix
+As part of the same session, the 10 per-page sticky section headers across ProductDetailPage, ProductPageTemplate, CategoryPage, and 7 legacy category pages were changed from `bg-white/80 backdrop-blur-md border-b border-gray-200/50` to `bg-white shadow-sm border-b` — opaque, so scrolled content no longer ghosts through. See the commit `af3296d` for the full list.
+
+### 24.4 Invariants — DO NOT BREAK
+- Don't re-introduce a per-slug or URL-flag layout gating — rollout is complete
+- Don't re-add the star rating render, the Configure-card trust badges, or the Need Help dark card without re-opening the whole compact-layout decision
+- Don't touch category pages / legacy product pages (`Bags.jsx`, etc.) to "match" — they have their own treatment and are out of scope pending the Laltex-driven rebuild
+
+---
+
+## 25. QUICK REFERENCE — 23 April 2026 session commit chain
+
+For future sessions looking for why things are the way they are:
+
+| Commit | Scope |
+|---|---|
+| `cb6d88b` | Cart pop-out z-index above sticky header |
+| `cb35d82` | Designer Cart button → Buy Now (rewired through quote pipeline) |
+| `9b934ca` | PNG/PDF export gated behind shared AuthModal; intent plumbing |
+| `d2a242b` | Forgot password flow wired end-to-end |
+| `96818aa` / `d32e0de` | Branded transactional email suite + shared shell |
+| `ad6b59b` | Supabase auth template defaults backup |
+| `600e18d` / `3930794` | PGifts favicon set + "Promo Gifts" browser title |
+| `aeaa70d` | Quote `total_amount` computed pre-insert |
+| `a81489b` | Compact product-page pilot (mr-bio, gamma-lite) |
+| `af3296d` | Frosted-glass sticky headers → opaque (stops content ghosting) |
+| `fbd3100` | ScrollToTop + `scrollRestoration='manual'` |
+| `c2e0a00` | Compact layout global rollout + remove star rating + Configure-card trust badges |
+| `9f719b0` | Remove dead feature-bar from HeaderBar (defer to Laltex) |
+| `8b9b27c` / `da7a7a4` | Pre-Laltex investigation doc + Laltex V1.7 API reference |
