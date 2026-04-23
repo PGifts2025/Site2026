@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { renderEmail } from "../_shared/emailShell.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -155,56 +156,54 @@ Deno.serve(async (req: Request) => {
               )
               .join("\n");
 
-            const html = `<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 600px; margin: 0 auto; color: #1a1a1a; padding: 24px;">
-  <h1 style="font-size: 24px; margin: 0 0 16px 0;">Thanks for your order</h1>
-  <p>We've received your payment for order <strong>${orderRow.order_number}</strong>. Here's a quick summary:</p>
+            // Body content only — the shared shell in _shared/emailShell.ts
+            // wraps this with the PG header, CTA button, and footer. Indented
+            // to match the 14-space column inside the shell's content <td>.
+            const bodyHtml = `              <p style="margin:0 0 16px 0; font-size:15px; line-height:1.6; color:#1a1a1a;">We've received your payment for order <strong>${orderRow.order_number}</strong>. Here's a quick summary:</p>
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; border-collapse:collapse; margin:16px 0 20px 0;">
+                <thead>
+                  <tr style="border-bottom:2px solid #e5e5e5;">
+                    <th align="left" style="text-align:left; padding:8px 0; font-size:14px;">Item</th>
+                    <th align="right" style="text-align:right; padding:8px 0; font-size:14px;">Qty</th>
+                    <th align="right" style="text-align:right; padding:8px 0; font-size:14px;">Total</th>
+                  </tr>
+                </thead>
+                <tbody>${itemsHtml}
+                </tbody>
+                <tfoot>
+                  <tr style="font-weight:bold;">
+                    <td colspan="2" style="padding:12px 0 8px 0; font-size:14px;">Total paid</td>
+                    <td align="right" style="text-align:right; padding:12px 0 8px 0; font-size:14px;">£${totalAmount.toFixed(2)}</td>
+                  </tr>
+                </tfoot>
+              </table>
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:20px 0 8px 0;">
+                <tr>
+                  <td style="background:#f5f5f5; border-radius:8px; padding:20px;">
+                    <h2 style="margin:0 0 10px 0; font-size:18px; font-weight:700; color:#1a1a1a;">Next step — upload your artwork</h2>
+                    <p style="margin:0; font-size:14px; line-height:1.6; color:#1a1a1a;">To move your order into production we need your artwork files — logo, design, or any print-ready artwork.</p>
+                  </td>
+                </tr>
+              </table>`;
 
-  <table style="width: 100%; border-collapse: collapse; margin: 24px 0;">
-    <thead>
-      <tr style="border-bottom: 2px solid #e5e5e5;">
-        <th style="text-align: left; padding: 8px 0;">Item</th>
-        <th style="text-align: right; padding: 8px 0;">Qty</th>
-        <th style="text-align: right; padding: 8px 0;">Total</th>
-      </tr>
-    </thead>
-    <tbody>${itemsHtml}
-    </tbody>
-    <tfoot>
-      <tr style="font-weight: bold;">
-        <td colspan="2" style="padding: 12px 0 8px 0;">Total paid</td>
-        <td style="text-align: right; padding: 12px 0 8px 0;">£${totalAmount.toFixed(2)}</td>
-      </tr>
-    </tfoot>
-  </table>
-
-  <div style="background: #f5f5f5; padding: 20px; border-radius: 8px; margin: 24px 0;">
-    <h2 style="font-size: 18px; margin: 0 0 12px 0;">Next step — upload your artwork</h2>
-    <p style="margin: 0 0 16px 0;">To move your order into production we need your artwork files — logo, design, or any print-ready artwork.</p>
-    <p style="margin: 0;">
-      <a href="https://promo-gifts-co.uk/account/orders" style="background: #1a1a1a; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">Upload artwork</a>
-    </p>
-  </div>
-
-  <p style="color: #666; font-size: 14px;">Any questions? Just reply to this email.</p>
-  <p style="color: #999; font-size: 12px; margin-top: 32px;">PGifts · promo-gifts-co.uk</p>
-</div>`;
-
-            const text = `Thanks for your order
-
-We've received your payment for order ${orderRow.order_number}. Here's a quick summary:
+            const bodyText = `We've received your payment for order ${orderRow.order_number}. Here's a quick summary:
 
 ${itemsText}
 
 Total paid: £${totalAmount.toFixed(2)}
 
 Next step — upload your artwork
-To move your order into production we need your artwork files.
-Upload here: https://promo-gifts-co.uk/account/orders
+To move your order into production we need your artwork files — logo, design, or any print-ready artwork.`;
 
-Any questions? Just reply to this email.
-
-— PGifts
-promo-gifts-co.uk`;
+            const { html, text } = renderEmail({
+              preheader: `Order ${orderRow.order_number} confirmed — £${totalAmount.toFixed(2)} paid. Upload your artwork next.`,
+              heading: "Thanks for your order",
+              bodyHtml,
+              bodyText,
+              ctaLabel: "Upload artwork",
+              ctaUrl: "https://promo-gifts-co.uk/account/orders",
+              supportEmail: "orders@promo-gifts.co",
+            });
 
             const resendRes = await fetch("https://api.resend.com/emails", {
               method: "POST",

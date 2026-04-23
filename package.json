@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "stripe-server": "node server/stripe-server.cjs",
     "dev:full": "concurrently \"npm run dev\" \"npm run stripe-server\"",
-    "seed-catalog": "node src/scripts/seedCatalogData.js"
+    "seed-catalog": "node src/scripts/seedCatalogData.js",
+    "build:email-templates": "node supabase/email-templates/build.mjs"
   },
   "dependencies": {
     "@heroicons/react": "^2.2.0",

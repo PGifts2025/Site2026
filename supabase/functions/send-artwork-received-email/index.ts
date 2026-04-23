@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { renderEmail } from "../_shared/emailShell.ts";
 
 // Best-effort email service. Every return is HTTP 200 JSON — never fail
 // the caller. A failed send just leaves artwork_received_email_sent_at
@@ -116,62 +117,53 @@ Deno.serve(async (req: Request) => {
       )
       .join("\n");
 
-    const html = `<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 600px; margin: 0 auto; color: #1a1a1a; padding: 24px;">
-  <h1 style="font-size: 24px; margin: 0 0 16px 0;">Thanks — we've got your artwork</h1>
-  <p>We've received your artwork files for order <strong>${order.order_number}</strong> and they're now with our artwork team.</p>
+    // Body content only — the shared shell in _shared/emailShell.ts wraps this
+    // with the PG header, CTA button, and footer.
+    const bodyHtml = `              <p style="margin:0 0 16px 0; font-size:15px; line-height:1.6; color:#1a1a1a;">We've received your artwork files for order <strong>${order.order_number}</strong> and they're now with our artwork team.</p>
+              <h2 style="margin:24px 0 10px 0; font-size:18px; font-weight:700; color:#1a1a1a;">What happens next</h2>
+              <p style="margin:0 0 12px 0; font-size:15px; line-height:1.6; color:#1a1a1a;">Our team will prepare a pre-production proof and send it directly to you from <strong>artwork@promo-gifts.co</strong>. Proofs sent within the next couple of hours, though timing depends on when your order comes in and our current workload.</p>
+              <p style="margin:0 0 16px 0; font-size:15px; line-height:1.6; color:#1a1a1a;">Please review the proof carefully when it arrives — this is your chance to request any changes before we go to print. Simply reply to the proof email with your approval or any amendments.</p>
+              <h2 style="margin:24px 0 10px 0; font-size:18px; font-weight:700; color:#1a1a1a;">Your order</h2>
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; border-collapse:collapse; margin:0 0 16px 0;">
+                <thead>
+                  <tr style="border-bottom:2px solid #e5e5e5;">
+                    <th align="left" style="text-align:left; padding:8px 0; font-size:14px;">Item</th>
+                    <th align="right" style="text-align:right; padding:8px 0; font-size:14px;">Qty</th>
+                    <th align="right" style="text-align:right; padding:8px 0; font-size:14px;">Total</th>
+                  </tr>
+                </thead>
+                <tbody>${itemsHtml}
+                </tbody>
+                <tfoot>
+                  <tr style="font-weight:bold;">
+                    <td colspan="2" style="padding:12px 0 8px 0; font-size:14px;">Total paid</td>
+                    <td align="right" style="text-align:right; padding:12px 0 8px 0; font-size:14px;">£${totalAmount.toFixed(2)}</td>
+                  </tr>
+                </tfoot>
+              </table>`;
 
-  <h2 style="font-size: 18px; margin: 28px 0 12px 0;">What happens next</h2>
-  <p>Our team will prepare a pre-production proof and send it directly to you from <strong>artwork@promo-gifts.co</strong>. Most proofs go out the same working day, though timing depends on when your order comes in and our current workload.</p>
-  <p>Please review the proof carefully when it arrives — this is your chance to request any changes before we go to print. Simply reply to the proof email with your approval or any amendments.</p>
-
-  <h2 style="font-size: 18px; margin: 28px 0 12px 0;">Your order</h2>
-  <table style="width: 100%; border-collapse: collapse; margin: 0 0 24px 0;">
-    <thead>
-      <tr style="border-bottom: 2px solid #e5e5e5;">
-        <th style="text-align: left; padding: 8px 0;">Item</th>
-        <th style="text-align: right; padding: 8px 0;">Qty</th>
-        <th style="text-align: right; padding: 8px 0;">Total</th>
-      </tr>
-    </thead>
-    <tbody>${itemsHtml}
-    </tbody>
-    <tfoot>
-      <tr style="font-weight: bold;">
-        <td colspan="2" style="padding: 12px 0 8px 0;">Total paid</td>
-        <td style="text-align: right; padding: 12px 0 8px 0;">£${totalAmount.toFixed(2)}</td>
-      </tr>
-    </tfoot>
-  </table>
-
-  <p style="margin: 24px 0;">
-    <a href="https://promo-gifts-co.uk/account/orders" style="background: #1a1a1a; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">View order</a>
-  </p>
-
-  <p style="color: #666; font-size: 14px;">Any questions in the meantime? Just reply to this email.</p>
-  <p style="color: #999; font-size: 12px; margin-top: 32px;">PGifts · promo-gifts-co.uk</p>
-</div>`;
-
-    const text = `Thanks — we've got your artwork
-
-We've received your artwork files for order ${order.order_number} and they're now with our artwork team.
+    const bodyText = `We've received your artwork files for order ${order.order_number} and they're now with our artwork team.
 
 What happens next
 
-Our team will prepare a pre-production proof and send it directly to you from artwork@promo-gifts.co. Most proofs go out the same working day, though timing depends on when your order comes in and our current workload.
+Our team will prepare a pre-production proof and send it directly to you from artwork@promo-gifts.co. Proofs sent within the next couple of hours, though timing depends on when your order comes in and our current workload.
 
 Please review the proof carefully when it arrives — this is your chance to request any changes before we go to print. Simply reply to the proof email with your approval or any amendments.
 
 Your order
 ${itemsText}
 
-Total paid: £${totalAmount.toFixed(2)}
+Total paid: £${totalAmount.toFixed(2)}`;
 
-View order: https://promo-gifts-co.uk/account/orders
-
-Any questions in the meantime? Just reply to this email.
-
-— PGifts
-promo-gifts-co.uk`;
+    const { html, text } = renderEmail({
+      preheader: `Artwork received for order ${order.order_number} — proof coming soon.`,
+      heading: "Thanks — we've got your artwork",
+      bodyHtml,
+      bodyText,
+      ctaLabel: "View order",
+      ctaUrl: "https://promo-gifts-co.uk/account/orders",
+      supportEmail: "artwork@promo-gifts.co",
+    });
 
     // 7. Send via Resend. Any failure → don't stamp; return sent:false so a
     // future retry path can try again.
@@ -185,7 +177,7 @@ promo-gifts-co.uk`;
         body: JSON.stringify({
           from: "PGifts <orders@promo-gifts.co>",
           to: [customerEmail],
-          reply_to: "orders@promo-gifts.co",
+          reply_to: "artwork@promo-gifts.co",
           subject: `Artwork received — ${order.order_number}`,
           html,
           text,
