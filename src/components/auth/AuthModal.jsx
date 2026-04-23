@@ -2,7 +2,10 @@ import React, { useState } from 'react';
 import { X, Mail, Lock, User, Building2, Phone, Loader, AlertCircle, CheckCircle } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
-const AuthModal = ({ isOpen, onClose }) => {
+// `onSuccess` is invoked with the signed-in user object on a successful sign-in
+// (not sign-up — Supabase email confirmation takes the user out of the app). Used
+// by flows that must auto-continue after auth, e.g. Designer's Buy Now.
+const AuthModal = ({ isOpen, onClose, onSuccess }) => {
   const { signIn, signUp } = useAuth();
 
   const [mode, setMode] = useState('signin'); // 'signin' or 'signup'
@@ -50,6 +53,7 @@ const AuthModal = ({ isOpen, onClose }) => {
 
       // Success - modal will close automatically via auth state change
       resetForm();
+      if (onSuccess) onSuccess(data?.user);
       setTimeout(() => onClose(), 500);
     } catch (err) {
       setError('An unexpected error occurred. Please try again.');

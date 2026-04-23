@@ -7,7 +7,8 @@ import { createMockSupabase } from '../utils/mockAuth';
 import productsConfig from '../config/products.json';
 import { applyColorOverlay, needsColorOverlay, getOptimalIntensity } from '../utils/colorOverlay';
 import { cacheColoredImage, getCachedImage } from '../utils/imageCache';
-import { useCart } from '../context/CartContext';
+import AuthModal from '../components/auth/AuthModal';
+import { createQuoteFromDesign } from '../services/quoteService';
 import WaterBottle3DPreview from '../components/WaterBottle3DPreview';
 import ChiCup3DPreview from '../components/ChiCup3DPreview';
 import {
@@ -100,8 +101,11 @@ const Designer = () => {
   // Product Colors from Database
   const [productColors, setProductColors] = useState([]);
 
-  // Cart functionality
-  const { addToCart, openCart } = useCart();
+  // Buy Now flow state — AuthModal for guests, MOQ modal for signed-in users.
+  // These two modals are mutually exclusive (sequential states in the flow, never concurrent).
+  const [buyNowAuthOpen, setBuyNowAuthOpen] = useState(false);
+  const [moqModalData, setMoqModalData] = useState(null); // { product, minQty, qty, design }
+  const [buyNowBusy, setBuyNowBusy] = useState(false);
   const [loadingColors, setLoadingColors] = useState(false);
   const [changingColor, setChangingColor] = useState(false); // Loading state for color changes
   const [selectedColorId, setSelectedColorId] = useState(null);
@@ -3534,68 +3538,134 @@ const Designer = () => {
   };
 
 
-  /**
-   * Add current design to shopping cart
-   */
-  const handleAddToCart = () => {
-    console.log('[handleAddToCart] Adding design to cart');
+  // Buy Now — route the current design through the quote pipeline.
+  // Replaces the legacy Cart push; this flow enforces auth and MOQ before any
+  // quote is created.
+  const CLOTHING_PRODUCT_KEYS_DESIGNER = ['t-shirts', 'hoodie', 'sweatshirts', 'polo', 'hi-vis-vest'];
+  const BUY_NOW_INTENT_KEY = 'pendingBuyNowIntent';
+  const BUY_NOW_INTENT_TTL_MS = 60 * 60 * 1000;
 
-    if (!canvas || !currentProduct) {
-      setSaveStatus({
-        type: 'error',
-        message: '[WARN]  No design to add'
-      });
+  const persistBuyNowIntent = (designId) => {
+    try {
+      localStorage.setItem(
+        BUY_NOW_INTENT_KEY,
+        JSON.stringify({ designId: designId || null, ts: Date.now() })
+      );
+    } catch (e) { /* localStorage unavailable — same-session onSuccess still works */ }
+  };
+
+  const consumeBuyNowIntent = () => {
+    try {
+      const raw = localStorage.getItem(BUY_NOW_INTENT_KEY);
+      if (!raw) return null;
+      localStorage.removeItem(BUY_NOW_INTENT_KEY);
+      const intent = JSON.parse(raw);
+      if (!intent || Date.now() - intent.ts > BUY_NOW_INTENT_TTL_MS) return null;
+      return intent;
+    } catch (e) {
+      return null;
+    }
+  };
+
+  // Runs Buy Now for a known signed-in user. `signedInUser` lets AuthModal.onSuccess
+  // skip the onAuthStateChange → setUser hop. Guard: MoqModal and AuthModal are
+  // sequential states (runBuyNow closes AuthModal before opening MoqModal); they are
+  // never visible simultaneously.
+  const runBuyNow = async (signedInUser = null, designIdOverride = null) => {
+    const activeUser = signedInUser || user;
+    if (!activeUser) {
+      persistBuyNowIntent(currentDesignId);
+      setBuyNowAuthOpen(true);
+      return;
+    }
+
+    if (!currentProduct) {
+      setSaveStatus({ type: 'error', message: 'Product not ready - please try again' });
       setTimeout(() => setSaveStatus(null), 3000);
       return;
     }
 
+    const designId = designIdOverride || currentDesignId;
+    if (!designId) {
+      setSaveStatus({ type: 'error', message: 'Please save your design first' });
+      setTimeout(() => setSaveStatus(null), 3000);
+      return;
+    }
+
+    setBuyNowBusy(true);
     try {
-      // Capture current design as Fabric.js JSON
-      const designData = canvas.toJSON(['id', 'name', 'selectable', 'evented']);
+      const design = await getUserDesign(designId);
+      if (!design) {
+        setSaveStatus({ type: 'error', message: 'Could not load saved design' });
+        setTimeout(() => setSaveStatus(null), 3000);
+        return;
+      }
 
-      // Generate preview thumbnail (smaller for cart)
-      const previewImage = canvas.toDataURL({
-        format: 'png',
-        quality: 0.8,
-        multiplier: 0.3 // Smaller thumbnail
-      });
+      if (CLOTHING_PRODUCT_KEYS_DESIGNER.includes(design.product_key)) {
+        const result = await createQuoteFromDesign({ design, user: activeUser });
+        if (result.error) {
+          setSaveStatus({ type: 'error', message: result.error });
+          setTimeout(() => setSaveStatus(null), 3000);
+          return;
+        }
+        navigate(result.redirect);
+        return;
+      }
 
-      // Create cart item
-      const cartItem = {
-        product_template_id: currentProduct.id,
-        product_name: currentProduct.name,
-        product_key: selectedProduct,
-        color: selectedColor,
-        color_name: currentColorData?.color_name || 'Unknown',
-        view: selectedView,
-        print_area: activePrintArea,
-        design_data: designData,
-        preview_image: previewImage,
-        quantity: 1,
-        price: currentProduct.base_price || 19.99
-      };
+      const { data: product, error: productError } = await supabase
+        .from('catalog_products')
+        .select('id, name, slug, min_order_quantity')
+        .eq('slug', design.product_key)
+        .single();
 
-      // Add to cart
-      addToCart(cartItem);
+      if (productError || !product) {
+        console.error('[runBuyNow] catalog_products lookup failed:', productError);
+        setSaveStatus({ type: 'error', message: 'Could not find product. Please try again.' });
+        setTimeout(() => setSaveStatus(null), 3000);
+        return;
+      }
 
-      // Show success message
-      setSaveStatus({
-        type: 'success',
-        message: 'Å“[OK] Added to cart!'
-      });
+      const minQty = product.min_order_quantity || 25;
+      setBuyNowAuthOpen(false); // mutual-exclusion guard: close auth before opening MOQ
+      setMoqModalData({ product, minQty, qty: minQty, design });
+    } catch (err) {
+      console.error('[runBuyNow] Error:', err);
+      setSaveStatus({ type: 'error', message: 'Failed to start Buy Now flow' });
       setTimeout(() => setSaveStatus(null), 3000);
+    } finally {
+      setBuyNowBusy(false);
+    }
+  };
 
-      // Open cart panel
-      setTimeout(() => openCart(), 500);
+  const handleBuyNow = () => {
+    if (!user) {
+      persistBuyNowIntent(currentDesignId);
+      setBuyNowAuthOpen(true);
+      return;
+    }
+    runBuyNow();
+  };
 
-      console.log('[handleAddToCart] Successfully added to cart');
-    } catch (error) {
-      console.error('[handleAddToCart] Error:', error);
-      setSaveStatus({
-        type: 'error',
-        message: '[WARN]  Failed to add to cart'
+  const handleMoqContinue = async () => {
+    if (!moqModalData) return;
+    const { design, qty, minQty } = moqModalData;
+    const effectiveQty = Math.max(Number(qty) || minQty, minQty);
+    setBuyNowBusy(true);
+    try {
+      const result = await createQuoteFromDesign({
+        design,
+        user,
+        quantityOverride: effectiveQty,
       });
-      setTimeout(() => setSaveStatus(null), 3000);
+      if (result.error) {
+        setSaveStatus({ type: 'error', message: result.error });
+        setTimeout(() => setSaveStatus(null), 3000);
+        return;
+      }
+      setMoqModalData(null);
+      navigate(result.redirect, { state: { flash: 'Quote created - ready to pay' } });
+    } finally {
+      setBuyNowBusy(false);
     }
   };
 
@@ -3871,6 +3941,39 @@ const Designer = () => {
       }
     };
   }, []);
+
+  // Consume a pending Buy Now intent (set by a guest click on Buy Now, then
+  // carried through a sign-up email round-trip). Fires when the user is known
+  // and products have loaded. If the intent has no designId, try to resurrect
+  // the most recent saved/migrated design for this session+user.
+  useEffect(() => {
+    const resumeBuyNowIfPending = async () => {
+      if (!user || loadingProducts) return;
+      const intent = consumeBuyNowIntent();
+      if (!intent) return;
+
+      if (intent.designId) {
+        runBuyNow(user, intent.designId);
+        return;
+      }
+
+      try {
+        const sessionId = getSessionId();
+        const recent = await getUserDesigns(user.id, sessionId);
+        if (recent && recent.length > 0) {
+          navigate(`/designer?design=${recent[0].id}`, { replace: true });
+          setSaveStatus({ type: 'success', message: 'Design restored - click Buy Now to continue' });
+          setTimeout(() => setSaveStatus(null), 5000);
+          return;
+        }
+      } catch (e) { /* swallow and fall through to the save-first toast */ }
+
+      setSaveStatus({ type: 'error', message: 'Please save your design first' });
+      setTimeout(() => setSaveStatus(null), 4000);
+    };
+    resumeBuyNowIfPending();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, loadingProducts]);
 
   // Load design from URL parameter
   // Wait for canvas AND products to be loaded so currentProduct has a real DB id
@@ -5490,12 +5593,13 @@ const Designer = () => {
                     </button>
 
                     <button
-                      onClick={handleAddToCart}
-                      className="px-2 py-1.5 sm:px-3 sm:py-2 bg-gray-700 text-white font-semibold text-xs rounded-md shadow hover:bg-gray-800 transition-all flex items-center gap-1.5"
-                      title="Add design to shopping cart"
+                      onClick={handleBuyNow}
+                      disabled={buyNowBusy || (user && !currentDesignId)}
+                      className="px-2 py-1.5 sm:px-3 sm:py-2 bg-gray-700 text-white font-semibold text-xs rounded-md shadow hover:bg-gray-800 transition-all flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                      title={user && !currentDesignId ? 'Save your design first before Buy Now' : 'Create a quote for this design'}
                     >
                       <ShoppingCart className="w-3 h-3" />
-                      <span>Cart</span>
+                      <span>{buyNowBusy ? 'Working...' : 'Buy Now'}</span>
                     </button>
 
                     {/* Save feedback indicator */}
@@ -6028,6 +6132,76 @@ const Designer = () => {
           cupColor={cupBackgroundColor}
           onClose={() => setShow3DPreview(false)}
         />
+      )}
+
+      {/* Buy Now: guest auth gate. Mutually exclusive with MOQ modal below. */}
+      {buyNowAuthOpen && !moqModalData && (
+        <AuthModal
+          isOpen={buyNowAuthOpen}
+          onClose={() => setBuyNowAuthOpen(false)}
+          onSuccess={(signedInUser) => {
+            setBuyNowAuthOpen(false);
+            runBuyNow(signedInUser);
+          }}
+        />
+      )}
+
+      {/* Buy Now: MOQ confirmation for non-clothing products. */}
+      {moqModalData && !buyNowAuthOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-bold text-gray-900">Minimum Order Quantity</h2>
+              <button
+                onClick={() => setMoqModalData(null)}
+                className="text-gray-400 hover:text-gray-600"
+                aria-label="Close"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <p className="text-sm text-gray-700 mb-4">
+              The minimum order for <span className="font-semibold">{moqModalData.product.name}</span> is{' '}
+              <span className="font-semibold">{moqModalData.minQty}</span> units. Please confirm or
+              increase the quantity to continue.
+            </p>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Quantity</label>
+            <input
+              type="number"
+              min={moqModalData.minQty}
+              value={moqModalData.qty}
+              onChange={(e) => {
+                const next = parseInt(e.target.value, 10);
+                setMoqModalData({
+                  ...moqModalData,
+                  qty: Number.isFinite(next) ? next : moqModalData.minQty,
+                });
+              }}
+              onBlur={() => {
+                if ((moqModalData.qty || 0) < moqModalData.minQty) {
+                  setMoqModalData({ ...moqModalData, qty: moqModalData.minQty });
+                }
+              }}
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent mb-4"
+            />
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setMoqModalData(null)}
+                disabled={buyNowBusy}
+                className="px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleMoqContinue}
+                disabled={buyNowBusy || (moqModalData.qty || 0) < moqModalData.minQty}
+                className="px-4 py-2 text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50"
+              >
+                {buyNowBusy ? 'Creating quote...' : 'Continue'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

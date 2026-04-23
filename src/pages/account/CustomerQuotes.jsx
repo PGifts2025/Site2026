@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { FileText, Trash2, ShoppingCart, Loader, AlertCircle, Check, X, CreditCard } from 'lucide-react';
 import CustomerLayout from '../../components/customer/CustomerLayout';
 import { supabase } from '../../services/supabaseService';
@@ -7,6 +7,8 @@ import { supabaseConfig } from '../../config/supabase';
 
 const CustomerQuotes = ({ user }) => {
   const navigate = useNavigate();
+  const location = useLocation();
+  const [flash, setFlash] = useState(location.state?.flash || null);
   const [loading, setLoading] = useState(true);
   const [quotes, setQuotes] = useState([]);
   const [deletingId, setDeletingId] = useState(null);
@@ -23,6 +25,13 @@ const CustomerQuotes = ({ user }) => {
   const [combineConfirmOpen, setCombineConfirmOpen] = useState(false);
   const [combining, setCombining] = useState(false);
   const [combineError, setCombineError] = useState(null);
+
+  useEffect(() => {
+    if (!flash) return;
+    window.history.replaceState({}, '');
+    const timer = setTimeout(() => setFlash(null), 4000);
+    return () => clearTimeout(timer);
+  }, [flash]);
 
   useEffect(() => {
     if (user) {
@@ -426,6 +435,13 @@ const CustomerQuotes = ({ user }) => {
         <h1 className="text-2xl font-bold text-gray-900">My Quotes</h1>
         <p className="text-gray-600 mt-1">{quotes.length} quote{quotes.length !== 1 ? 's' : ''}</p>
       </div>
+
+      {flash && (
+        <div className="mb-4 flex items-center gap-2 p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-800">
+          <Check className="h-4 w-4 flex-shrink-0" />
+          <span>{flash}</span>
+        </div>
+      )}
 
       {selectedQuoteIds.size >= 2 && (
         <div className="mb-4 flex items-center justify-between p-4 bg-blue-50 border border-blue-200 rounded-xl">
