@@ -23,12 +23,12 @@ const Cart = () => {
     <>
       {/* Backdrop */}
       <div
-        className="fixed inset-0 bg-black bg-opacity-50 z-40 transition-opacity"
+        className="fixed inset-0 bg-black bg-opacity-50 z-[110] transition-opacity"
         onClick={closeCart}
       />
 
       {/* Cart Panel */}
-      <div className="fixed right-0 top-0 h-full w-full max-w-md bg-white shadow-2xl z-50 flex flex-col animate-slide-in">
+      <div className="fixed right-0 top-0 h-full w-full max-w-md bg-white shadow-2xl z-[120] flex flex-col animate-slide-in">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-gray-50">
           <div className="flex items-center space-x-2">
