@@ -616,3 +616,20 @@ Rules for anyone touching this path:
    via a replacement migration. Don't try to work around this by doing
    an `UPDATE orders_items` in the Edge Function after the RPC returns —
    that re-splits the transaction and is exactly what the RPC prevents.
+
+---
+
+## 18. Future work
+
+### Category filter icons
+The feature strip (Best Sellers / Express Delivery / Made in UK / Eco /
+Real-Time Proof / New Products) was removed from `HeaderBar.jsx` on
+**2026-04-23**. Rebuild as part of the Laltex API integration — the
+Laltex feed will provide the authoritative product taxonomy (lead times,
+origin, eco flags, materials) which should drive any future filter UI.
+Avoid inventing a local tagging schema on `catalog_products` that will
+need refactoring once the Laltex feed lands.
+
+Note: `catalog_products.is_featured` column stays in use for the
+homepage Best Sellers carousel (see `Home.jsx` and `productCatalogService`)
+— that's independent and not affected by the strip removal.

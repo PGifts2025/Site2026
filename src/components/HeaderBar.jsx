@@ -338,52 +338,6 @@ function HeaderBar() {
         </nav>
       )}
 
-      {/* Feature Bar - Hidden on mobile, scrollable on tablet */}
-      <div className="bg-gray-100 py-3 hidden md:block">
-        <div className="max-w-7xl mx-auto px-4">
-          <div className="overflow-x-auto">
-            <div className="flex items-center space-x-4 lg:space-x-8 text-sm text-gray-600 min-w-max">
-              <span className="flex items-center space-x-2 whitespace-nowrap">
-                <div className="w-6 h-6 bg-yellow-500 rounded-full flex items-center justify-center flex-shrink-0">
-                  <span className="text-white text-sm">⭐</span>
-                </div>
-                <span>Best Sellers</span>
-              </span>
-              <span className="flex items-center space-x-2 whitespace-nowrap">
-                <div className="w-6 h-6 bg-red-500 rounded-full flex items-center justify-center flex-shrink-0">
-                  <span className="text-white text-xs font-bold">24</span>
-                </div>
-                <span>Express Delivery</span>
-              </span>
-              <span className="flex items-center space-x-2 whitespace-nowrap">
-                <div className="w-6 h-6 bg-blue-600 rounded-sm flex items-center justify-center flex-shrink-0">
-                  <span className="text-white text-xs font-bold">UK</span>
-                </div>
-                <span>Made in the UK</span>
-              </span>
-              <span className="flex items-center space-x-2 whitespace-nowrap">
-                <div className="w-6 h-6 bg-green-500 rounded-full flex items-center justify-center flex-shrink-0">
-                  <span className="text-white text-sm">♻️</span>
-                </div>
-                <span>Eco-Friendly</span>
-              </span>
-              <span className="flex items-center space-x-2 whitespace-nowrap">
-                <div className="w-6 h-6 bg-blue-500 rounded-sm flex items-center justify-center flex-shrink-0">
-                  <span className="text-white text-xs">⚙️</span>
-                </div>
-                <span>Real-Time Proof</span>
-              </span>
-              <span className="text-orange-500 font-medium flex items-center space-x-1 whitespace-nowrap">
-                <div className="w-6 h-6 bg-orange-500 rounded-full flex items-center justify-center flex-shrink-0">
-                  <span className="text-white text-sm font-bold">🆕</span>
-                </div>
-                <span>New Products</span>
-              </span>
-            </div>
-          </div>
-        </div>
-      </div>
-
       {/* Auth Modal */}
       <AuthModal isOpen={showAuthModal} onClose={() => setShowAuthModal(false)} />
     </header>
