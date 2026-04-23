@@ -13,7 +13,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
-  Star,
   Heart,
   Share2,
   ShoppingCart,
@@ -54,17 +53,10 @@ const isApparelProduct = (product) => {
   return apparelSlugs.includes(product.slug);
 };
 
-// ─── PILOT: Compact product-page layout ──────────────────────────────────
-// Enabled only for the two SKUs below. To remove after rollout, delete this
-// constant and all `compactLayout ? ... : ...` conditionals. No other files
-// depend on this pilot. See §4.1 task spec.
-const PILOT_COMPACT_SLUGS = ['mr-bio', 'gamma-lite'];
-
 const ProductDetailPage = ({ productSlug }) => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { user } = useAuth();
-  const compactLayout = PILOT_COMPACT_SLUGS.includes(productSlug);
   const [addingToQuote, setAddingToQuote] = useState(false);
   const [quoteSuccess, setQuoteSuccess] = useState(null); // {quoteNumber, productName, unitPrice}
   // Saved design pre-loaded via ?design=<id> (from My Designs → Add to Quote).
@@ -1199,8 +1191,8 @@ const ProductDetailPage = ({ productSlug }) => {
         </div>
       </header>
 
-      <div className={`max-w-7xl mx-auto px-4 lg:px-8 ${compactLayout ? 'py-4' : 'py-8'}`}>
-        <div className={`flex flex-col lg:grid lg:grid-cols-12 gap-4 ${compactLayout ? 'lg:gap-5' : 'lg:gap-8'}`}>
+      <div className="max-w-7xl mx-auto px-4 lg:px-8 py-4">
+        <div className="flex flex-col lg:grid lg:grid-cols-12 gap-4 lg:gap-5">
 
           {/* Product Images */}
           <div className="lg:col-span-5 w-full">
@@ -1215,7 +1207,7 @@ const ProductDetailPage = ({ productSlug }) => {
               )}
 
               {/* Main Image */}
-              <div className={`bg-gradient-to-br from-gray-100 to-gray-200 rounded-3xl ${compactLayout ? 'p-6 mb-4 max-h-[520px]' : 'p-12 mb-6 max-h-[50vh] lg:max-h-none'} aspect-square flex items-center justify-center relative overflow-hidden group`}>
+              <div className="bg-gradient-to-br from-gray-100 to-gray-200 rounded-3xl p-6 mb-4 max-h-[520px] aspect-square flex items-center justify-center relative overflow-hidden group">
                 <div className="absolute inset-0 bg-gradient-to-br from-blue-500/10 via-purple-500/10 to-pink-500/10 opacity-0 group-hover:opacity-100 transition-opacity duration-700"></div>
 
                 {/* Priority: Gallery image > Color overlay > Filtered product images > Placeholder */}
@@ -1301,8 +1293,8 @@ const ProductDetailPage = ({ productSlug }) => {
 
               {/* Customize Button (if customizable) */}
               {isCustomizable && (
-                <div className={`${compactLayout ? 'mt-3 p-4' : 'mt-6 p-6'} bg-gradient-to-br from-blue-50 to-indigo-50 rounded-2xl border border-blue-200/50 shadow-lg`}>
-                  <div className={`flex items-center space-x-3 ${compactLayout ? 'mb-3' : 'mb-4'}`}>
+                <div className="mt-3 p-4 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-2xl border border-blue-200/50 shadow-lg">
+                  <div className="flex items-center space-x-3 mb-3">
                     <div className="bg-gradient-to-br from-blue-500 to-indigo-600 w-10 h-10 rounded-lg flex items-center justify-center shadow-md">
                       <Palette className="h-5 w-5 text-white" />
                     </div>
@@ -1314,7 +1306,7 @@ const ProductDetailPage = ({ productSlug }) => {
 
                   <button
                     onClick={handleCustomize}
-                    className={`w-full bg-gradient-to-r from-blue-500 to-indigo-600 text-white ${compactLayout ? 'py-2' : 'py-3'} px-4 rounded-lg font-semibold hover:from-blue-600 hover:to-indigo-700 transition-all duration-300 shadow-md hover:shadow-lg transform hover:scale-105`}
+                    className="w-full bg-gradient-to-r from-blue-500 to-indigo-600 text-white py-2 px-4 rounded-lg font-semibold hover:from-blue-600 hover:to-indigo-700 transition-all duration-300 shadow-md hover:shadow-lg transform hover:scale-105"
                   >
                     {loadedDesign ? 'Edit Design' : 'Open Designer'}
                   </button>
@@ -1324,27 +1316,12 @@ const ProductDetailPage = ({ productSlug }) => {
           </div>
 
           {/* Product Info */}
-          <div className={`lg:col-span-4 w-full ${compactLayout ? 'space-y-4' : 'space-y-8'}`}>
+          <div className="lg:col-span-4 w-full space-y-4">
 
             {/* Basic Info */}
             <div>
               <h1 className="text-2xl lg:text-4xl font-bold text-gray-900 mb-2">{product.name}</h1>
               {product.subtitle && <p className="text-xl text-gray-600 mb-4">{product.subtitle}</p>}
-
-              {/* Rating */}
-              {product.rating > 0 && (
-                <div className="flex items-center space-x-4 mb-6">
-                  <div className="flex items-center space-x-1">
-                    {[...Array(5)].map((_, i) => (
-                      <Star key={i} className={`h-5 w-5 ${i < Math.floor(product.rating) ? 'text-yellow-400 fill-current' : 'text-gray-300'}`} />
-                    ))}
-                    <span className="ml-2 text-lg font-semibold text-gray-900">{product.rating}</span>
-                  </div>
-                  {product.review_count > 0 && (
-                    <span className="text-gray-500">({product.review_count.toLocaleString()} reviews)</span>
-                  )}
-                </div>
-              )}
 
               {product.description && <p className="text-gray-700 leading-relaxed">{product.description}</p>}
             </div>
@@ -1481,22 +1458,7 @@ const ProductDetailPage = ({ productSlug }) => {
               </div>
             )}
 
-            {/* Features — hidden in compact layout; rendered inside Product Details tab instead */}
-            {features.length > 0 && !compactLayout && (
-              <div>
-                <h3 className="text-lg font-semibold text-gray-900 mb-4">Key Features</h3>
-                <div className="grid grid-cols-2 gap-3">
-                  {features.map((feature, index) => (
-                    <div key={index} className="flex items-center space-x-3 p-3 bg-gray-50 rounded-lg">
-                      <Check className="h-5 w-5 text-green-500 flex-shrink-0" />
-                      <span className="text-sm text-gray-700">{feature}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Tabs */}
+            {/* Tabs — Key Features moved into the Details tab as a bulleted list */}
             <div>
               <div className="flex space-x-1 mb-6 bg-gray-100 p-1 rounded-lg">
                 {['details', 'specs'].map((tab) => (
@@ -1515,58 +1477,32 @@ const ProductDetailPage = ({ productSlug }) => {
               </div>
 
               {activeTab === 'details' && (
-                compactLayout ? (
-                  <div className="space-y-3">
-                    {features.length > 0 && (
-                      <ul className="space-y-1.5">
-                        {features.map((feature, index) => (
-                          <li key={index} className="flex items-start gap-2 text-sm text-gray-700">
-                            <Check className="h-4 w-4 text-green-500 flex-shrink-0 mt-0.5" />
-                            <span>{feature}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                    <div className="flex items-center justify-around gap-2 pt-2 border-t border-gray-100">
-                      <div className="flex items-center gap-1.5 text-xs text-gray-600">
-                        <Zap className="h-4 w-4 text-blue-500 flex-shrink-0" />
-                        <span className="font-medium">Premium Quality</span>
-                      </div>
-                      <div className="flex items-center gap-1.5 text-xs text-gray-600">
-                        <Shield className="h-4 w-4 text-green-500 flex-shrink-0" />
-                        <span className="font-medium">Eco-Friendly</span>
-                      </div>
-                      <div className="flex items-center gap-1.5 text-xs text-gray-600">
-                        <Truck className="h-4 w-4 text-purple-500 flex-shrink-0" />
-                        <span className="font-medium">Free Delivery</span>
-                      </div>
+                <div className="space-y-3">
+                  {features.length > 0 && (
+                    <ul className="space-y-1.5">
+                      {features.map((feature, index) => (
+                        <li key={index} className="flex items-start gap-2 text-sm text-gray-700">
+                          <Check className="h-4 w-4 text-green-500 flex-shrink-0 mt-0.5" />
+                          <span>{feature}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <div className="flex items-center justify-around gap-2 pt-2 border-t border-gray-100">
+                    <div className="flex items-center gap-1.5 text-xs text-gray-600">
+                      <Zap className="h-4 w-4 text-blue-500 flex-shrink-0" />
+                      <span className="font-medium">Premium Quality</span>
+                    </div>
+                    <div className="flex items-center gap-1.5 text-xs text-gray-600">
+                      <Shield className="h-4 w-4 text-green-500 flex-shrink-0" />
+                      <span className="font-medium">Eco-Friendly</span>
+                    </div>
+                    <div className="flex items-center gap-1.5 text-xs text-gray-600">
+                      <Truck className="h-4 w-4 text-purple-500 flex-shrink-0" />
+                      <span className="font-medium">Free Delivery</span>
                     </div>
                   </div>
-                ) : (
-                  <div className="space-y-4">
-                    <div className="flex items-center space-x-3 p-4 bg-blue-50 rounded-lg">
-                      <Zap className="h-6 w-6 text-blue-500" />
-                      <div>
-                        <h4 className="font-semibold text-gray-900">Premium Quality</h4>
-                        <p className="text-sm text-gray-600">Durable construction with excellent craftsmanship</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center space-x-3 p-4 bg-green-50 rounded-lg">
-                      <Shield className="h-6 w-6 text-green-500" />
-                      <div>
-                        <h4 className="font-semibold text-gray-900">Eco-Friendly</h4>
-                        <p className="text-sm text-gray-600">Made from sustainable materials</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center space-x-3 p-4 bg-purple-50 rounded-lg">
-                      <Truck className="h-6 w-6 text-purple-500" />
-                      <div>
-                        <h4 className="font-semibold text-gray-900">Free Delivery</h4>
-                        <p className="text-sm text-gray-600">Express delivery on orders over £250</p>
-                      </div>
-                    </div>
-                  </div>
-                )
+                </div>
               )}
 
               {activeTab === 'specs' && (
@@ -1592,12 +1528,12 @@ const ProductDetailPage = ({ productSlug }) => {
               <div className="bg-white rounded-3xl shadow-xl border border-gray-200/50 overflow-hidden">
 
                 {/* Header */}
-                <div className={`bg-gradient-to-r from-blue-600 via-purple-600 to-blue-700 text-white ${compactLayout ? 'p-4' : 'p-6'}`}>
-                  <h3 className={`font-bold ${compactLayout ? 'text-lg mb-0.5' : 'text-xl mb-2'}`}>Configure & Quote</h3>
+                <div className="bg-gradient-to-r from-blue-600 via-purple-600 to-blue-700 text-white p-4">
+                  <h3 className="font-bold text-lg mb-0.5">Configure & Quote</h3>
                   <p className="text-blue-100 text-xs">Bulk pricing available</p>
                 </div>
 
-                <div className={`${compactLayout ? 'p-4 space-y-4' : 'p-4 lg:p-6 space-y-6'}`}>
+                <div className="p-4 space-y-4">
 
                   {/* Quantity / Colour Order Selector */}
                   {product.pricing_model === 'clothing' ? (
@@ -1839,44 +1775,21 @@ const ProductDetailPage = ({ productSlug }) => {
                       )}
                     </button>
 
-                    <button className={`w-full border-2 border-gray-300 text-gray-700 ${compactLayout ? 'py-2 text-sm' : 'py-4'} rounded-xl font-semibold hover:border-gray-400 hover:bg-gray-50 transition-all duration-300`}>
+                    <button className="w-full border-2 border-gray-300 text-gray-700 py-2 text-sm rounded-xl font-semibold hover:border-gray-400 hover:bg-gray-50 transition-all duration-300">
                       Request Sample
                     </button>
                   </div>
 
-                  {/* Trust Badges — thin one-row strip in compact, 2-col grid otherwise */}
-                  <div className={`${compactLayout ? 'pt-3 mt-1' : 'pt-4'} border-t border-gray-200`}>
-                    <div className={`${compactLayout ? 'flex items-center justify-around gap-3' : 'grid grid-cols-2 gap-4 text-center'}`}>
-                      <div className={compactLayout ? 'flex items-center gap-1.5' : ''}>
-                        <div className={compactLayout ? 'text-base' : 'text-2xl mb-1'}>🚚</div>
-                        <div className="text-xs text-gray-600 font-medium">Free Delivery</div>
-                      </div>
-                      <div className={compactLayout ? 'flex items-center gap-1.5' : ''}>
-                        <div className={compactLayout ? 'text-base' : 'text-2xl mb-1'}>⭐</div>
-                        <div className="text-xs text-gray-600 font-medium">5-Star Rated</div>
-                      </div>
-                    </div>
-                  </div>
                 </div>
               </div>
 
-              {/* Contact — compact inline link on pilot pages, full dark card otherwise */}
-              {compactLayout ? (
-                <p className="mt-3 text-center text-xs text-gray-600">
-                  Questions?{' '}
-                  <a href="tel:01844600900" className="font-semibold text-blue-600 hover:text-blue-700">
-                    Call 01844 600900
-                  </a>
-                </p>
-              ) : (
-                <div className="mt-6 bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 rounded-2xl p-6 text-white">
-                  <h4 className="font-bold text-lg mb-2">Need Help?</h4>
-                  <p className="text-gray-300 text-sm mb-4">Speak to our promotional experts</p>
-                  <button className="w-full bg-white text-gray-900 py-3 rounded-lg font-semibold hover:bg-gray-100 transition-colors">
-                    📞 Call Now: 01844 600900
-                  </button>
-                </div>
-              )}
+              {/* Contact — compact inline link */}
+              <p className="mt-3 text-center text-xs text-gray-600">
+                Questions?{' '}
+                <a href="tel:01844600900" className="font-semibold text-blue-600 hover:text-blue-700">
+                  Call 01844 600900
+                </a>
+              </p>
             </div>
           </div>
         </div>
