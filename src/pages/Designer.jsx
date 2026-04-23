@@ -101,9 +101,11 @@ const Designer = () => {
   // Product Colors from Database
   const [productColors, setProductColors] = useState([]);
 
-  // Buy Now flow state — AuthModal for guests, MOQ modal for signed-in users.
-  // These two modals are mutually exclusive (sequential states in the flow, never concurrent).
-  const [buyNowAuthOpen, setBuyNowAuthOpen] = useState(false);
+  // Shared guest-auth gate. Used by Buy Now, PNG export, and PDF export.
+  // `guestAuthGatePurpose` discriminates which flow resumes on sign-in success.
+  // MoqModal is only opened once the gate closes — they are never concurrent.
+  const [guestAuthGateOpen, setGuestAuthGateOpen] = useState(false);
+  const [guestAuthGatePurpose, setGuestAuthGatePurpose] = useState(null); // 'buyNow' | 'png' | 'pdf' | null
   const [moqModalData, setMoqModalData] = useState(null); // { product, minQty, qty, design }
   const [buyNowBusy, setBuyNowBusy] = useState(false);
   const [loadingColors, setLoadingColors] = useState(false);
@@ -3543,15 +3545,39 @@ const Designer = () => {
   // quote is created.
   const CLOTHING_PRODUCT_KEYS_DESIGNER = ['t-shirts', 'hoodie', 'sweatshirts', 'polo', 'hi-vis-vest'];
   const BUY_NOW_INTENT_KEY = 'pendingBuyNowIntent';
+  const PNG_INTENT_KEY = 'pendingPngIntent';
+  const PDF_INTENT_KEY = 'pendingPdfIntent';
+  const ALL_GUEST_INTENT_KEYS = [BUY_NOW_INTENT_KEY, PNG_INTENT_KEY, PDF_INTENT_KEY];
   const BUY_NOW_INTENT_TTL_MS = 60 * 60 * 1000;
 
+  // Mutual exclusion: only one pending intent may exist. Setting any guest
+  // intent must clear all others so a guest who clicks PNG, cancels, then
+  // clicks PDF doesn't trigger a stale PNG export after auth.
+  const clearAllGuestIntents = () => {
+    try {
+      ALL_GUEST_INTENT_KEYS.forEach((k) => localStorage.removeItem(k));
+    } catch (e) { /* localStorage unavailable */ }
+  };
+
   const persistBuyNowIntent = (designId) => {
+    clearAllGuestIntents();
     try {
       localStorage.setItem(
         BUY_NOW_INTENT_KEY,
         JSON.stringify({ designId: designId || null, ts: Date.now() })
       );
     } catch (e) { /* localStorage unavailable — same-session onSuccess still works */ }
+  };
+
+  const persistExportIntent = (format, designId) => {
+    clearAllGuestIntents();
+    const key = format === 'pdf' ? PDF_INTENT_KEY : PNG_INTENT_KEY;
+    try {
+      localStorage.setItem(
+        key,
+        JSON.stringify({ format, designId: designId || null, ts: Date.now() })
+      );
+    } catch (e) { /* localStorage unavailable */ }
   };
 
   const consumeBuyNowIntent = () => {
@@ -3567,6 +3593,21 @@ const Designer = () => {
     }
   };
 
+  const consumeExportIntent = () => {
+    try {
+      for (const key of [PNG_INTENT_KEY, PDF_INTENT_KEY]) {
+        const raw = localStorage.getItem(key);
+        if (!raw) continue;
+        localStorage.removeItem(key);
+        const intent = JSON.parse(raw);
+        if (intent && Date.now() - intent.ts <= BUY_NOW_INTENT_TTL_MS) return intent;
+      }
+      return null;
+    } catch (e) {
+      return null;
+    }
+  };
+
   // Runs Buy Now for a known signed-in user. `signedInUser` lets AuthModal.onSuccess
   // skip the onAuthStateChange → setUser hop. Guard: MoqModal and AuthModal are
   // sequential states (runBuyNow closes AuthModal before opening MoqModal); they are
@@ -3575,7 +3616,8 @@ const Designer = () => {
     const activeUser = signedInUser || user;
     if (!activeUser) {
       persistBuyNowIntent(currentDesignId);
-      setBuyNowAuthOpen(true);
+      setGuestAuthGatePurpose('buyNow');
+      setGuestAuthGateOpen(true);
       return;
     }
 
@@ -3626,7 +3668,7 @@ const Designer = () => {
       }
 
       const minQty = product.min_order_quantity || 25;
-      setBuyNowAuthOpen(false); // mutual-exclusion guard: close auth before opening MOQ
+      setGuestAuthGateOpen(false); // mutual-exclusion guard: close auth before opening MOQ
       setMoqModalData({ product, minQty, qty: minQty, design });
     } catch (err) {
       console.error('[runBuyNow] Error:', err);
@@ -3640,10 +3682,19 @@ const Designer = () => {
   const handleBuyNow = () => {
     if (!user) {
       persistBuyNowIntent(currentDesignId);
-      setBuyNowAuthOpen(true);
+      setGuestAuthGatePurpose('buyNow');
+      setGuestAuthGateOpen(true);
       return;
     }
     runBuyNow();
+  };
+
+  // Pure export — no gate, no toast. Called by `handleExportWithWatermark`
+  // once auth + saved-design preconditions are met, and by AuthModal.onSuccess
+  // when a guest signs in mid-flow.
+  const runExport = (format) => {
+    if (format === 'pdf') exportPDF();
+    else exportDesign();
   };
 
   const handleMoqContinue = async () => {
@@ -3942,36 +3993,46 @@ const Designer = () => {
     };
   }, []);
 
-  // Consume a pending Buy Now intent (set by a guest click on Buy Now, then
-  // carried through a sign-up email round-trip). Fires when the user is known
-  // and products have loaded. If the intent has no designId, try to resurrect
-  // the most recent saved/migrated design for this session+user.
+  // Consume a pending guest intent (Buy Now / PNG / PDF) carried through a
+  // sign-up email round-trip. Fires once the user is known and products have
+  // loaded. Buy Now auto-continues; PNG/PDF show a "click again to download"
+  // toast rather than auto-firing a file download on page load (surprising UX).
   useEffect(() => {
-    const resumeBuyNowIfPending = async () => {
+    const resumeIfPending = async () => {
       if (!user || loadingProducts) return;
-      const intent = consumeBuyNowIntent();
-      if (!intent) return;
 
-      if (intent.designId) {
-        runBuyNow(user, intent.designId);
+      const buyNow = consumeBuyNowIntent();
+      if (buyNow) {
+        if (buyNow.designId) {
+          runBuyNow(user, buyNow.designId);
+          return;
+        }
+        try {
+          const sessionId = getSessionId();
+          const recent = await getUserDesigns(user.id, sessionId);
+          if (recent && recent.length > 0) {
+            navigate(`/designer?design=${recent[0].id}`, { replace: true });
+            setSaveStatus({ type: 'success', message: 'Design restored - click Buy Now to continue' });
+            setTimeout(() => setSaveStatus(null), 5000);
+            return;
+          }
+        } catch (e) { /* fall through */ }
+        setSaveStatus({ type: 'error', message: 'Please save your design first' });
+        setTimeout(() => setSaveStatus(null), 4000);
         return;
       }
 
-      try {
-        const sessionId = getSessionId();
-        const recent = await getUserDesigns(user.id, sessionId);
-        if (recent && recent.length > 0) {
-          navigate(`/designer?design=${recent[0].id}`, { replace: true });
-          setSaveStatus({ type: 'success', message: 'Design restored - click Buy Now to continue' });
-          setTimeout(() => setSaveStatus(null), 5000);
-          return;
-        }
-      } catch (e) { /* swallow and fall through to the save-first toast */ }
-
-      setSaveStatus({ type: 'error', message: 'Please save your design first' });
-      setTimeout(() => setSaveStatus(null), 4000);
+      const exportIntent = consumeExportIntent();
+      if (exportIntent) {
+        const label = exportIntent.format === 'pdf' ? 'PDF' : 'PNG';
+        setSaveStatus({
+          type: 'success',
+          message: `Signed in - click ${label} again to download`,
+        });
+        setTimeout(() => setSaveStatus(null), 5000);
+      }
     };
-    resumeBuyNowIfPending();
+    resumeIfPending();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, loadingProducts]);
 
@@ -4442,30 +4503,25 @@ const Designer = () => {
   const handleExportWithWatermark = (format) => {
     if (!canvas) return;
 
-    // Signed-in users must save before exporting
-    if (user && !currentDesignId) {
+    // Guest — open the shared auth gate. Same-session sign-in resumes via
+    // AuthModal.onSuccess; sign-up round-trip resumes via the consumeExportIntent
+    // useEffect below. Setting the export intent clears any pending Buy Now
+    // / other-format intent so flows don't cross-trigger.
+    if (!user) {
+      persistExportIntent(format, currentDesignId);
+      setGuestAuthGatePurpose(format);
+      setGuestAuthGateOpen(true);
+      return;
+    }
+
+    // Signed-in users must save before exporting (existing rule)
+    if (!currentDesignId) {
       setSaveStatus({ type: 'error', message: 'Please save your design first' });
       setTimeout(() => setSaveStatus(null), 3000);
       return;
     }
 
-    if (user) {
-      // Signed-in user with saved design - export normally
-      if (format === 'pdf') {
-        exportPDF();
-      } else {
-        exportDesign();
-      }
-      return;
-    }
-
-    // Non-signed-in user - prompt to create account
-    setSaveStatus({
-      type: 'info',
-      message: 'Create a free account to download your design'
-    });
-    setTimeout(() => setSaveStatus(null), 4000);
-    return;
+    runExport(format);
   };
 
   // Generate 3D preview texture from canvas design elements
@@ -6134,20 +6190,40 @@ const Designer = () => {
         />
       )}
 
-      {/* Buy Now: guest auth gate. Mutually exclusive with MOQ modal below. */}
-      {buyNowAuthOpen && !moqModalData && (
+      {/* Shared guest auth gate: Buy Now / PNG export / PDF export.
+          Mutually exclusive with MOQ modal below. Only one is rendered at a time;
+          purpose dispatches what runs after sign-in success. */}
+      {guestAuthGateOpen && !moqModalData && (
         <AuthModal
-          isOpen={buyNowAuthOpen}
-          onClose={() => setBuyNowAuthOpen(false)}
+          isOpen={guestAuthGateOpen}
+          onClose={() => {
+            setGuestAuthGateOpen(false);
+            setGuestAuthGatePurpose(null);
+            // Intent stays in localStorage so a sign-up email round-trip can resume it.
+          }}
           onSuccess={(signedInUser) => {
-            setBuyNowAuthOpen(false);
-            runBuyNow(signedInUser);
+            const purpose = guestAuthGatePurpose;
+            setGuestAuthGateOpen(false);
+            setGuestAuthGatePurpose(null);
+            // Same-session sign-in: clear the persisted intent so the
+            // mount-time consumer doesn't double-fire.
+            clearAllGuestIntents();
+            if (purpose === 'buyNow') {
+              runBuyNow(signedInUser);
+            } else if (purpose === 'png' || purpose === 'pdf') {
+              if (!currentDesignId) {
+                setSaveStatus({ type: 'error', message: 'Please save your design first to export' });
+                setTimeout(() => setSaveStatus(null), 3500);
+              } else {
+                runExport(purpose);
+              }
+            }
           }}
         />
       )}
 
       {/* Buy Now: MOQ confirmation for non-clothing products. */}
-      {moqModalData && !buyNowAuthOpen && (
+      {moqModalData && !guestAuthGateOpen && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6">
             <div className="flex items-center justify-between mb-4">
