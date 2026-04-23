@@ -72,13 +72,16 @@ export const createQuoteFromDesign = async ({ design, user, quantityOverride = n
   const unitPrice = matchedTier?.price_per_unit ?? 0;
 
   const quoteNumber = 'Q-' + Date.now().toString().slice(-6);
+  // Computed pre-insert for correctness; also maintained by
+  // 20260422_quote_total_sync_trigger.sql as a safety net for future item edits.
+  const initialTotal = +(effectiveQty * unitPrice).toFixed(2);
   const { data: newQuote, error: quoteError } = await supabase
     .from('quotes')
     .insert({
       quote_number: quoteNumber,
       customer_id: user.id,
       status: 'draft',
-      total_amount: 0,
+      total_amount: initialTotal,
       notes: `Design: ${design.design_name || 'Untitled'}`,
     })
     .select()
