@@ -19,6 +19,7 @@ import Checkout from './pages/Checkout';
 import OrderConfirmation from './pages/OrderConfirmation';
 import ResetPassword from './pages/ResetPassword';
 import HeaderBar from './components/HeaderBar';
+import ScrollToTop from './components/ScrollToTop';
 import { AuthProvider } from './context/AuthContext';
 import { CartProvider } from './context/CartContext';
 import Cart from './components/Cart';
@@ -64,6 +65,7 @@ function App() {
     <AuthProvider>
       <CartProvider>
         <Router>
+          <ScrollToTop />
           <HeaderBar />
           <Routes>
             {/* Home */}

@@ -11,6 +11,14 @@
     <meta name="theme-color" content="#ef4444" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Promo Gifts</title>
+    <script>
+      // Opt out of the browser's default scroll-restoration so hard refresh
+      // lands at the top. Runs before the bundle so it wins any race on slow
+      // connections. See also site/src/components/ScrollToTop.jsx.
+      if ('scrollRestoration' in window.history) {
+        window.history.scrollRestoration = 'manual';
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>
