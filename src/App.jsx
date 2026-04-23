@@ -17,6 +17,7 @@ import ProductManager from './pages/ProductManager';
 import AdminSeedData from './pages/AdminSeedData';
 import Checkout from './pages/Checkout';
 import OrderConfirmation from './pages/OrderConfirmation';
+import ResetPassword from './pages/ResetPassword';
 import HeaderBar from './components/HeaderBar';
 import { AuthProvider } from './context/AuthContext';
 import { CartProvider } from './context/CartContext';
@@ -132,6 +133,10 @@ function App() {
             {/* Checkout */}
             <Route path="/checkout" element={<Checkout />} />
             <Route path="/order-confirmation" element={<OrderConfirmation />} />
+
+            {/* Password reset — public, outside any auth guard. A user with
+                a recovery session is by definition not yet signed in normally. */}
+            <Route path="/reset-password" element={<ResetPassword />} />
           </Routes>
           <Cart />
         </Router>

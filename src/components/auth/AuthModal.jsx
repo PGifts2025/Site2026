@@ -6,7 +6,7 @@ import { useAuth } from '../../context/AuthContext';
 // (not sign-up — Supabase email confirmation takes the user out of the app). Used
 // by flows that must auto-continue after auth, e.g. Designer's Buy Now.
 const AuthModal = ({ isOpen, onClose, onSuccess }) => {
-  const { signIn, signUp } = useAuth();
+  const { signIn, signUp, resetPassword } = useAuth();
 
   const [mode, setMode] = useState('signin'); // 'signin' or 'signup'
   const [loading, setLoading] = useState(false);
@@ -14,6 +14,10 @@ const AuthModal = ({ isOpen, onClose, onSuccess }) => {
   const [success, setSuccess] = useState(null);
   const [showEmailConfirmation, setShowEmailConfirmation] = useState(false);
   const [signupEmail, setSignupEmail] = useState('');
+  // Forgot-password in-modal flow: 'idle' | 'form' | 'sent'. Kept separate from
+  // the signin/signup `mode` so switching tabs doesn't wipe this state.
+  const [forgotState, setForgotState] = useState('idle');
+  const [forgotEmail, setForgotEmail] = useState('');
 
   // Form fields
   const [email, setEmail] = useState('');
@@ -36,6 +40,31 @@ const AuthModal = ({ isOpen, onClose, onSuccess }) => {
     setSuccess(null);
     setShowEmailConfirmation(false);
     setSignupEmail('');
+    setForgotState('idle');
+    setForgotEmail('');
+  };
+
+  // TODO(rate-limit): Supabase built-in resetPasswordForEmail rate limiting
+  // applies (30/hour/IP by default). Post-launch, add an explicit client-side
+  // throttle + CAPTCHA to harden against account-enumeration probing and
+  // email-bombing via reset requests. Not a launch blocker.
+  const handleForgotSubmit = async (e) => {
+    e.preventDefault();
+    if (!forgotEmail) return;
+    setError(null);
+    setLoading(true);
+    try {
+      // Intentionally ignore the result — we show the same "if registered..."
+      // message regardless, so attackers cannot enumerate registered addresses.
+      await resetPassword(forgotEmail);
+      setForgotState('sent');
+    } catch (err) {
+      // Only a truly unexpected local error (e.g. network) surfaces here.
+      // Supabase-level failures are swallowed by resetPassword and return {error}.
+      setForgotState('sent');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleSignIn = async (e) => {
@@ -119,7 +148,9 @@ const AuthModal = ({ isOpen, onClose, onSuccess }) => {
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-gray-200">
           <h2 className="text-2xl font-bold text-gray-900">
-            {mode === 'signin' ? 'Sign In' : 'Create Account'}
+            {forgotState !== 'idle'
+              ? 'Reset Password'
+              : mode === 'signin' ? 'Sign In' : 'Create Account'}
           </h2>
           <button
             onClick={onClose}
@@ -129,7 +160,8 @@ const AuthModal = ({ isOpen, onClose, onSuccess }) => {
           </button>
         </div>
 
-        {/* Tabs */}
+        {/* Tabs — hidden during forgot-password flow to keep the user focused */}
+        {forgotState === 'idle' && (
         <div className="flex border-b border-gray-200">
           <button
             onClick={() => switchMode('signin')}
@@ -152,11 +184,79 @@ const AuthModal = ({ isOpen, onClose, onSuccess }) => {
             Create Account
           </button>
         </div>
+        )}
 
         {/* Content */}
         <div className="p-6">
-          {/* Email Confirmation View */}
-          {showEmailConfirmation ? (
+          {/* Forgot-password in-modal flow. Takes priority over the signin /
+              signup / email-confirmation screens so switching tabs doesn't
+              dismiss the forgot flow mid-way. */}
+          {forgotState === 'form' ? (
+            <form onSubmit={handleForgotSubmit} className="space-y-4">
+              <p className="text-sm text-gray-600">
+                Enter the email address on your account and we&apos;ll send a reset link.
+              </p>
+              {error && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-lg flex items-start space-x-2">
+                  <AlertCircle className="h-5 w-5 text-red-600 flex-shrink-0 mt-0.5" />
+                  <p className="text-sm text-red-800">{error}</p>
+                </div>
+              )}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Email Address</label>
+                <div className="relative">
+                  <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
+                  <input
+                    type="email"
+                    value={forgotEmail}
+                    onChange={(e) => setForgotEmail(e.target.value)}
+                    required
+                    autoFocus
+                    className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    placeholder="you@example.com"
+                  />
+                </div>
+              </div>
+              <button
+                type="submit"
+                disabled={loading || !forgotEmail}
+                className="w-full flex items-center justify-center space-x-2 py-3 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {loading ? (
+                  <>
+                    <Loader className="h-5 w-5 animate-spin" />
+                    <span>Sending...</span>
+                  </>
+                ) : (
+                  <span>Send reset link</span>
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => { setForgotState('idle'); setError(null); }}
+                className="w-full text-sm text-gray-600 hover:text-gray-900"
+              >
+                Back to sign in
+              </button>
+            </form>
+          ) : forgotState === 'sent' ? (
+            <div className="text-center py-8">
+              <div className="mb-6">
+                <CheckCircle className="h-16 w-16 text-green-600 mx-auto" />
+              </div>
+              <h3 className="text-xl font-bold text-gray-900 mb-3">Check your inbox</h3>
+              <p className="text-gray-600 mb-6">
+                If that email is registered, we&apos;ve sent a reset link. It may take a
+                minute to arrive — check your spam folder if you don&apos;t see it.
+              </p>
+              <button
+                onClick={() => { resetForm(); onClose(); }}
+                className="px-8 py-3 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 transition-colors"
+              >
+                Got it
+              </button>
+            </div>
+          ) : showEmailConfirmation ? (
             <div className="text-center py-8">
               <div className="mb-6">
                 <CheckCircle className="h-16 w-16 text-green-600 mx-auto" />
@@ -238,9 +338,17 @@ const AuthModal = ({ isOpen, onClose, onSuccess }) => {
               </div>
 
               <div className="flex items-center justify-between text-sm">
-                <a href="#" className="text-blue-600 hover:text-blue-700 font-medium">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setError(null);
+                    setForgotEmail(email);
+                    setForgotState('form');
+                  }}
+                  className="text-blue-600 hover:text-blue-700 font-medium"
+                >
                   Forgot password?
-                </a>
+                </button>
               </div>
 
               <button
