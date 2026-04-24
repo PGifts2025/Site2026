@@ -78,7 +78,7 @@ async function main() {
   if (result.errorMessage) console.log(`  error_message  : ${result.errorMessage}`);
   console.log('');
   console.log('  To inspect failures:');
-  console.log(`    SELECT reason, COUNT(*) FROM sync_failures WHERE sync_run_id = '${result.runId}' GROUP BY reason;`);
+  console.log(`    SELECT reason, COUNT(*) FROM job_failures WHERE job_run_id = '${result.runId}' GROUP BY reason;`);
   console.log('');
 
   if (result.status !== 'completed') process.exit(1);

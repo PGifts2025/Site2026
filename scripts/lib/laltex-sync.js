@@ -3,10 +3,11 @@
  *
  * Exports:
  *   syncFullCatalogue({ ... }) — end-to-end sync run. Creates a
- *     sync_runs row, fetches /v1/products/list from Laltex, normalises
- *     every product, bulk-upserts into supplier_products in small
- *     batches, records per-product failures into sync_failures, and
- *     finalises the sync_runs row (completed | failed).
+ *     job_runs row with job_type='sync', fetches /v1/products/list
+ *     from Laltex, normalises every product, bulk-upserts into
+ *     supplier_products in small batches, records per-product
+ *     failures into job_failures, and finalises the job_runs row
+ *     (completed | failed).
  *
  * Architecture notes:
  *
@@ -34,10 +35,16 @@
  *    their previous value so stale-detection queries still work.
  *
  * 5. Continue-with-logging:
- *    Per-product failures land in sync_failures, the run keeps going.
+ *    Per-product failures land in job_failures, the run keeps going.
  *    Only infra-level errors (Laltex network failure, auth, no response)
- *    mark sync_runs.status = 'failed'. A finally block ensures the row
+ *    mark job_runs.status = 'failed'. A finally block ensures the row
  *    is never left at status = 'running'.
+ *
+ * 6. Shared observability table:
+ *    job_runs + job_failures are a single source of truth across all
+ *    background jobs. Every INSERT must set job_type explicitly —
+ *    this module always writes 'sync'. Session 3b's laltex-embed.js
+ *    writes 'embed'.
  */
 
 import { normaliseProduct, unwrapFeedResponse } from './laltex-parser.js';
@@ -54,7 +61,7 @@ const UPSERT_BATCH_SIZE = 50;
 // How often to log progress from the upsert loop.
 const PROGRESS_LOG_EVERY_BATCHES = 5;
 
-// Max chars of raw payload to persist into sync_failures.raw_snippet
+// Max chars of raw payload to persist into job_failures.raw_snippet
 // when a failure fires — keeps the failures table from exploding on
 // pathological products.
 const RAW_SNIPPET_CHARS = 2000;
@@ -102,38 +109,39 @@ async function pgRest(method, url, serviceRoleKey, { body, extraHeaders } = {}) 
 }
 
 // ---------------------------------------------------------------------------
-// sync_runs lifecycle helpers
+// job_runs lifecycle helpers (job_type='sync' for this module)
 // ---------------------------------------------------------------------------
 
-async function insertSyncRun({ supabaseUrl, serviceRoleKey, supplierId, runType, triggeredBy, metadata }) {
-  const url = `${supabaseUrl}/rest/v1/sync_runs`;
+async function insertJobRun({ supabaseUrl, serviceRoleKey, supplierId, runType, triggeredBy, metadata }) {
+  const url = `${supabaseUrl}/rest/v1/job_runs`;
   const rows = await pgRest('POST', url, serviceRoleKey, {
     body: [{
       supplier_id: supplierId,
       run_type: runType,
       status: 'running',
       triggered_by: triggeredBy,
+      job_type: 'sync',
       metadata: metadata ?? null,
     }],
     extraHeaders: { Prefer: 'return=representation' },
   });
   if (!Array.isArray(rows) || !rows[0]?.id) {
-    throw new Error('Failed to create sync_runs row');
+    throw new Error('Failed to create job_runs row');
   }
   return rows[0].id;
 }
 
-async function finaliseSyncRun({ supabaseUrl, serviceRoleKey, runId, patch }) {
-  const url = `${supabaseUrl}/rest/v1/sync_runs?id=eq.${encodeURIComponent(runId)}`;
+async function finaliseJobRun({ supabaseUrl, serviceRoleKey, runId, patch }) {
+  const url = `${supabaseUrl}/rest/v1/job_runs?id=eq.${encodeURIComponent(runId)}`;
   await pgRest('PATCH', url, serviceRoleKey, {
     body: patch,
     extraHeaders: { Prefer: 'return=minimal' },
   });
 }
 
-async function insertSyncFailures({ supabaseUrl, serviceRoleKey, rows }) {
+async function insertJobFailures({ supabaseUrl, serviceRoleKey, rows }) {
   if (!rows.length) return;
-  const url = `${supabaseUrl}/rest/v1/sync_failures`;
+  const url = `${supabaseUrl}/rest/v1/job_failures`;
   try {
     await pgRest('POST', url, serviceRoleKey, {
       body: rows,
@@ -141,7 +149,7 @@ async function insertSyncFailures({ supabaseUrl, serviceRoleKey, rows }) {
     });
   } catch (err) {
     // Never let the failure-logger itself abort the run. Just log and move on.
-    console.error('[laltex-sync] WARNING: sync_failures insert failed:', err.message);
+    console.error('[laltex-sync] WARNING: job_failures insert failed:', err.message);
   }
 }
 
@@ -308,8 +316,8 @@ export async function syncFullCatalogue({
   // 1. Resolve supplier_id
   const supplierId = await getLaltexSupplierId({ supabaseUrl, serviceRoleKey });
 
-  // 2. Open sync_runs row
-  const runId = await insertSyncRun({
+  // 2. Open job_runs row (job_type='sync')
+  const runId = await insertJobRun({
     supabaseUrl,
     serviceRoleKey,
     supplierId,
@@ -335,7 +343,7 @@ export async function syncFullCatalogue({
     if (fetched === 0) {
       // Not a hard fail — Laltex could legitimately return []; but unusual. Record as completed with zeroes.
       status = 'completed';
-      await finaliseSyncRun({
+      await finaliseJobRun({
         supabaseUrl, serviceRoleKey, runId,
         patch: {
           status,
@@ -364,7 +372,7 @@ export async function syncFullCatalogue({
       // normaliseProduct returned row=null (unusable product).
       for (const pe of parseErrors) {
         failures.push({
-          sync_run_id: runId,
+          job_run_id: runId,
           supplier_product_code: row?.supplier_product_code ?? (raw?.ProductCode ?? null),
           reason: 'parse_error',
           error_message: `${pe.field}: ${pe.message}`,
@@ -381,9 +389,9 @@ export async function syncFullCatalogue({
     log(`[sync] normalised ${rows.length} rows, ${failures.length} parse errors`);
 
     // Persist parse errors now so they land even if later upserts throw
-    // unexpectedly. sync_failures.raw_snippet is truncated per row.
+    // unexpectedly. job_failures.raw_snippet is truncated per row.
     if (failures.length) {
-      await insertSyncFailures({ supabaseUrl, serviceRoleKey, rows: failures });
+      await insertJobFailures({ supabaseUrl, serviceRoleKey, rows: failures });
     }
 
     // 6. Upsert in chunks
@@ -411,7 +419,7 @@ export async function syncFullCatalogue({
       for (const bf of batchFailures) {
         failed += 1;
         upsertFailures.push({
-          sync_run_id: runId,
+          job_run_id: runId,
           supplier_product_code: bf.row.supplier_product_code ?? null,
           reason: 'upsert_failed',
           error_message: bf.error?.slice(0, 1000) ?? 'unknown',
@@ -426,7 +434,7 @@ export async function syncFullCatalogue({
     }
 
     if (upsertFailures.length) {
-      await insertSyncFailures({ supabaseUrl, serviceRoleKey, rows: upsertFailures });
+      await insertJobFailures({ supabaseUrl, serviceRoleKey, rows: upsertFailures });
     }
 
     status = 'completed';
@@ -436,9 +444,9 @@ export async function syncFullCatalogue({
     status = 'failed';
     console.error('[laltex-sync] run failed:', errorMessage);
   } finally {
-    // 7. Finalise sync_runs row — always, never leave it at 'running'
+    // 7. Finalise job_runs row — always, never leave it at 'running'
     const durationMs = Date.now() - runStart;
-    await finaliseSyncRun({
+    await finaliseJobRun({
       supabaseUrl,
       serviceRoleKey,
       runId,
@@ -454,7 +462,7 @@ export async function syncFullCatalogue({
       },
     }).catch((finalErr) => {
       // Absolute last-resort — if even finalising fails, still surface to stdout.
-      console.error('[laltex-sync] WARNING: could not finalise sync_runs row:', finalErr.message);
+      console.error('[laltex-sync] WARNING: could not finalise job_runs row:', finalErr.message);
     });
   }
 

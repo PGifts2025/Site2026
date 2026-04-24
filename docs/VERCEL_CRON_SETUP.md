@@ -1,23 +1,29 @@
-# Vercel Cron setup — Laltex nightly sync
+# Vercel Cron setup — Laltex nightly jobs
 
 This document is the single reference for configuring, testing, and
-recovering from the nightly Laltex sync cron. Everything below also lives
-(summarised) in [`.claude/CLAUDE.md §27`](../.claude/CLAUDE.md), but this
-is the operational playbook.
+recovering from the two Vercel Cron jobs behind the Laltex pipeline
+(**sync** at 03:00 UTC, **embed** at 04:00 UTC). Everything below also
+lives (summarised) in [`.claude/CLAUDE.md §27`](../.claude/CLAUDE.md),
+but this is the operational playbook.
 
 ## 1. Architecture at a glance
 
 | Piece | Location |
 |---|---|
-| Cron declaration | [`site/vercel.json`](../vercel.json) — `crons[]` entry, `0 3 * * *` UTC |
-| Handler route | [`site/api/cron/sync-laltex.js`](../api/cron/sync-laltex.js) — Vercel Serverless Function, `maxDuration: 300` |
-| Core sync logic | [`site/scripts/lib/laltex-sync.js`](../scripts/lib/laltex-sync.js) |
+| Cron declarations | [`site/vercel.json`](../vercel.json) — `crons[]`: `0 3 * * *` (sync), `0 4 * * *` (embed) |
+| Sync handler | [`site/api/cron/sync-laltex.js`](../api/cron/sync-laltex.js) — Vercel Serverless Function, `maxDuration: 300` |
+| Embed handler | [`site/api/cron/embed-laltex.js`](../api/cron/embed-laltex.js) — Vercel Serverless Function, `maxDuration: 300` |
+| Core sync logic | [`site/scripts/lib/laltex-sync.js`](../scripts/lib/laltex-sync.js) — `syncFullCatalogue()` writes `job_type='sync'` |
+| Core embed logic | [`site/scripts/lib/laltex-embed.js`](../scripts/lib/laltex-embed.js) — `embedCatalogue()` writes `job_type='embed'` |
 | Parsing helpers | [`site/scripts/lib/laltex-parser.js`](../scripts/lib/laltex-parser.js) |
-| Local CLI runner | [`site/scripts/sync-laltex-catalogue.js`](../scripts/sync-laltex-catalogue.js) — same code path, `triggered_by='cli'` |
-| Observability | `sync_runs` + `sync_failures` tables (migration `20260424_sync_runs_and_failures.sql`) |
+| Embedding helpers | [`site/scripts/lib/embedding.js`](../scripts/lib/embedding.js) (session 2) |
+| Sync CLI | [`site/scripts/sync-laltex-catalogue.js`](../scripts/sync-laltex-catalogue.js) — `triggered_by='cli'` |
+| Embed CLI | [`site/scripts/embed-laltex-catalogue.js`](../scripts/embed-laltex-catalogue.js) — `triggered_by='cli'` |
+| Observability | `job_runs` + `job_failures` tables (one row per job invocation; `job_type` column distinguishes sync vs. embed) |
 
-Session 3b adds a separate 04:00 UTC cron for embeddings. Each cron has
-its own 5-minute budget.
+The 1-hour gap between sync (03:00) and embed (04:00) is deliberate.
+Sync typically takes ~90s on production; the hour of headroom means
+embed always sees a post-sync steady state, never a mid-write one.
 
 ## 2. Required Vercel env vars
 
@@ -51,13 +57,18 @@ Dashboard).
 ## 3. Manually triggering the cron
 
 Use this for smoke testing, for debugging a failed run, or to catch up
-after a missed night.
+after a missed night. Both endpoints share the same auth pattern.
 
 ```bash
-# Hit production
+# Hit production — sync
 curl -i \
   -H "Authorization: Bearer $CRON_SECRET" \
   https://promo-gifts-co.uk/api/cron/sync-laltex
+
+# Hit production — embed (typically ~instant after a sync, nothing to embed)
+curl -i \
+  -H "Authorization: Bearer $CRON_SECRET" \
+  https://promo-gifts-co.uk/api/cron/embed-laltex
 
 # Hit a preview deployment (replace <preview>)
 curl -i \
@@ -65,24 +76,49 @@ curl -i \
   https://<preview>.vercel.app/api/cron/sync-laltex
 ```
 
-Response shape on success:
+> **Heads-up:** use `curl`, not PowerShell `Invoke-WebRequest`. The
+> latter's default 100s timeout is uncomfortably close to the ~90s a
+> production sync actually takes, and its failure modes when a request
+> times out mid-flight can surface as a 200-with-SPA-shell rather than
+> a clean error. Use `-TimeoutSec 600` explicitly if PowerShell is
+> mandatory.
+
+Response shape on a successful **sync** run:
 
 ```json
 {
   "runId": "uuid-here",
-  "fetched": 8412,
+  "fetched": 1192,
   "inserted": 0,
-  "updated": 8412,
+  "updated": 1192,
   "failed": 0,
-  "durationMs": 42713,
+  "durationMs": 90851,
   "status": "completed"
 }
 ```
 
-Expect `inserted` to be meaningful only on the first run (subsequent
-nights see ~0 inserts, ~all updates).
+Response shape on a successful **embed** run (steady state — nothing
+to embed because all source hashes match):
 
-### Auth failure modes
+```json
+{
+  "runId": "uuid-here",
+  "considered": 1192,
+  "embedRequested": 0,
+  "embedSkipped": 1192,
+  "updated": 0,
+  "failed": 0,
+  "tokensUsed": 0,
+  "costUsd": 0,
+  "durationMs": 850,
+  "status": "completed"
+}
+```
+
+First-time embed run is slower (~5–10 s) and costs ~$0.003 — see
+CLAUDE.md §26.10.6 for cost maths. Subsequent nights are steady-state.
+
+### Auth failure modes (both endpoints)
 
 | Request | Response |
 |---|---|
@@ -90,57 +126,75 @@ nights see ~0 inserts, ~all updates).
 | Wrong secret | 401 `{"error":"Unauthorized"}` |
 | `CRON_SECRET` not configured on Vercel | 500 `{"error":"CRON_SECRET not configured on Vercel"}` |
 
-## 4. Inspecting sync_runs
+## 4. Inspecting job_runs
 
-All run outcomes land in `sync_runs`. Query via the Supabase Dashboard
-SQL editor or the Management API:
+All run outcomes from both crons land in `job_runs`. `job_type`
+distinguishes `'sync'` from `'embed'`.
 
 ```sql
--- Last 10 runs, newest first
-SELECT id, run_type, status, triggered_by,
+-- Last 10 job runs of any type, newest first
+SELECT id, job_type, run_type, status, triggered_by,
        products_fetched, products_inserted, products_updated, products_failed,
        duration_ms, started_at, finished_at, error_message
-FROM sync_runs
+FROM job_runs
 ORDER BY started_at DESC
 LIMIT 10;
 
--- Find stuck runs (should return 0 rows unless a sync is currently in flight)
-SELECT id, started_at, triggered_by
-FROM sync_runs
+-- Last 10 sync runs only
+SELECT id, run_type, status, triggered_by,
+       products_fetched, products_updated, products_failed,
+       duration_ms, started_at, finished_at
+FROM job_runs
+WHERE job_type = 'sync'
+ORDER BY started_at DESC
+LIMIT 10;
+
+-- Last 10 embed runs only (including metadata for token/cost info)
+SELECT id, status, products_updated, products_failed,
+       duration_ms, metadata, started_at
+FROM job_runs
+WHERE job_type = 'embed'
+ORDER BY started_at DESC
+LIMIT 10;
+
+-- Find stuck runs (should return 0 rows unless a job is currently in flight)
+SELECT id, job_type, started_at, triggered_by
+FROM job_runs
 WHERE status = 'running'
   AND started_at < now() - interval '15 minutes';
 
--- Failure-rate over last week
+-- Per-type success/failure over last week
 SELECT date_trunc('day', started_at) AS day,
+       job_type,
        COUNT(*) FILTER (WHERE status='completed') AS ok,
        COUNT(*) FILTER (WHERE status='failed') AS failed,
        SUM(products_failed) AS products_failed
-FROM sync_runs
+FROM job_runs
 WHERE started_at > now() - interval '7 days'
-GROUP BY day
-ORDER BY day DESC;
+GROUP BY day, job_type
+ORDER BY day DESC, job_type;
 ```
 
-## 5. Inspecting sync_failures for a specific run
+## 5. Inspecting job_failures for a specific run
 
 ```sql
--- Failure breakdown for a specific run
+-- Failure breakdown for a specific run (works for both sync and embed)
 SELECT reason, COUNT(*) AS occurrences
-FROM sync_failures
-WHERE sync_run_id = '<run_id>'
+FROM job_failures
+WHERE job_run_id = '<run_id>'
 GROUP BY reason
 ORDER BY occurrences DESC;
 
 -- First 20 failures for a run, with the raw snippet for debugging
 SELECT supplier_product_code, reason, error_message, raw_snippet
-FROM sync_failures
-WHERE sync_run_id = '<run_id>'
+FROM job_failures
+WHERE job_run_id = '<run_id>'
 ORDER BY created_at
 LIMIT 20;
 
--- All failures for a single product across all recent runs
-SELECT sync_run_id, reason, error_message, created_at
-FROM sync_failures
+-- All failures for a single product across all recent runs (any type)
+SELECT job_run_id, reason, error_message, created_at
+FROM job_failures
 WHERE supplier_product_code = '<CODE>'
 ORDER BY created_at DESC
 LIMIT 50;
@@ -152,53 +206,58 @@ LIMIT 50;
 cd site
 
 # 1. Make sure .env has LALTEX_API_KEY, VITE_SUPABASE_URL,
-#    SUPABASE_SERVICE_ROLE_KEY, CRON_SECRET.
+#    SUPABASE_SERVICE_ROLE_KEY, CRON_SECRET, OPENAI_API_KEY.
 
-# 2. Run the full sync locally against the live Laltex API + live DB.
+# 2a. Run the full sync locally against the live Laltex API + live DB.
 node scripts/sync-laltex-catalogue.js
 
-# 3. Inspect the latest sync_runs row.
-#    (The CLI prints the run_id — use it in the SQL snippets above.)
+# 2b. Run the embed over whatever sync just produced.
+node scripts/embed-laltex-catalogue.js
+
+# 3. Inspect the latest job_runs rows.
+#    (Each CLI prints its run_id — use it in the SQL snippets above.)
 ```
 
-If you want to test the **handler file** itself (auth, env guards)
-without deploying, you can import it into a tiny node script that mocks
-`req` and `res`. Session 3a's commit includes a verification run that
-covers 401/401/200 via this approach (see session 3a PR description).
+If you want to test a **handler file** itself (auth, env guards)
+without deploying, `scripts/smoke-test-cron-auth.js` imports the
+handler and exercises the 401/401/200 contract in-process. Duplicate
+the pattern for the embed handler if you need a separate harness.
 
 ## 7. Recovery procedure
 
-### Scenario A — cron failed overnight (sync_runs row shows status='failed')
+### Scenario A — a cron failed overnight (`job_runs` row shows `status='failed'`)
 
-1. Inspect `sync_runs.error_message`. Usual culprits:
-   - Laltex network blip → just re-run
-   - Auth error → rotate `LALTEX_API_KEY` or contact Laltex
-   - Supabase throttling → very rare; wait and re-run
-2. Re-run manually via step 3 above. This creates a new `sync_runs`
-   row; it does NOT retry the failed one.
+1. Inspect `job_runs.error_message` for the failed row. Usual
+   culprits per `job_type`:
+   - **sync:** Laltex network blip, Laltex auth, Supabase throttling
+   - **embed:** OpenAI 5xx, OpenAI 429, Supabase write error during
+     per-row update
+2. Re-run the failed job manually (`curl` the relevant endpoint or
+   run the matching CLI). This creates a **new** `job_runs` row; it
+   does NOT retry the failed one.
 3. If repeated failures: check Vercel function logs (Project → Logs
-   → filter function `/api/cron/sync-laltex`).
+   → filter `/api/cron/sync-laltex` or `/api/cron/embed-laltex`).
 
-### Scenario B — high `products_failed` (> ~1% of fetched)
+### Scenario B — high `products_failed` (> ~1% of fetched / considered)
 
 1. Pull the failure breakdown SQL from §5 above.
-2. If all failures share one `reason` + one field (e.g. 200 × `parse_error` on `Price`), Laltex
-   probably changed the field shape. Patch the parser in
-   `scripts/lib/laltex-parser.js` and ship the fix before tomorrow's
-   cron. Failed products keep their prior `last_synced_at` — the site
-   still serves stale data until the parser catches up.
-3. If failures are distributed across codes with `reason='upsert_failed'`,
-   that usually means schema drift (new required column). Investigate
-   `raw_snippet` and amend.
+2. **Sync-side:** if all failures share one `reason` + one field (e.g.
+   200 × `parse_error` on `Price`), Laltex probably changed the field
+   shape. Patch `scripts/lib/laltex-parser.js` and ship the fix before
+   tomorrow's cron. Failed products keep their prior `last_synced_at`.
+3. **Embed-side:** `reason='embed_update_failed'` distributed across
+   codes usually means a schema drift on `supplier_products.embedding`
+   or a transient Supabase write error — re-run the embed CLI to
+   retry those rows (hash gate still applies).
 
-### Scenario C — a stuck 'running' row
+### Scenario C — a stuck `'running'` row
 
-`sync_runs.status='running'` older than ~15 minutes means a run
+`job_runs.status='running'` older than ~15 minutes means a run
 crashed in a way even the `finally` block couldn't catch (process
 kill, Vercel function timeout). Safe to mark failed manually:
 
 ```sql
-UPDATE sync_runs
+UPDATE job_runs
 SET status = 'failed',
     error_message = 'Manually marked failed — stuck in running state',
     finished_at = now(),
@@ -217,6 +276,8 @@ Then run the cron again.
 - Do not merge changes to `scripts/lib/laltex-parser.js` without
   running the CLI once — parser bugs hide until a whole catalogue
   runs through them.
-- Do not extend the cron to also do embeddings — that's deliberately
-  split into the 04:00 UTC cron (session 3b). Keeping them independent
-  preserves the 5-minute budget and isolates failure domains.
+- Do not collapse the 03:00 sync and 04:00 embed into a single cron.
+  The split preserves each job's 5-minute budget and isolates failure
+  domains (Laltex outage vs. OpenAI outage).
+- Do not call OpenAI outside the hash-gate in the embed path. The gate
+  is a cost-control invariant (see CLAUDE.md §26.10.7).
