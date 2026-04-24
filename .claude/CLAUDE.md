@@ -447,7 +447,7 @@ All three route to `/account/quotes` on success, with a flash banner `"Quote cre
 
 ---
 
-*Last updated: 24 April 2026 — §§26.10.x added (session 2: embedding pipeline — model, source recipe, hash idempotency, ivfflat index, cost estimates, invariants). §26 Laltex Integration Architecture added earlier 24 April 2026 (session 1: foundation schema + single-product sync). §§19-25 added 23 April 2026 for Buy Now / shared auth gate / transactional email / scroll management / quote total pre-insert / compact product page layout / forgot password. §§2, 3, 8.4, 10, 11, 12, 13, 18 refreshed.*
+*Last updated: 24 April 2026 — §28 Known Gotchas added (Supabase PostgREST 1000-row cap) + §27.1 heads-up for session 3b single-batch embed (catalogue is 1192, under OpenAI's 2048-input limit). §27 Nightly Sync Architecture added earlier 24 April 2026 (session 3a). §§26.10.x added earlier 24 April 2026 (session 2: embedding pipeline). §26 Laltex Integration Architecture added 24 April 2026 (session 1). §§19-25 added 23 April 2026 for Buy Now / shared auth gate / transactional email / scroll management / quote total pre-insert / compact product page layout / forgot password. §§2, 3, 8.4, 10, 11, 12, 13, 18 refreshed.*
 *Update this file at the end of every significant session.*
 
 ---
@@ -1222,3 +1222,183 @@ source recipe or the model" a cheap decision, not a scary one.
 - **Do not run full-catalogue embed logic in session 2.** That is the
   explicit boundary of session 3 (scope discipline, not a technical
   limit).
+
+---
+
+## 27. NIGHTLY SYNC ARCHITECTURE (session 3a)
+
+Full-catalogue Laltex sync runs on Vercel Cron. Session 3a ships the
+sync half; session 3b adds the embedding half on a separate cron so
+each has its own 5-minute budget.
+
+### 27.1 Cron split
+
+| Cron | Schedule (UTC) | Purpose | Scope |
+|---|---|---|---|
+| `sync-laltex` | `0 3 * * *` | `/v1/products/list` → UPSERT `supplier_products` | Session 3a (this) |
+| `embed-laltex` | `0 4 * * *` | embed newly-hashed rows only | Session 3b (future) |
+
+Why split: Vercel Cron's 5-minute ceiling is uncomfortable for
+sync+embed in one go, and the two operations have different failure
+domains (Laltex outage vs. OpenAI outage) that we want to isolate.
+A failed embed run doesn't block the next night's sync, and vice versa.
+
+**Heads-up for session 3b:** the actual Laltex catalogue is 1192
+products (not the ~10k originally estimated). That fits **comfortably
+under OpenAI's 2048-input-per-call `/v1/embeddings` batch limit** — a
+clean full rebuild can be done in a **single batched API call**, no
+per-row loop needed. Adjust session 3b's batching to single-batch
+when the prompt lands; fallback to multi-batch logic remains
+good-hygiene for future growth.
+
+### 27.2 DB access patterns — do not mix these up
+
+Two distinct DB-access paths coexist, each fit-for-purpose:
+
+| Path | Auth | Use for | Example |
+|---|---|---|---|
+| **Management API** `/v1/projects/.../database/query` | `SUPABASE_ACCESS_TOKEN` (PAT, `sbp_…`) | Single-row admin ops, migrations, ad-hoc SQL, scripted DDL | `scripts/sync-laltex-product.js` (single-product debug), session 1+2 migrations |
+| **PostgREST** `${VITE_SUPABASE_URL}/rest/v1/...` | `SUPABASE_SERVICE_ROLE_KEY` | Bulk DML from serverless (cron), high-volume writes, anything where per-row granularity matters | `scripts/lib/laltex-sync.js` (session 3a), session 3b embed batch |
+
+**This is per-tool-fit, not preference.** The Management API is an
+admin-tier SQL proxy — synchronous, designed for DDL + single queries.
+It is the wrong hammer for 10k nightly UPSERTs: it forces you to build
+a multi-MB `INSERT ... ON CONFLICT` SQL string, synchronises through an
+extra hop, and can't surface per-row failures without parsing raw
+Postgres error text.
+
+PostgREST with the service-role key is the idiomatic path for bulk DML:
+native batch UPSERT via `POST /rest/v1/{table}` + `Prefer:
+resolution=merge-duplicates`, per-row response data, and direct
+connection to Postgres without an admin-API hop.
+
+Session 1's `sync-laltex-product.js` intentionally stays on PAT +
+Management API — it's a debugging script for single products, not a
+cron, and rewriting it would be churn with no benefit.
+
+### 27.3 Continue-with-logging failure policy
+
+One bad product never aborts the run.
+
+- **Infra-level failures** (Laltex network failure, auth, schema out of
+  sync) mark `sync_runs.status = 'failed'`, populate
+  `error_message`, and exit the loop. Tomorrow's cron retries.
+- **Per-product parse errors** land in `sync_failures` with
+  `reason='parse_error'` and the row still attempts to persist with
+  nulls for the affected fields — best-effort.
+- **Per-product upsert failures** land in `sync_failures` with
+  `reason='upsert_failed'` and the row **keeps its previous
+  `last_synced_at`** (failed UPSERT must not touch stale-ness).
+- **Unexpected exceptions** inside the loop land in `sync_failures`
+  with `reason='unexpected_error'` and the sync continues.
+- **`status='running'` at end-of-function is forbidden.** A `finally`
+  block always finalises to `'completed'` or `'failed'`.
+
+### 27.4 Blast-radius mitigation on batch upsert
+
+PostgREST bulk UPSERT is atomic per batch — one bad row fails the
+whole batch. The sync library chunks into 50 rows per batch and, on
+batch failure, falls back to single-row UPSERTs across the same
+chunk so we isolate the bad rows without drooling 49 good ones.
+Happy path is ~200 fast batched requests for a 10k catalogue;
+pathological case adds one chunk of 50 single-row retries.
+
+### 27.5 Observability tables
+
+Schema in [`supabase/migrations/20260424_sync_runs_and_failures.sql`](../supabase/migrations/20260424_sync_runs_and_failures.sql).
+
+- `sync_runs` — one row per invocation. `run_type`, counters,
+  `duration_ms`, `triggered_by` (`'cron' | 'manual' | 'cli'`),
+  `metadata` JSONB, and a partial index on `WHERE status='running'`
+  for stuck-run detection.
+- `sync_failures` — per-product failure rows, FK `sync_run_id` with
+  `ON DELETE CASCADE`. `raw_snippet` JSONB carries a truncated slice
+  of the source payload (≤ 2000 chars) for debugging without letting
+  the failures table explode on pathological products.
+
+RLS: SELECT open to authenticated + anon (admin dashboard reads);
+writes service-role only.
+
+### 27.6 Cron auth
+
+Vercel Cron sends `Authorization: Bearer ${CRON_SECRET}` to
+`/api/cron/sync-laltex`. The handler verifies strictly (`401` on
+missing or wrong); no "unauthorised" body, just the status. Env vars
+required in Vercel: `CRON_SECRET`, `LALTEX_API_KEY`,
+`SUPABASE_SERVICE_ROLE_KEY`, `VITE_SUPABASE_URL`. Missing any →
+`500` with a clear `{ missing: [...] }` body so the cron logs make
+the misconfiguration obvious.
+
+Full operational playbook (testing, env setup, inspection queries,
+recovery) in [`docs/VERCEL_CRON_SETUP.md`](../docs/VERCEL_CRON_SETUP.md).
+
+### 27.7 Files (session 3a)
+
+| File | Purpose |
+|---|---|
+| `supabase/migrations/20260424_sync_runs_and_failures.sql` | Observability tables + RLS |
+| `scripts/lib/laltex-parser.js` | Pure parsing helpers extracted from session 1; now shared |
+| `scripts/lib/laltex-sync.js` | Core `syncFullCatalogue(...)` — runs lifecycle, batching, fallback |
+| `scripts/sync-laltex-catalogue.js` | Local CLI runner (`triggered_by='cli'`) |
+| `api/cron/sync-laltex.js` | Vercel Serverless Function (`triggered_by='cron'`, `maxDuration: 300`) |
+| `vercel.json` | `crons[]` entry, `0 3 * * *` |
+| `docs/VERCEL_CRON_SETUP.md` | Ops playbook |
+
+### 27.8 Invariants — DO NOT BREAK
+
+- **Do NOT use the Management API / PAT for bulk writes.** See §27.2.
+- **Do NOT set `last_synced_at` on a failed UPSERT.** It's the anchor
+  for stale-product detection — failed rows must show an older
+  timestamp than the run that failed.
+- **Do NOT throw past the sync loop.** Every per-product failure is
+  `sync_failures` material, not an exception. The `finally` block
+  must always finalise `sync_runs`.
+- **Do NOT extend the sync cron to embeddings.** That's session 3b's
+  dedicated 04:00 UTC cron — keeping them independent preserves the
+  5-min budget and the failure isolation.
+- **Do NOT change `CRON_SECRET` on only one side.** Vercel and local
+  `.env` must match, and the Vercel-side secret must match for every
+  environment (Production + Preview).
+- **Do NOT commit the service-role key.** It bypasses RLS. Storage
+  is `.env` + Vercel env only.
+
+---
+
+## 28. KNOWN GOTCHAS
+
+Infrastructure-level quirks that have caught us out. Each entry is a
+thing that looked right, ran green, and turned out to be subtly wrong.
+Add future gotchas here, each with: what it is, how to detect it, how
+to fix it.
+
+### 28.1 Supabase PostgREST silently caps responses at 1000 rows
+
+**What it is:** `GET /rest/v1/{table}` against Supabase enforces a
+server-side `max-rows=1000` limit on response size. This applies even
+when authenticated with `SUPABASE_SERVICE_ROLE_KEY`, even when you pass
+`?limit=5000`, and even with `Range: 0-9999` headers — all three are
+silently ignored beyond 1000 rows. The response `Content-Range` header
+gives it away (`0-999/*`), but nothing about the HTTP status or shape
+suggests truncation.
+
+**How to detect it:**
+- Counters that look impossibly clean. Session 3a's first idempotent
+  re-run reported `inserted=192 updated=1000` for a 1192-row catalogue —
+  the 192 "inserts" were actually updates on rows past the 1000-row
+  page boundary that `getExistingCodes()` couldn't see.
+- Any `SELECT` against a Supabase table bigger than 1000 rows that
+  doesn't loop will silently truncate. If downstream logic depends on
+  "I just read every row", that logic is broken.
+- `Content-Range: 0-999/*` with `Accept-Ranges: items` on the response.
+
+**How to fix it:** Paginate explicitly with `?limit=1000&offset=N`,
+loop until a page returns fewer than 1000 rows. Example pattern in
+[`site/scripts/lib/laltex-sync.js`](../scripts/lib/laltex-sync.js)
+`getExistingCodes()`. Use `&order=<stable_column>.asc` so pagination
+is deterministic.
+
+**Scope:** Applies to every PostgREST `GET` from serverless code —
+cron jobs, Edge Functions, anywhere that does bulk reads. Single-row
+`eq.` lookups are fine. The Management API (`/database/query` with a
+PAT) has its own limits but doesn't share this specific cap; it's
+bounded by response size instead.
