@@ -447,7 +447,7 @@ All three route to `/account/quotes` on success, with a flash banner `"Quote cre
 
 ---
 
-*Last updated: 23 April 2026 — §§19-25 added for Buy Now / shared auth gate / transactional email / scroll management / quote total pre-insert / compact product page layout / forgot password. §§2, 3, 8.4, 10, 11, 12, 13, 18 refreshed.*
+*Last updated: 24 April 2026 — §26 Laltex Integration Architecture added (session 1: foundation schema + single-product sync). §§19-25 added 23 April 2026 for Buy Now / shared auth gate / transactional email / scroll management / quote total pre-insert / compact product page layout / forgot password. §§2, 3, 8.4, 10, 11, 12, 13, 18 refreshed.*
 *Update this file at the end of every significant session.*
 
 ---
@@ -933,3 +933,125 @@ For future sessions looking for why things are the way they are:
 | `c2e0a00` | Compact layout global rollout + remove star rating + Configure-card trust badges |
 | `9f719b0` | Remove dead feature-bar from HeaderBar (defer to Laltex) |
 | `8b9b27c` / `da7a7a4` | Pre-Laltex investigation doc + Laltex V1.7 API reference |
+
+---
+
+## 26. LALTEX INTEGRATION ARCHITECTURE
+
+Session 1 (24-Apr-26) laid the foundation schema for pulling the Laltex
+supplier feed into Supabase. The AI product-search assistant is a
+downstream consumer of this pipeline. Later sessions add: embedding
+column + nightly sync (S2), widget + tool-use backend (S3–S4).
+
+### 26.1 Source of truth
+
+- **Existing `catalog_*` tables are NOT touched by Laltex sync.** They
+  continue to serve the 25 manually-curated products. Unification of
+  `catalog_products` and `supplier_products` (view or migration) is a
+  deliberate later-session decision.
+- **`supplier_products` is the raw Laltex feed**, stored Laltex-shaped in
+  JSONB. One row per Laltex `ProductCode`, UNIQUE on
+  `(supplier_id, supplier_product_code)`.
+
+### 26.2 Auth and API shape
+
+- **Auth header is `API_KEY: <value>`** — custom header, NOT `Authorization`
+  / `Bearer`. Easy to get wrong; both fail silently with 200 OK + empty
+  body in some API variants.
+- **Base URL:** `https://auto.laltex.com/trade/api`
+- **Single product:** `GET /v1/products/{productCode}` — endpoint path
+  is case-insensitive in practice, but the docs say lowercase.
+- **Response shape:** the **live API returns a bare JSON array** `[{...}]`.
+  The PDF-linked sample at `site/docs/laltex-samples/mg0192.json` is
+  wrapped in `{ "value": [{...}] }`. The sync script handles both.
+
+### 26.3 RAW cost principle
+
+The Laltex API returns **raw trade cost**. The dashboard's "Markup &
+Copy" feature is a **per-quote calculator** — it does NOT affect API
+output. So:
+
+- **Never apply markup at sync time.** `supplier_products.product_pricing`
+  stores the raw Laltex price, period.
+- Markup is a **read-time** concern (future session). It lives in a view,
+  a service-layer function, or a computed column — anywhere but the sync
+  path.
+- This preserves auditability (we can always reconcile to Laltex's invoice)
+  and lets margin policy change without re-syncing.
+
+### 26.4 JSONB rationale
+
+`supplier_products` uses JSONB for `product_pricing`, `print_details`,
+`items`, `images`, `plain_images`, `artwork_templates`, `shipping_charges`,
+`priority_service`, `raw_payload`.
+
+- 10k+ products × variable nested arrays (e.g. print positions × colour
+  count × qty tiers × coordinates) would produce row explosion if
+  normalised.
+- Reads always pull the **whole product** (AI results, PDPs), so JSONB
+  is read-optimal.
+- Schema flexibility: Laltex's V1.x pipeline adds fields regularly
+  (v1.5 added `Material`, `Ingredients`, `CartonDims`, ...) — JSONB
+  absorbs those without a migration.
+- `raw_payload` stores the **untouched** API response, so we can detect
+  schema drift on future Laltex versions and replay old payloads after
+  a parser fix.
+
+### 26.5 Parsing rules (implemented in `scripts/sync-laltex-product.js`)
+
+- **Prices are currency strings** — `"£1.79"` → `1.79`. Strip `£€$,\s`,
+  parse numeric.
+- **Values > £900 = POA** per Laltex convention. Store `{ price: null,
+  is_poa: true }`; never emit a numeric price above the threshold.
+- **Coordinates are pixel strings** — `"267.500px"` → `267.5`. Strip
+  `px`, parse numeric.
+- **`MaxQuantity: "N/A"`** means open-ended top tier — store as `null`.
+- **`Diameter`** present → `shape = 'circle'`; else `rectangle`. Matches
+  our existing `print_areas` table convention.
+- **Left-Handed / Right-Handed** print variants exist on Front position —
+  both are kept in `print_details[].print_area_coordinates[]`; UI picks
+  which to display.
+
+### 26.6 Idempotency
+
+`scripts/sync-laltex-product.js` does an UPSERT on
+`(supplier_id, supplier_product_code)`. Running the sync twice in a row
+updates the same row (including `last_synced_at`), never creates a
+duplicate. The ON CONFLICT clause refreshes all data columns.
+
+### 26.7 Where the code lives
+
+- Migrations: `site/supabase/migrations/20260424_*.sql` (drop legacy,
+  enable pgvector, suppliers + supplier_products).
+- Sync script: `site/scripts/sync-laltex-product.js` (ESM; uses
+  `LALTEX_API_KEY` for Laltex + `SUPABASE_ACCESS_TOKEN` for DB writes
+  via the Management API SQL endpoint).
+- Sample payload: `site/docs/laltex-samples/mg0192.json` — gitignored,
+  confidential (contains real trade prices).
+
+### 26.8 Out of scope for session 1 (reserved for later sessions)
+
+- Embedding column (`vector` or `halfvec`) on `supplier_products`
+- Embedding generation pipeline
+- Full-catalogue sync / batch pagination / rate-limit handling
+- Nightly cron / Edge Function scheduling
+- Stock sync (`GET stocks/{productcode}`) — separate higher-frequency job
+- Category / slug reconciliation between `catalog_products` and
+  `supplier_products`
+- AI assistant backend (function-calling, prompt caching)
+- AI assistant UI (chat widget, persistent dashboard tab)
+
+### 26.9 Invariants — DO NOT BREAK
+
+- Sync writes **raw cost only** — never apply markup at sync time.
+- Sync **never touches** existing `catalog_*` tables or any
+  Designer/Quote/Order/Stripe code path.
+- `raw_payload` must always be populated on UPSERT — it's the
+  schema-drift audit trail.
+- **Never log the Laltex API key** in full. Truncate to last 4 chars
+  for debug (`...9f28`) if logging is needed at all.
+- `supplier_products` writes are **service-role only** (RLS); reads are
+  open to authenticated + anon. Preserve this grant split — the AI
+  widget will eventually read as anon.
+- Do not commit `site/docs/laltex-samples/` — it contains real trade
+  prices and is already `.gitignore`d.
