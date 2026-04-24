@@ -1678,21 +1678,76 @@ does not edit any frontend code or Edge Function.
 
 ### 30.6 Known follow-ups
 
+#### Descriptive Copy Backfill (post-launch task)
+
+**23 of 25 PGifts-Direct products have empty `description` fields** in
+the source `catalog_products` table. Only `chi-cup` (370 chars) and
+`a6-pocket-notebook` (94 chars) carry real descriptive text. The rest
+lean on `subtitle` ("Premium promotional product", etc.) plus
+`catalog_product_features` — which the migration folds into `keywords`
+so it does reach `buildEmbeddingSourceText()` — but this gives
+PGifts-Direct embeddings materially less signal than Laltex embeddings,
+every one of which carries a proper description.
+
+**Consequence:** in semantic retrieval, PGifts-Direct products will
+likely rank below comparable Laltex products on the same query,
+**despite being the better-integrated products** (Designer templates,
+3D previews, curated pricing, hex-value colour palettes). That's a
+quality/fairness problem we should fix before launch, not one we
+learn about in production.
+
+**Workflow when we tackle this:**
+
+1. Author 2–3 sentences of descriptive copy per PGifts-Direct product
+   (22 products total — `chi-cup` and `a6-pocket-notebook` already
+   have enough).
+2. `UPDATE catalog_products SET description = '...' WHERE slug = '...'`
+   for each.
+3. `cd site && node scripts/migrate-catalog-to-supplier-products.js`
+   — idempotent, re-shapes all 25 rows from updated sources.
+4. Nothing else to do. The 04:00 UTC embed cron detects the
+   `embedding_source_hash` change on the next run and re-embeds only
+   the affected rows; cost is ~$0.00005/product (§26.10.6 math).
+
+Don't pre-empt this work — wait until hybrid search (session 4b) lands
+so we can measure whether the gap is real and significant before
+asking someone to write copy. If 4b's tsvector side covers for the
+thin descriptions on literal-keyword queries, the priority drops.
+
+#### Forward flag for session 4b (hybrid search)
+
+**`pricing_model = 'coverage'` is a real value.** Exactly one product
+(`chi-cup`) uses this pricing model — it's the only full-wrap product
+in the catalogue. Session 4b's search function / filter SQL must treat
+`pricing_model` as an **open set of at least `{flat, clothing, coverage}`**
+— do NOT hardcode `('flat','clothing')` in IN-lists or CHECK-like
+filters. The canonical location of this value on migrated rows is
+`raw_payload.pricing_model`; for Laltex rows it's absent (default to
+null when consumers check it).
+
+#### Forward flag for session 5 (AI assistant UI)
+
+**HexValue is a PGifts-Direct-only field.** The migration script
+preserves `hex_value` from `catalog_product_colors` into each
+`items[].HexValue` entry. Laltex's feed provides PMS codes but no hex,
+so Laltex rows' `items[].HexValue` is uniformly null. The chat widget
+results view can exploit this as a **visible differentiator** for
+curated products — render hex-swatches inline for PGifts-Direct
+results; fall back to image-based swatches for Laltex. Don't treat
+this as a gap in Laltex's data; it's an intrinsic feature-parity
+difference worth surfacing.
+
+#### Other follow-ups
+
 - **Frontend unification.** A future session migrates
   ProductDetailPage, CustomerQuotes, and the Designer's product-
   lookup logic to read from `supplier_products` directly, at which
   point `catalog_products` can be retired. Out of scope here.
-- **Description thinness.** Most PGifts-Direct rows have an empty
-  `description` field in source; `keywords` (from features) is the
-  only descriptive text that reaches the embedding source text.
-  If retrieval quality on PGifts-Direct products lags Laltex,
-  hybrid search (tsvector + vector) in session 4b may compensate;
-  if still insufficient, a descriptive field in `catalog_products`
-  is the follow-up.
 - **Subtitle is cold storage.** `catalog_products.subtitle` is
   preserved in `raw_payload` but not currently folded into the
-  supplier_products source text. Reconsider if semantic search
-  underperforms on PGifts-Direct.
+  `supplier_products` source text. Reconsider only if descriptive-
+  copy backfill (above) is still insufficient and hybrid search
+  doesn't close the gap.
 
 ### 30.7 Invariants — DO NOT BREAK
 
