@@ -447,7 +447,7 @@ All three route to `/account/quotes` on success, with a flash banner `"Quote cre
 
 ---
 
-*Last updated: 24 April 2026 — session 3b: §27 rewritten to cover both sync + embed crons (rename sync_runs→job_runs, job_type column, embed failure policy, per-route env var table); §28 extended with §§28.2 (production-vs-local latency) and §28.3 (PowerShell 100s timeout). §27 originally added earlier 24 April 2026 (session 3a). §28 opened earlier 24 April 2026 with §28.1 PostgREST 1000-row cap. §§26.10.x added earlier 24 April 2026 (session 2). §26 added 24 April 2026 (session 1). §§19-25 added 23 April 2026 for Buy Now / shared auth gate / transactional email / scroll management / quote total pre-insert / compact product page layout / forgot password. §§2, 3, 8.4, 10, 11, 12, 13, 18 refreshed.*
+*Last updated: 24 April 2026 — session 4a: §26.11 Multi-supplier product ontology added; §30 PGifts Direct Migration added (mirror strategy, field mapping, approved 25-row category mapping with Safety Wear override for hi-vis-vest, idempotent rerun, follow-ups, invariants). §28.4 pkey-rename gotcha added earlier today (session 3b follow-up). Session 3b: §27 rewritten to cover both sync + embed crons (rename sync_runs→job_runs, job_type column, embed failure policy, per-route env var table); §§28.2 / 28.3 production-vs-local latency + PowerShell 100s timeout. §27 originally added earlier 24 April 2026 (session 3a). §28 opened earlier 24 April 2026 with §28.1 PostgREST 1000-row cap. §§26.10.x added earlier 24 April 2026 (session 2). §26 added 24 April 2026 (session 1). §§19-25 added 23 April 2026 for Buy Now / shared auth gate / transactional email / scroll management / quote total pre-insert / compact product page layout / forgot password. §§2, 3, 8.4, 10, 11, 12, 13, 18 refreshed.*
 *Update this file at the end of every significant session.*
 
 ---
@@ -1225,6 +1225,41 @@ source recipe or the model" a cheap decision, not a scary one.
 
 ---
 
+### 26.11 Multi-supplier product ontology (session 4a)
+
+As of session 4a, `supplier_products` is the unified AI-searchable
+catalogue spanning multiple suppliers. The `suppliers` table carries
+two rows:
+
+| slug | source | volume | Notes |
+|---|---|---|---|
+| `laltex` | External trade API | 1192 | Nightly pull (`sync-laltex` cron, 03:00 UTC) + embed (`embed-laltex` cron, 04:00 UTC) |
+| `pgifts-direct` | Internally curated | 25 | Mirrored from `catalog_products` via `scripts/migrate-catalog-to-supplier-products.js` (idempotent, rerun anytime) |
+
+The 25 PGifts-Direct products **still live in `catalog_products`** —
+the Designer, ProductDetailPage, and CustomerQuotes continue to read
+from there. `supplier_products` has equivalent rows so AI semantic
+search can reason across both pools in one query. **Do not delete
+any `catalog_*` rows** — `supplier_products` is additive, not a
+replacement, until a future session unifies the frontend reads.
+
+**`raw_payload` as the reconciliation anchor:** every PGifts-Direct
+row's `raw_payload` snapshots the joined source state —
+`catalog_products`, all related `catalog_pricing_tiers`, `catalog_print_pricing`,
+`catalog_product_colors`, `catalog_product_images`, `catalog_product_features`,
+`catalog_product_specifications`, and the linked `product_templates`
+row. That means the "this product has a Designer template" /
+"this product is a 3D Chi Cup preview" / "this product has a
+hex-value colour palette" signal survives the mirror for the AI
+assistant UI to read later.
+
+For Laltex rows `raw_payload` is the raw API response; for
+PGifts-Direct it's the cross-joined catalog snapshot. Future code
+reading `raw_payload` should branch on `raw_payload.source` (`'catalog_products'`
+for direct, unset / Laltex-shape for external).
+
+---
+
 ## 27. NIGHTLY JOBS ARCHITECTURE (sessions 3a + 3b)
 
 Two Vercel Cron jobs now run nightly against the Laltex pipeline,
@@ -1516,3 +1551,164 @@ constraint renames. Cosmetic only — functionality is unaffected — but
 keeps `\d+` output and schema dumps readable. See
 [`supabase/migrations/20260424_rename_sync_runs_to_job_runs.sql`](../supabase/migrations/20260424_rename_sync_runs_to_job_runs.sql)
 section 6 for the concrete pattern.
+
+---
+
+## 30. PGIFTS DIRECT MIGRATION (session 4a)
+
+Session 4a mirrors the 25 internally-curated `catalog_products` rows
+into `supplier_products` under the new `'pgifts-direct'` supplier
+row, so a single AI-searchable pool spans both Laltex (1192) and
+PGifts Direct (25) for a total of 1217 embedded products.
+
+### 30.1 Strategy: MIRROR, not MOVE
+
+- `catalog_products` stays the source of truth for Designer,
+  ProductDetailPage, CustomerQuotes, and every other user-facing
+  read path.
+- `supplier_products` gets equivalent rows. `raw_payload` snapshots
+  the joined source state so the mirror is fully reconcilable.
+- Duplicate data is explicitly accepted during this transitional
+  phase. A future session unifies the frontend reads; until then
+  **do not delete any `catalog_*` rows** and **do not edit the 25
+  `supplier_products` rows by hand** — rerun the migration script
+  if the source changes.
+
+### 30.2 Field mapping
+
+| supplier_products field | Source | Notes |
+|---|---|---|
+| `supplier_product_code` | `catalog_products.slug` | Stable, already unique, already URL-load-bearing |
+| `name`, `title` | `catalog_products.name` | Both set to `name`; no separate web title |
+| `description`, `web_description` | `catalog_products.description` | Often empty string in source — session 2 `presentField()` drops empties from the embedding source text |
+| `keywords` | Concatenated `catalog_product_features.feature_text` | No `keywords` column on `catalog_products`; features are the natural keyword source |
+| `available_colours` | Joined active `catalog_product_colors.color_name` | Comma-separated; feeds `buildEmbeddingSourceText()` |
+| `category` / `sub_category` | Approved mapping (see §30.4) | Two-level, Laltex-aligned where possible |
+| `supplier_division` | Literal `'PGifts Direct'` | Distinguishes from Laltex divisions (`PRE`, `BHQ`, etc.) |
+| `minimum_order_qty` | `catalog_products.min_order_quantity` | |
+| `images` | `catalog_product_images.image_url` (primary first, then sort_order) | URL strings only; hosted on Supabase Storage not Laltex CDN |
+| `items` | `catalog_product_colors` → Laltex `Items[]` shape | Adds `HexValue` field (PGifts has hex, Laltex doesn't — retained as a bonus field) |
+| `product_pricing` | `catalog_pricing_tiers` → `{min_qty, max_qty, price, is_poa:false, note}` | Straight map |
+| `print_details` | `catalog_print_pricing` matrix → single entry with `PrintPosition='Customer Choice'` | See §30.3 for the shape decision |
+| `raw_payload` | Cross-joined catalog snapshot + `product_templates` row | Cold storage; `raw_payload.pricing_model` carries the source enum (`'flat'`/`'clothing'`/`'coverage'`) |
+| `last_synced_at` | Now (migration runtime) | |
+| `embedding`, `embedding_source_hash`, `embedded_at` | Left NULL | The 04:00 UTC embed cron picks these rows up on next run |
+
+### 30.3 `print_details` shape (approved 2026-04-24)
+
+`catalog_print_pricing` has no `position` column — it's a
+`(min_qty × colour_count × colour_variant)` matrix with positions
+chosen by the customer at Configure-&-Quote time. We represent it
+as **one** `print_details` entry per product with:
+
+- `PrintClass: 'CURATED'`
+- `PrintType: 'Spot Print'`
+- `PrintPosition: 'Customer Choice'`
+- `PrintPrice[]` carries every matrix row as
+  `{NumColours, NumPosition:1, MinQuantity, MaxQuantity, Price, ColourVariant}`.
+- `ColourVariant` (`'white' | 'coloured'`) is an **added field**
+  vs. Laltex's PrintPrice shape — PascalCase for jsonb_path_query
+  consistency. Laltex rows simply won't carry it; consumers should
+  treat it as optional.
+- `PrintAreaCoordinates: []` — the Designer owns print-area
+  coordinates in the separate `print_areas` table, not here.
+
+### 30.4 Approved category mapping
+
+| Source `slug` | `category` | `sub_category` |
+|---|---|---|
+| `5oz-cotton-bag` | Bags | Cotton Bags |
+| `5oz-recycled-cotton-bag` | Bags | Recycled Cotton Bags |
+| `5oz-mini-cotton-bag` | Bags | Mini Cotton Bags |
+| `8oz-canvas` | Bags | Canvas Bags |
+| `12oz-recycled-canvas` | Bags | Recycled Canvas Bags |
+| `a5-notebook` | Notebooks | A5 Notebooks |
+| `a6-pocket-notebook` | Notebooks | A6 Pocket Notebooks |
+| `chi-cup` | Drinkware | Coffee Cups |
+| `water-bottle` | Drinkware | Water Bottles |
+| `edge-classic` | Writing | Plastic Pens |
+| `edge-silver` | Writing | Plastic Pens |
+| `edge-white` | Writing | Plastic Pens |
+| `gamma-lite` | Power | Power Banks |
+| `ice-p` | Power | Power Banks |
+| `luggie` | Power | Power Banks |
+| `mr-bio` | Cables | Charging Cables |
+| `mr-bio-pd-long` | Cables | Charging Cables |
+| `ocean-octopus` | Cables | Charging Cables |
+| `octopus-mini` | Cables | Charging Cables |
+| `polo` | Clothing | Polos |
+| `hoodie` | Clothing | Hoodies |
+| `sweatshirts` | Clothing | Sweatshirts |
+| `t-shirts` | Clothing | T-Shirts |
+| `hi-vis-vest` | **Safety Wear** | Hi-Vis Vests |
+| `tea-towel` | Homeware | Tea Towels |
+
+**Notable overrides from Laltex alignment:**
+
+- **`hi-vis-vest` → `Safety Wear > Hi-Vis Vests`** (not `Clothing`).
+  PPE clusters distinctly from apparel in semantic search; future
+  Laltex safety products will land here too.
+- **`tea-towel` → `Homeware > Tea Towels`** — Laltex doesn't have
+  an equivalent subcategory today. Best generic bucket of the
+  four alternatives considered.
+
+The mapping is baked into
+[`scripts/migrate-catalog-to-supplier-products.js`](../scripts/migrate-catalog-to-supplier-products.js)
+as `CATEGORY_MAPPING`. Any future category changes: edit the
+constant and rerun the script — idempotent on
+`(supplier_id, supplier_product_code)`.
+
+### 30.5 Re-running the migration
+
+```bash
+cd site
+node scripts/migrate-catalog-to-supplier-products.js --dry-run   # review shape
+node scripts/migrate-catalog-to-supplier-products.js             # live upsert
+```
+
+Idempotent. Re-run whenever `catalog_*` rows change and you want
+the `supplier_products` mirror refreshed. The script never touches
+`embedding` / `embedding_source_hash` / `embedded_at` — the embed
+cron picks up hash-changed rows on the next 04:00 UTC run.
+
+The script ONLY reads from `catalog_*` and writes to
+`supplier_products`. It does not mutate `catalog_*`, does not
+write to `product_templates`, does not touch `user_designs`, and
+does not edit any frontend code or Edge Function.
+
+### 30.6 Known follow-ups
+
+- **Frontend unification.** A future session migrates
+  ProductDetailPage, CustomerQuotes, and the Designer's product-
+  lookup logic to read from `supplier_products` directly, at which
+  point `catalog_products` can be retired. Out of scope here.
+- **Description thinness.** Most PGifts-Direct rows have an empty
+  `description` field in source; `keywords` (from features) is the
+  only descriptive text that reaches the embedding source text.
+  If retrieval quality on PGifts-Direct products lags Laltex,
+  hybrid search (tsvector + vector) in session 4b may compensate;
+  if still insufficient, a descriptive field in `catalog_products`
+  is the follow-up.
+- **Subtitle is cold storage.** `catalog_products.subtitle` is
+  preserved in `raw_payload` but not currently folded into the
+  supplier_products source text. Reconsider if semantic search
+  underperforms on PGifts-Direct.
+
+### 30.7 Invariants — DO NOT BREAK
+
+- **Do NOT delete `catalog_*` rows.** Mirror strategy depends on
+  them staying intact.
+- **Do NOT edit PGifts-Direct `supplier_products` rows by hand.**
+  Rerun the migration script so `raw_payload` stays truthful.
+- **Do NOT pre-embed the new rows.** The 04:00 UTC cron is the
+  single embed entry point; preserving that keeps the pipeline
+  consistent and observable via `job_runs` with `job_type='embed'`.
+- **Do NOT reuse `supplier_product_code` values between suppliers.**
+  The unique constraint is `(supplier_id, supplier_product_code)`
+  so technically allowed, but semantically a code should identify
+  one product globally — if Laltex ever ships a product whose code
+  collides with a PGifts-Direct slug, rename ours.
+- **Do NOT change the category mapping without reapproval.** The
+  mapping is baked into the script AND §30.4 — both must stay in
+  sync. Future supplier additions that need similar mapping should
+  follow the same human-checkpoint pattern used in session 4a.
