@@ -447,7 +447,7 @@ All three route to `/account/quotes` on success, with a flash banner `"Quote cre
 
 ---
 
-*Last updated: 24 April 2026 — §26 Laltex Integration Architecture added (session 1: foundation schema + single-product sync). §§19-25 added 23 April 2026 for Buy Now / shared auth gate / transactional email / scroll management / quote total pre-insert / compact product page layout / forgot password. §§2, 3, 8.4, 10, 11, 12, 13, 18 refreshed.*
+*Last updated: 24 April 2026 — §§26.10.x added (session 2: embedding pipeline — model, source recipe, hash idempotency, ivfflat index, cost estimates, invariants). §26 Laltex Integration Architecture added earlier 24 April 2026 (session 1: foundation schema + single-product sync). §§19-25 added 23 April 2026 for Buy Now / shared auth gate / transactional email / scroll management / quote total pre-insert / compact product page layout / forgot password. §§2, 3, 8.4, 10, 11, 12, 13, 18 refreshed.*
 *Update this file at the end of every significant session.*
 
 ---
@@ -1041,7 +1041,7 @@ duplicate. The ON CONFLICT clause refreshes all data columns.
 - AI assistant backend (function-calling, prompt caching)
 - AI assistant UI (chat widget, persistent dashboard tab)
 
-### 26.9 Invariants — DO NOT BREAK
+### 26.9 Invariants — DO NOT BREAK (sync)
 
 - Sync writes **raw cost only** — never apply markup at sync time.
 - Sync **never touches** existing `catalog_*` tables or any
@@ -1055,3 +1055,170 @@ duplicate. The ON CONFLICT clause refreshes all data columns.
   widget will eventually read as anon.
 - Do not commit `site/docs/laltex-samples/` — it contains real trade
   prices and is already `.gitignore`d.
+
+---
+
+### 26.10 Embedding pipeline (session 2)
+
+Semantic-search layer over `supplier_products`. Each product gets one
+1536-dim vector stored on the row alongside the data it was derived
+from. Session 2 embedded MG0192 as a proof; session 3 does the full
+catalogue batch.
+
+#### 26.10.1 Model and storage
+
+| Property | Value |
+|---|---|
+| Model | `text-embedding-3-small` |
+| Dimensions | 1536 |
+| Cost | $0.02 / 1M input tokens |
+| DB column | `supplier_products.embedding vector(1536)` |
+| Index | `supplier_products_embedding_idx` — ivfflat, `vector_cosine_ops`, `lists=100` |
+| Distance metric | Cosine (`<=>` operator) |
+| Model const | `EMBEDDING_MODEL` in [scripts/lib/embedding.js](../scripts/lib/embedding.js) — single source of truth |
+
+The embedding lives on the same row as the product data. One row, one
+vector. No separate embedding table — it would just add a join on every
+query for no benefit.
+
+#### 26.10.2 Source text recipe
+
+Implemented by `buildEmbeddingSourceText(product)` in
+[scripts/lib/embedding.js](../scripts/lib/embedding.js). The recipe:
+
+```
+[name]. [name].                              ← duplicated for weighting
+[category] > [sub_category].
+[description OR web_description].
+Keywords: [keywords].
+Material: [material].
+Available in [available_colours].
+```
+
+Rules:
+- Name is emitted twice — the strongest search-intent signal deserves
+  ~2× weight in the bag-of-tokens view.
+- `description` falls back to `web_description` (and vice versa).
+- Any null/empty field drops the **whole segment** — we never emit
+  `"Material: null"`.
+- Whitespace is squashed (single spaces, trimmed) and the final string
+  is capped at 8000 chars (≈2000 tokens, well under the model's 8191
+  token context).
+
+Reference output for MG0192 (513 chars):
+```
+Polo Plus 400ml Travel Mug. Polo Plus 400ml Travel Mug. Drinkware >
+Plastic Travel Mugs. 400ml double walled, solid AS plastic coloured
+travel mug with black PP plastic inner, screw on lid and matching
+coloured sip cover. BPA & PVC free.. Keywords: travel,drinkware,400ml,
+double walled,plastic,mug,thermal,reusable,screw lid,hot drinks,home,
+office,handle,indoor,outdoor. Material: PP plastic. Available in Amber,
+Black, Blue, Burgundy, Cyan, Green, Grey, Light Green, Light Pink,
+Pink, Purple, Red, White, Yellow.
+```
+
+#### 26.10.3 Idempotency (SHA-256 source hash)
+
+`supplier_products.embedding_source_hash` stores the SHA-256 hex of the
+source text used at embed time. The embed script computes a fresh hash
+from the current row **before** calling OpenAI; if it matches the stored
+hash AND `embedding IS NOT NULL`, the API call is **skipped entirely**.
+
+This is a hard cost-control mechanism, not a nice-to-have. At 10k
+catalogue rows, unconditional re-embedding on every nightly sync would
+be:
+- **~$0.03 of API cost per run** (pocket change), but
+- **~10 minutes of API latency**, and
+- **pointless load** on a shared API key.
+
+Re-embed happens only when:
+1. Any source field changes (name, category, sub_category, description,
+   keywords, material, available_colours) — hash diverges, API call
+   fires.
+2. `embedding` is explicitly NULLed (e.g. during a manual reset or after
+   dropping the column for a model change).
+
+The hash anchor is content-based, not timestamp-based. It survives
+equivalent re-writes (same values synced twice via UPSERT).
+
+#### 26.10.4 Retrieval query shape
+
+```sql
+SELECT supplier_product_code, name,
+       1 - (embedding <=> $1::vector) AS similarity
+FROM supplier_products
+WHERE embedding IS NOT NULL
+ORDER BY embedding <=> $1::vector
+LIMIT N;
+```
+
+The query embedding is generated **fresh every call** — no client-side
+caching. Each query costs ~5–10 tokens (~$0.0000002). Caching would add
+complexity without meaningful savings.
+
+`1 - (distance)` converts pgvector's cosine distance into the
+conventional "similarity" number (1.0 = identical, 0.0 = orthogonal,
+negative for opposite directions).
+
+Expected similarity bands (calibrated against MG0192 + plausible
+queries on the one-product corpus):
+- `> 0.50` — strong match (correct product family + intent)
+- `0.30 – 0.50` — related but materially different (e.g. wrong material)
+- `< 0.30` — unrelated category; safe to drop from results
+
+These are loose heuristics, not thresholds — session 4's assistant
+should probably sort by similarity and show the top N rather than
+filter by absolute score.
+
+#### 26.10.5 Index choice: ivfflat at this scale
+
+`ivfflat lists=100` is chosen for the ≤10k-row catalogue we will reach
+at the end of session 3. Notes:
+
+- At 1 row (session 2), the index is trivially used but meaningless.
+- At 10k rows, `sqrt(N) ≈ 100` is the ivfflat heuristic sweet spot.
+- **Index build is ~instant at 1 row, but will take 1–several minutes
+  at 10k embedded rows.** Session 3 should embed first, THEN rebuild the
+  index (DROP + CREATE) — much faster than maintaining the index during
+  10k sequential INSERTs.
+- Revisit when the catalogue crosses ~20k rows: either bump `lists` or
+  switch to `hnsw` (better recall/latency at the cost of build time and
+  memory).
+
+#### 26.10.6 Cost estimates
+
+Observed: MG0192 embeds at **136 tokens** per embed, ≈ $0.0000027
+(~0.0002p) per product.
+
+Extrapolated to the full Laltex catalogue:
+- ~136 tokens/product is conservative (MG0192 is mid-length).
+- **10k products × 136 tokens ≈ 1.36M tokens ≈ $0.027 (~2.1p)** for
+  a full rebuild.
+- Day-to-day nightly runs cost essentially zero — only products whose
+  source hash changed will re-embed.
+
+These numbers make "re-embed the whole catalogue if we change the
+source recipe or the model" a cheap decision, not a scary one.
+
+#### 26.10.7 Invariants — DO NOT BREAK (embeddings)
+
+- **`EMBEDDING_MODEL` has ONE definition** — in `scripts/lib/embedding.js`.
+  Every script imports the constant. Do not hardcode `text-embedding-
+  3-small` elsewhere; changing the model must be a one-line edit.
+- **Never call OpenAI without the hash gate first.** The gate must fire
+  *before* the API call, not after. Batch scripts in session 3 must
+  preserve this contract.
+- **Model change implies schema change.** If `EMBEDDING_MODEL` changes
+  to a different-dimension model (e.g. `text-embedding-3-large` is
+  3072 dims), the `embedding` column type must change and every row
+  must be re-embedded. There is no in-place model swap.
+- **Source recipe change is a hash-bust.** Any edit to
+  `buildEmbeddingSourceText` will change every hash on next run →
+  every row re-embeds. That's fine and cheap (§26.10.6), but be
+  deliberate — small cosmetic tweaks still trigger a full rebuild.
+- **Query embeddings are generated fresh** — no caching in the search
+  script. Preserve this for session 4 until there's a measured reason
+  to cache.
+- **Do not run full-catalogue embed logic in session 2.** That is the
+  explicit boundary of session 3 (scope discipline, not a technical
+  limit).
