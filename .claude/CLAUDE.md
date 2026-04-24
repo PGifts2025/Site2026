@@ -1498,3 +1498,21 @@ default.
 **Scope:** Any manual testing of long-running Vercel functions from
 PowerShell. Doesn't affect Vercel Cron itself (that's server-to-
 server) — only humans triggering the endpoint manually.
+
+### 28.4 Postgres `ALTER TABLE RENAME` does not auto-rename pkey constraints
+
+**What it is:** `ALTER TABLE sync_runs RENAME TO job_runs` carries the
+pkey *index* over (Postgres renames `sync_runs_pkey` → `job_runs_pkey`
+automatically — old docs say so) but in practice the pkey **constraint
+name** survives as `sync_runs_pkey`. Session 3b's rename migration hit
+this live on 2026-04-24: after the RENAME, `SELECT conname FROM
+pg_constraint WHERE conrelid='job_runs'::regclass` still showed
+`sync_runs_pkey`. Non-pkey named constraints (CHECK, FK) never auto-
+rename and are universally known to need explicit `RENAME CONSTRAINT`.
+
+**How to fix it:** Add explicit `ALTER TABLE <new_name> RENAME
+CONSTRAINT <old_name>_pkey TO <new_name>_pkey;` alongside the other
+constraint renames. Cosmetic only — functionality is unaffected — but
+keeps `\d+` output and schema dumps readable. See
+[`supabase/migrations/20260424_rename_sync_runs_to_job_runs.sql`](../supabase/migrations/20260424_rename_sync_runs_to_job_runs.sql)
+section 6 for the concrete pattern.
