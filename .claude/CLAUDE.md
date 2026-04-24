@@ -447,7 +447,7 @@ All three route to `/account/quotes` on success, with a flash banner `"Quote cre
 
 ---
 
-*Last updated: 24 April 2026 — §27 Nightly Sync Architecture added (session 3a: cron split, Management-API-vs-PostgREST distinction, continue-with-logging policy, observability tables, blast-radius mitigation, cron auth, invariants). §§26.10.x added earlier 24 April 2026 (session 2: embedding pipeline). §26 Laltex Integration Architecture added 24 April 2026 (session 1). §§19-25 added 23 April 2026 for Buy Now / shared auth gate / transactional email / scroll management / quote total pre-insert / compact product page layout / forgot password. §§2, 3, 8.4, 10, 11, 12, 13, 18 refreshed.*
+*Last updated: 24 April 2026 — §28 Known Gotchas added (Supabase PostgREST 1000-row cap) + §27.1 heads-up for session 3b single-batch embed (catalogue is 1192, under OpenAI's 2048-input limit). §27 Nightly Sync Architecture added earlier 24 April 2026 (session 3a). §§26.10.x added earlier 24 April 2026 (session 2: embedding pipeline). §26 Laltex Integration Architecture added 24 April 2026 (session 1). §§19-25 added 23 April 2026 for Buy Now / shared auth gate / transactional email / scroll management / quote total pre-insert / compact product page layout / forgot password. §§2, 3, 8.4, 10, 11, 12, 13, 18 refreshed.*
 *Update this file at the end of every significant session.*
 
 ---
@@ -1243,6 +1243,14 @@ sync+embed in one go, and the two operations have different failure
 domains (Laltex outage vs. OpenAI outage) that we want to isolate.
 A failed embed run doesn't block the next night's sync, and vice versa.
 
+**Heads-up for session 3b:** the actual Laltex catalogue is 1192
+products (not the ~10k originally estimated). That fits **comfortably
+under OpenAI's 2048-input-per-call `/v1/embeddings` batch limit** — a
+clean full rebuild can be done in a **single batched API call**, no
+per-row loop needed. Adjust session 3b's batching to single-batch
+when the prompt lands; fallback to multi-batch logic remains
+good-hygiene for future growth.
+
 ### 27.2 DB access patterns — do not mix these up
 
 Two distinct DB-access paths coexist, each fit-for-purpose:
@@ -1353,3 +1361,44 @@ recovery) in [`docs/VERCEL_CRON_SETUP.md`](../docs/VERCEL_CRON_SETUP.md).
   environment (Production + Preview).
 - **Do NOT commit the service-role key.** It bypasses RLS. Storage
   is `.env` + Vercel env only.
+
+---
+
+## 28. KNOWN GOTCHAS
+
+Infrastructure-level quirks that have caught us out. Each entry is a
+thing that looked right, ran green, and turned out to be subtly wrong.
+Add future gotchas here, each with: what it is, how to detect it, how
+to fix it.
+
+### 28.1 Supabase PostgREST silently caps responses at 1000 rows
+
+**What it is:** `GET /rest/v1/{table}` against Supabase enforces a
+server-side `max-rows=1000` limit on response size. This applies even
+when authenticated with `SUPABASE_SERVICE_ROLE_KEY`, even when you pass
+`?limit=5000`, and even with `Range: 0-9999` headers — all three are
+silently ignored beyond 1000 rows. The response `Content-Range` header
+gives it away (`0-999/*`), but nothing about the HTTP status or shape
+suggests truncation.
+
+**How to detect it:**
+- Counters that look impossibly clean. Session 3a's first idempotent
+  re-run reported `inserted=192 updated=1000` for a 1192-row catalogue —
+  the 192 "inserts" were actually updates on rows past the 1000-row
+  page boundary that `getExistingCodes()` couldn't see.
+- Any `SELECT` against a Supabase table bigger than 1000 rows that
+  doesn't loop will silently truncate. If downstream logic depends on
+  "I just read every row", that logic is broken.
+- `Content-Range: 0-999/*` with `Accept-Ranges: items` on the response.
+
+**How to fix it:** Paginate explicitly with `?limit=1000&offset=N`,
+loop until a page returns fewer than 1000 rows. Example pattern in
+[`site/scripts/lib/laltex-sync.js`](../scripts/lib/laltex-sync.js)
+`getExistingCodes()`. Use `&order=<stable_column>.asc` so pagination
+is deterministic.
+
+**Scope:** Applies to every PostgREST `GET` from serverless code —
+cron jobs, Edge Functions, anywhere that does bulk reads. Single-row
+`eq.` lookups are fine. The Management API (`/database/query` with a
+PAT) has its own limits but doesn't share this specific cap; it's
+bounded by response size instead.
