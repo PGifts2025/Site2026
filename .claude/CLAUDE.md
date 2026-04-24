@@ -447,7 +447,7 @@ All three route to `/account/quotes` on success, with a flash banner `"Quote cre
 
 ---
 
-*Last updated: 24 April 2026 — §28 Known Gotchas added (Supabase PostgREST 1000-row cap) + §27.1 heads-up for session 3b single-batch embed (catalogue is 1192, under OpenAI's 2048-input limit). §27 Nightly Sync Architecture added earlier 24 April 2026 (session 3a). §§26.10.x added earlier 24 April 2026 (session 2: embedding pipeline). §26 Laltex Integration Architecture added 24 April 2026 (session 1). §§19-25 added 23 April 2026 for Buy Now / shared auth gate / transactional email / scroll management / quote total pre-insert / compact product page layout / forgot password. §§2, 3, 8.4, 10, 11, 12, 13, 18 refreshed.*
+*Last updated: 24 April 2026 — session 3b: §27 rewritten to cover both sync + embed crons (rename sync_runs→job_runs, job_type column, embed failure policy, per-route env var table); §28 extended with §§28.2 (production-vs-local latency) and §28.3 (PowerShell 100s timeout). §27 originally added earlier 24 April 2026 (session 3a). §28 opened earlier 24 April 2026 with §28.1 PostgREST 1000-row cap. §§26.10.x added earlier 24 April 2026 (session 2). §26 added 24 April 2026 (session 1). §§19-25 added 23 April 2026 for Buy Now / shared auth gate / transactional email / scroll management / quote total pre-insert / compact product page layout / forgot password. §§2, 3, 8.4, 10, 11, 12, 13, 18 refreshed.*
 *Update this file at the end of every significant session.*
 
 ---
@@ -1225,31 +1225,38 @@ source recipe or the model" a cheap decision, not a scary one.
 
 ---
 
-## 27. NIGHTLY SYNC ARCHITECTURE (session 3a)
+## 27. NIGHTLY JOBS ARCHITECTURE (sessions 3a + 3b)
 
-Full-catalogue Laltex sync runs on Vercel Cron. Session 3a ships the
-sync half; session 3b adds the embedding half on a separate cron so
-each has its own 5-minute budget.
+Two Vercel Cron jobs now run nightly against the Laltex pipeline,
+each on its own 5-minute budget. Both write to a single shared
+observability table (`job_runs`) distinguished by the `job_type`
+column.
 
 ### 27.1 Cron split
 
-| Cron | Schedule (UTC) | Purpose | Scope |
-|---|---|---|---|
-| `sync-laltex` | `0 3 * * *` | `/v1/products/list` → UPSERT `supplier_products` | Session 3a (this) |
-| `embed-laltex` | `0 4 * * *` | embed newly-hashed rows only | Session 3b (future) |
+| Cron | Schedule (UTC) | `job_type` | Purpose | Shipped |
+|---|---|---|---|---|
+| `sync-laltex`  | `0 3 * * *` | `'sync'`  | `/v1/products/list` → UPSERT `supplier_products` | Session 3a |
+| `embed-laltex` | `0 4 * * *` | `'embed'` | hash-gated batched embed of changed `supplier_products` rows | Session 3b |
 
 Why split: Vercel Cron's 5-minute ceiling is uncomfortable for
 sync+embed in one go, and the two operations have different failure
 domains (Laltex outage vs. OpenAI outage) that we want to isolate.
 A failed embed run doesn't block the next night's sync, and vice versa.
 
-**Heads-up for session 3b:** the actual Laltex catalogue is 1192
-products (not the ~10k originally estimated). That fits **comfortably
-under OpenAI's 2048-input-per-call `/v1/embeddings` batch limit** — a
-clean full rebuild can be done in a **single batched API call**, no
-per-row loop needed. Adjust session 3b's batching to single-batch
-when the prompt lands; fallback to multi-batch logic remains
-good-hygiene for future growth.
+**Gap rationale.** Observed sync duration on production is ~90s; the
+1-hour gap to 04:00 UTC means embed always runs against a stable,
+fully-settled `supplier_products` state, never mid-UPSERT. If sync
+ever approaches the budget, reconsider — but at 1192 products it's
+nowhere close.
+
+**OpenAI batching today.** The live Laltex catalogue is 1192 products,
+well under the `text-embedding-3-small` 2048-input-per-call cap, so
+embed issues a **single** batched `embeddings.create` call. If the
+catalogue ever crosses ~2000 rows, extend `scripts/lib/laltex-embed.js`
+to chunk at `OPENAI_BATCH_MAX_INPUTS`; the single-batch path throws
+with a clear message if `embedRequested` exceeds the limit — surface,
+not silent half-embed.
 
 ### 27.2 DB access patterns — do not mix these up
 
@@ -1278,21 +1285,33 @@ cron, and rewriting it would be churn with no benefit.
 
 ### 27.3 Continue-with-logging failure policy
 
-One bad product never aborts the run.
+One bad row never aborts the run (for either job type).
 
+**Sync:**
 - **Infra-level failures** (Laltex network failure, auth, schema out of
-  sync) mark `sync_runs.status = 'failed'`, populate
-  `error_message`, and exit the loop. Tomorrow's cron retries.
-- **Per-product parse errors** land in `sync_failures` with
+  sync) mark `job_runs.status = 'failed'`, populate `error_message`,
+  and exit the loop. Tomorrow's cron retries.
+- **Per-product parse errors** land in `job_failures` with
   `reason='parse_error'` and the row still attempts to persist with
   nulls for the affected fields — best-effort.
-- **Per-product upsert failures** land in `sync_failures` with
+- **Per-product upsert failures** land in `job_failures` with
   `reason='upsert_failed'` and the row **keeps its previous
   `last_synced_at`** (failed UPSERT must not touch stale-ness).
-- **Unexpected exceptions** inside the loop land in `sync_failures`
+- **Unexpected exceptions** inside the loop land in `job_failures`
   with `reason='unexpected_error'` and the sync continues.
-- **`status='running'` at end-of-function is forbidden.** A `finally`
-  block always finalises to `'completed'` or `'failed'`.
+
+**Embed:**
+- **OpenAI batch failure** (single atomic call) marks
+  `job_runs.status='failed'`. Nothing partial is logged per-product
+  because nothing per-product was attempted. Tomorrow's cron retries.
+- **Per-row UPDATE failure** after a successful batch embed lands in
+  `job_failures` with `reason='embed_update_failed'`; other rows
+  continue to be written.
+- **`embedding_source_hash` is preserved on failed update** — the row
+  stays with its previous embedding, so retrieval keeps working.
+
+**Both:** `status='running'` at end-of-function is forbidden. A
+`finally` block always finalises to `'completed'` or `'failed'`.
 
 ### 27.4 Blast-radius mitigation on batch upsert
 
@@ -1305,44 +1324,66 @@ pathological case adds one chunk of 50 single-row retries.
 
 ### 27.5 Observability tables
 
-Schema in [`supabase/migrations/20260424_sync_runs_and_failures.sql`](../supabase/migrations/20260424_sync_runs_and_failures.sql).
+Originally shipped as `sync_runs` + `sync_failures` (session 3a); renamed
+to `job_runs` + `job_failures` in session 3b when the embed cron joined
+the same pipeline. Schema in
+[`supabase/migrations/20260424_sync_runs_and_failures.sql`](../supabase/migrations/20260424_sync_runs_and_failures.sql)
++ rename migration
+[`supabase/migrations/20260424_rename_sync_runs_to_job_runs.sql`](../supabase/migrations/20260424_rename_sync_runs_to_job_runs.sql).
 
-- `sync_runs` — one row per invocation. `run_type`, counters,
-  `duration_ms`, `triggered_by` (`'cron' | 'manual' | 'cli'`),
-  `metadata` JSONB, and a partial index on `WHERE status='running'`
-  for stuck-run detection.
-- `sync_failures` — per-product failure rows, FK `sync_run_id` with
-  `ON DELETE CASCADE`. `raw_snippet` JSONB carries a truncated slice
-  of the source payload (≤ 2000 chars) for debugging without letting
-  the failures table explode on pathological products.
+- `job_runs` — one row per invocation, across both job types.
+  - `job_type` `TEXT NOT NULL CHECK (job_type IN ('sync','embed'))` —
+    add new values to the CHECK as new job types land.
+  - `run_type` (`'full_catalogue'` today), counters, `duration_ms`,
+    `triggered_by` (`'cron' | 'manual' | 'cli'`), `metadata` JSONB
+    (embed metadata carries `openai_tokens_used` + `openai_cost_usd`
+    + `embed_skipped_unchanged`), partial index on
+    `WHERE status='running'` for stuck-run detection.
+- `job_failures` — per-row failure rows, FK `job_run_id` with
+  `ON DELETE CASCADE`. `raw_snippet` JSONB truncated to ~2000 chars.
+  `reason` is an open enum (`'parse_error'`, `'upsert_failed'`,
+  `'unexpected_error'`, `'empty_source_text'`, `'bad_embedding_shape'`,
+  `'embed_update_failed'`, …).
 
 RLS: SELECT open to authenticated + anon (admin dashboard reads);
 writes service-role only.
 
 ### 27.6 Cron auth
 
-Vercel Cron sends `Authorization: Bearer ${CRON_SECRET}` to
-`/api/cron/sync-laltex`. The handler verifies strictly (`401` on
-missing or wrong); no "unauthorised" body, just the status. Env vars
-required in Vercel: `CRON_SECRET`, `LALTEX_API_KEY`,
-`SUPABASE_SERVICE_ROLE_KEY`, `VITE_SUPABASE_URL`. Missing any →
-`500` with a clear `{ missing: [...] }` body so the cron logs make
-the misconfiguration obvious.
+Vercel Cron sends `Authorization: Bearer ${CRON_SECRET}` to each
+`/api/cron/*` route. Both handlers verify strictly (`401` on missing
+or wrong); no "unauthorised" body, just the status.
+
+Required Vercel env vars per route:
+
+| Route | Env vars needed (beyond `CRON_SECRET`) |
+|---|---|
+| `/api/cron/sync-laltex` | `LALTEX_API_KEY`, `VITE_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` |
+| `/api/cron/embed-laltex` | `OPENAI_API_KEY`, `VITE_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` |
+
+Missing any → `500` with a clear `{ missing: [...] }` body so the
+cron logs make the misconfiguration obvious.
 
 Full operational playbook (testing, env setup, inspection queries,
 recovery) in [`docs/VERCEL_CRON_SETUP.md`](../docs/VERCEL_CRON_SETUP.md).
 
-### 27.7 Files (session 3a)
+### 27.7 Files
 
-| File | Purpose |
-|---|---|
-| `supabase/migrations/20260424_sync_runs_and_failures.sql` | Observability tables + RLS |
-| `scripts/lib/laltex-parser.js` | Pure parsing helpers extracted from session 1; now shared |
-| `scripts/lib/laltex-sync.js` | Core `syncFullCatalogue(...)` — runs lifecycle, batching, fallback |
-| `scripts/sync-laltex-catalogue.js` | Local CLI runner (`triggered_by='cli'`) |
-| `api/cron/sync-laltex.js` | Vercel Serverless Function (`triggered_by='cron'`, `maxDuration: 300`) |
-| `vercel.json` | `crons[]` entry, `0 3 * * *` |
-| `docs/VERCEL_CRON_SETUP.md` | Ops playbook |
+| File | Added | Purpose |
+|---|---|---|
+| `supabase/migrations/20260424_sync_runs_and_failures.sql` | 3a | Initial observability tables + RLS |
+| `supabase/migrations/20260424_rename_sync_runs_to_job_runs.sql` | 3b | Rename to `job_runs`/`job_failures`, add `job_type` |
+| `scripts/lib/laltex-parser.js` | 3a | Pure parsing helpers |
+| `scripts/lib/laltex-sync.js` | 3a | `syncFullCatalogue(...)` — writes `job_type='sync'` |
+| `scripts/lib/laltex-embed.js` | 3b | `embedCatalogue(...)` — hash-gated embed, writes `job_type='embed'` |
+| `scripts/lib/embedding.js` | 2 | Embedding model + source-text recipe + hashing |
+| `scripts/sync-laltex-catalogue.js` | 3a | Local sync CLI |
+| `scripts/embed-laltex-catalogue.js` | 3b | Local embed CLI |
+| `scripts/smoke-test-cron-auth.js` | 3a→3b | Tests both routes' 401/401/200 contract |
+| `api/cron/sync-laltex.js` | 3a | Vercel Serverless Function — sync |
+| `api/cron/embed-laltex.js` | 3b | Vercel Serverless Function — embed |
+| `vercel.json` | 3a→3b | `crons[]` now has both entries |
+| `docs/VERCEL_CRON_SETUP.md` | 3a→3b | Ops playbook (both routes) |
 
 ### 27.8 Invariants — DO NOT BREAK
 
@@ -1350,17 +1391,24 @@ recovery) in [`docs/VERCEL_CRON_SETUP.md`](../docs/VERCEL_CRON_SETUP.md).
 - **Do NOT set `last_synced_at` on a failed UPSERT.** It's the anchor
   for stale-product detection — failed rows must show an older
   timestamp than the run that failed.
-- **Do NOT throw past the sync loop.** Every per-product failure is
-  `sync_failures` material, not an exception. The `finally` block
-  must always finalise `sync_runs`.
-- **Do NOT extend the sync cron to embeddings.** That's session 3b's
-  dedicated 04:00 UTC cron — keeping them independent preserves the
-  5-min budget and the failure isolation.
+- **Do NOT touch `embedding` or `embedding_source_hash` on a failed
+  embed update.** Same principle — a failed write must not break
+  existing retrieval.
+- **Do NOT throw past the sync or embed loop.** Every per-row failure
+  is `job_failures` material, not an exception. The `finally` block
+  must always finalise `job_runs`.
+- **Do NOT collapse the 03:00 / 04:00 crons.** Split is load-bearing
+  for the 5-min budget and for failure-domain isolation.
+- **Do NOT bypass the embed hash gate.** Calling OpenAI when the hash
+  matches is a cost-control violation (CLAUDE.md §26.10.7).
 - **Do NOT change `CRON_SECRET` on only one side.** Vercel and local
   `.env` must match, and the Vercel-side secret must match for every
   environment (Production + Preview).
 - **Do NOT commit the service-role key.** It bypasses RLS. Storage
   is `.env` + Vercel env only.
+- **Do NOT INSERT into `job_runs` without `job_type`.** The DEFAULT
+  was dropped post-backfill precisely so nothing can silently land
+  at `'sync'` by accident.
 
 ---
 
@@ -1402,3 +1450,69 @@ cron jobs, Edge Functions, anywhere that does bulk reads. Single-row
 `eq.` lookups are fine. The Management API (`/database/query` with a
 PAT) has its own limits but doesn't share this specific cap; it's
 bounded by response size instead.
+
+### 28.2 Production cron latency is ~1.7× local, not ~1.1×
+
+**What it is:** The sync cron takes ~52s when run from local CLI,
+but **~90s when invoked on Vercel production** (cold function +
+Vercel's US region ↔ Laltex UK round-trip latency + PostgREST batch
+round-trips through the Vercel → Supabase path). The 1.7× factor is
+bigger than intuition suggests.
+
+**How to detect it:** Compare `job_runs.duration_ms` between rows
+where `triggered_by='cli'` (your laptop) and `triggered_by='cron'`
+(Vercel). The two runs immediately after session 3a's merge showed
+53617 ms (cli) vs 90709 ms (cron) for identical 1192-row loads.
+
+**How to fix it (when it matters):** Not today — 90s is well under
+the 300s function budget. But at ~10k products the linear scale would
+push past the budget; mitigations in order of likely value:
+- Bump PostgREST batch size up from 50 (reduces round-trip count)
+- Parallelise batches (2–4 concurrent)
+- Split sync across multiple cron hits (cursor-based resume)
+
+**Scope:** Anywhere a Vercel serverless function talks to external
+APIs in bulk. The latency premium is additive across round-trips, so
+anything with N×fast-call patterns suffers more than single-call ones.
+
+### 28.3 PowerShell `Invoke-WebRequest` 100s default timeout
+
+**What it is:** On Windows, `Invoke-WebRequest` defaults to a ~100-
+second HTTP timeout. For requests that take longer, it doesn't fail
+cleanly — in practice we've seen it return the **SPA shell (`200`
+HTML)** from what looked like a successful request, making a timing
+problem look like a routing problem.
+
+**How to detect it:** A production cron endpoint returns correct
+401/401 on unauth/wrong-secret cases but the authenticated call comes
+back 200 with `text/html` body instead of the expected JSON. If the
+server-side `job_runs` row shows `status='completed'` for that
+invocation, you were never hitting the server — you were timing out
+client-side.
+
+**How to fix it:** Either use `curl` (session 3a made this the
+recommended path — see `docs/VERCEL_CRON_SETUP.md §3`) or pass an
+explicit `-TimeoutSec 600` to `Invoke-WebRequest`. Don't rely on the
+default.
+
+**Scope:** Any manual testing of long-running Vercel functions from
+PowerShell. Doesn't affect Vercel Cron itself (that's server-to-
+server) — only humans triggering the endpoint manually.
+
+### 28.4 Postgres `ALTER TABLE RENAME` does not auto-rename pkey constraints
+
+**What it is:** `ALTER TABLE sync_runs RENAME TO job_runs` carries the
+pkey *index* over (Postgres renames `sync_runs_pkey` → `job_runs_pkey`
+automatically — old docs say so) but in practice the pkey **constraint
+name** survives as `sync_runs_pkey`. Session 3b's rename migration hit
+this live on 2026-04-24: after the RENAME, `SELECT conname FROM
+pg_constraint WHERE conrelid='job_runs'::regclass` still showed
+`sync_runs_pkey`. Non-pkey named constraints (CHECK, FK) never auto-
+rename and are universally known to need explicit `RENAME CONSTRAINT`.
+
+**How to fix it:** Add explicit `ALTER TABLE <new_name> RENAME
+CONSTRAINT <old_name>_pkey TO <new_name>_pkey;` alongside the other
+constraint renames. Cosmetic only — functionality is unaffected — but
+keeps `\d+` output and schema dumps readable. See
+[`supabase/migrations/20260424_rename_sync_runs_to_job_runs.sql`](../supabase/migrations/20260424_rename_sync_runs_to_job_runs.sql)
+section 6 for the concrete pattern.

@@ -196,11 +196,11 @@ export function parseArtworkTemplates(arr) {
  * Crucially, this function NEVER throws on individual field problems.
  * Each soft failure is pushed to `parseErrors`; the caller decides
  * whether to persist (yes, best-effort) and whether to log a
- * sync_failures row (yes).
+ * job_failures row (yes).
  *
  * If raw is missing the bare minimum (ProductCode or ProductName), the
  * product is considered unusable and { row: null, parseErrors } is
- * returned — the caller should record a sync_failures row and skip.
+ * returned — the caller should record a job_failures row and skip.
  *
  * @param {object} raw - one entry from the Laltex products feed
  * @returns {{ row: object|null, parseErrors: Array<{field:string, message:string}> }}
@@ -234,7 +234,7 @@ export function normaliseProduct(raw) {
   }
 
   // Arrays — call sites are null-safe, but if a non-array shows up on a
-  // required field we flag it so the snapshot is visible in sync_failures.
+  // required field we flag it so the snapshot is visible in job_failures.
   const pricingArr = Array.isArray(raw.ProductPrice) ? raw.ProductPrice : null;
   if (raw.ProductPrice != null && pricingArr == null) {
     parseErrors.push({ field: 'ProductPrice', message: 'not an array' });
