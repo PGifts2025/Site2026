@@ -2200,10 +2200,15 @@ non-deterministic ordering. Per-request volatility (quota status,
 specific user message) is appended to `messages` after the cache
 breakpoint, where it can't invalidate the cached prefix.
 
-**Spec deviation:** the session 5 prompt asked for
-`anthropic-beta: prompt-caching-2024-07-31`. Prompt caching is GA
-in `@anthropic-ai/sdk@0.95.1` and the beta header is no longer
-required (or accepted in that form). Using the GA pattern.
+**Use `cache_control` annotations on blocks; do NOT add the
+`anthropic-beta: prompt-caching-2024-07-31` header.** The session 5
+spec asked for that header; it is outdated. Prompt caching is GA in
+`@anthropic-ai/sdk@0.95.1` — the canonical pattern is per-block
+`cache_control: {type: "ephemeral"}` (optionally with `ttl: "1h"`),
+and no beta header is needed or accepted in that form. Future
+sessions: do not reintroduce the beta header just because an older
+spec / forum post mentions it. Approved as a spec deviation by Dave
+on 2026-05-11.
 
 Cost economics (Sonnet 4.6, 5-min TTL):
 - Standard input: $3.00 / 1M tokens
@@ -2306,16 +2311,23 @@ routing it through the chat context.
 
 ### 32.9 Known follow-ups
 
-- **Seed Dave as the initial tester.** Run AFTER confirming his
-  email (two candidates in `auth.users`: `dave@alpha-omegaltd.com`
-  vs `dave@sport-of-kings.com`). One-line SQL once chosen:
+- **Tester seed APPLIED 2026-05-11.** `dave@sport-of-kings.com`
+  (the testing account) is flagged with `ai_chat_enabled=true`;
+  `dave@alpha-omegaltd.com` (the admin/catalogue-management
+  account) intentionally has no profile row and no flag —
+  cleaner separation of admin work from customer-side AI testing.
+  To add future testers, repeat the UPSERT pattern:
   ```sql
   INSERT INTO profiles (id, ai_chat_enabled)
-  VALUES ((SELECT id FROM auth.users WHERE email = '<confirmed_email>'), true)
+  VALUES ((SELECT id FROM auth.users WHERE email = '<email>'), true)
   ON CONFLICT (id) DO UPDATE SET ai_chat_enabled = true;
   ```
-  (`profiles` is empty today, so the row likely doesn't exist
-  yet — the UPSERT handles both cases.)
+- **`profiles` is empty for everyone but the tester.** Of the 5
+  rows in `auth.users` only the one we just inserted has a
+  `profiles` row. Production code that reads `profiles` for
+  signed-in users currently encounters NULL for every other
+  account — separate pre-launch concern, NOT a session 5 issue.
+  Tracked separately in §32.11.
 - **`VISITOR_HASH_SALT` rotation.** Add a 32-byte hex value to
   Vercel Production env and `.env` before public launch. Changing
   the salt rebases every existing `ai_quotas` row to a different
@@ -2374,4 +2386,44 @@ routing it through the chat context.
   re-reading the claude-api skill.** Method names, type names,
   and beta-header behavior shift across major releases. Pin
   exact versions; bump deliberately.
+
+### 32.11 PRE-LAUNCH FOLLOW-UP — profiles is unpopulated
+
+**Tracked separately from session 5. Not a session-5 bug; a
+pre-existing gap surfaced during the AI assistant verification.**
+
+The `profiles` table contains a row for the AI tester only.
+The other 4 `auth.users` rows have **no** corresponding
+`profiles` row. The codebase does not currently auto-create a
+profile on signup, so anyone who signed up to date is missing
+one.
+
+The AI widget specifically handles the missing-row case
+gracefully (`maybeSingle()` returns `null` → `ai_chat_enabled`
+defaults to `false` → widget is hidden), but other code paths
+that read `profiles` may not. Schedule a small follow-up
+session to:
+
+1. **Add an auto-create mechanism.** Either a Postgres trigger
+   on `auth.users INSERT` that inserts a matching `profiles`
+   row, or an application-side step in the signup flow that
+   does the same. The trigger approach is more robust to
+   future signup paths (OAuth, magic link, etc.) that might
+   skip an application-level hook.
+2. **Backfill the existing users.** One-time UPSERT to insert
+   `profiles` rows for every `auth.users.id` that doesn't have
+   one. Use the safe defaults (`ai_chat_enabled = false`,
+   `full_name = null`).
+3. **Audit every read.** Grep for `.from('profiles')` and
+   confirm each one handles the missing-row case (use
+   `.maybeSingle()` not `.single()`, default null gracefully).
+
+**This does NOT block session 5 merge.** The AI widget will
+work for signed-in users as long as their `profiles` row
+exists, which it now does for the tester. New testers get
+added by repeating the UPSERT pattern in §32.9.
+
+Once auto-create + backfill are in, future signups get a
+`profiles` row automatically and the manual UPSERT for new
+testers becomes a one-column UPDATE.
 
