@@ -1,8 +1,11 @@
-# Vercel Cron setup — Laltex nightly jobs
+# Vercel Cron setup — catalogue nightly jobs
 
 This document is the single reference for configuring, testing, and
-recovering from the two Vercel Cron jobs behind the Laltex pipeline
-(**sync** at 03:00 UTC, **embed** at 04:00 UTC). Everything below also
+recovering from the two Vercel Cron jobs behind the supplier-catalogue
+pipeline (**sync-laltex** at 03:00 UTC, **embed-catalogue** at 04:00
+UTC). Sync is per-supplier (one cron per supplier feed; Laltex today,
+future suppliers each add their own); embed is supplier-agnostic (one
+job covers every `supplier_products` row). Everything below also
 lives (summarised) in [`.claude/CLAUDE.md §27`](../.claude/CLAUDE.md),
 but this is the operational playbook.
 
@@ -10,15 +13,15 @@ but this is the operational playbook.
 
 | Piece | Location |
 |---|---|
-| Cron declarations | [`site/vercel.json`](../vercel.json) — `crons[]`: `0 3 * * *` (sync), `0 4 * * *` (embed) |
-| Sync handler | [`site/api/cron/sync-laltex.js`](../api/cron/sync-laltex.js) — Vercel Serverless Function, `maxDuration: 300` |
-| Embed handler | [`site/api/cron/embed-laltex.js`](../api/cron/embed-laltex.js) — Vercel Serverless Function, `maxDuration: 300` |
-| Core sync logic | [`site/scripts/lib/laltex-sync.js`](../scripts/lib/laltex-sync.js) — `syncFullCatalogue()` writes `job_type='sync'` |
-| Core embed logic | [`site/scripts/lib/laltex-embed.js`](../scripts/lib/laltex-embed.js) — `embedCatalogue()` writes `job_type='embed'` |
-| Parsing helpers | [`site/scripts/lib/laltex-parser.js`](../scripts/lib/laltex-parser.js) |
+| Cron declarations | [`site/vercel.json`](../vercel.json) — `crons[]`: `0 3 * * *` (sync-laltex), `0 4 * * *` (embed-catalogue) |
+| Sync handler (per-supplier) | [`site/api/cron/sync-laltex.js`](../api/cron/sync-laltex.js) — Vercel Serverless Function, `maxDuration: 300` |
+| Embed handler (supplier-agnostic) | [`site/api/cron/embed-catalogue.js`](../api/cron/embed-catalogue.js) — Vercel Serverless Function, `maxDuration: 300` |
+| Core sync logic (Laltex) | [`site/scripts/lib/laltex-sync.js`](../scripts/lib/laltex-sync.js) — `syncFullCatalogue()` writes `job_type='sync'`, supplier_id=Laltex |
+| Core embed logic | [`site/scripts/lib/catalogue-embed.js`](../scripts/lib/catalogue-embed.js) — `embedCatalogue()` writes `job_type='embed'`, supplier_id=NULL |
+| Parsing helpers (Laltex) | [`site/scripts/lib/laltex-parser.js`](../scripts/lib/laltex-parser.js) |
 | Embedding helpers | [`site/scripts/lib/embedding.js`](../scripts/lib/embedding.js) (session 2) |
 | Sync CLI | [`site/scripts/sync-laltex-catalogue.js`](../scripts/sync-laltex-catalogue.js) — `triggered_by='cli'` |
-| Embed CLI | [`site/scripts/embed-laltex-catalogue.js`](../scripts/embed-laltex-catalogue.js) — `triggered_by='cli'` |
+| Embed CLI | [`site/scripts/embed-catalogue.js`](../scripts/embed-catalogue.js) — `triggered_by='cli'` |
 | Observability | `job_runs` + `job_failures` tables (one row per job invocation; `job_type` column distinguishes sync vs. embed) |
 
 The 1-hour gap between sync (03:00) and embed (04:00) is deliberate.
@@ -60,15 +63,15 @@ Use this for smoke testing, for debugging a failed run, or to catch up
 after a missed night. Both endpoints share the same auth pattern.
 
 ```bash
-# Hit production — sync
+# Hit production — sync (per-supplier, Laltex today)
 curl -i \
   -H "Authorization: Bearer $CRON_SECRET" \
   https://promo-gifts-co.uk/api/cron/sync-laltex
 
-# Hit production — embed (typically ~instant after a sync, nothing to embed)
+# Hit production — embed (supplier-agnostic; typically ~instant after a sync, nothing to embed)
 curl -i \
   -H "Authorization: Bearer $CRON_SECRET" \
-  https://promo-gifts-co.uk/api/cron/embed-laltex
+  https://promo-gifts-co.uk/api/cron/embed-catalogue
 
 # Hit a preview deployment (replace <preview>)
 curl -i \
@@ -211,8 +214,8 @@ cd site
 # 2a. Run the full sync locally against the live Laltex API + live DB.
 node scripts/sync-laltex-catalogue.js
 
-# 2b. Run the embed over whatever sync just produced.
-node scripts/embed-laltex-catalogue.js
+# 2b. Run the embed over whatever sync just produced (spans every supplier).
+node scripts/embed-catalogue.js
 
 # 3. Inspect the latest job_runs rows.
 #    (Each CLI prints its run_id — use it in the SQL snippets above.)
@@ -236,7 +239,7 @@ the pattern for the embed handler if you need a separate harness.
    run the matching CLI). This creates a **new** `job_runs` row; it
    does NOT retry the failed one.
 3. If repeated failures: check Vercel function logs (Project → Logs
-   → filter `/api/cron/sync-laltex` or `/api/cron/embed-laltex`).
+   → filter `/api/cron/sync-laltex` or `/api/cron/embed-catalogue`).
 
 ### Scenario B — high `products_failed` (> ~1% of fetched / considered)
 

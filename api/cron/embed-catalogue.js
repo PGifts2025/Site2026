@@ -1,8 +1,12 @@
 /**
- * Vercel Cron entry point — nightly Laltex embed.
+ * Vercel Cron entry point — nightly catalogue embed.
  *
  * Scheduled in site/vercel.json at 04:00 UTC daily (1 hour after the
  * 03:00 sync cron — see CLAUDE.md §27 for the split rationale).
+ *
+ * Embed is supplier-agnostic: one run covers every supplier_products
+ * row regardless of supplier_id. Sync remains per-supplier (one cron
+ * per supplier feed).
  *
  * Auth + env-guard pattern cloned from api/cron/sync-laltex.js:
  *   Authorization: Bearer ${CRON_SECRET}  — missing/wrong → 401
@@ -23,7 +27,7 @@
  *                               response still 200 with failed>0.
  */
 
-import { embedCatalogue } from '../../scripts/lib/laltex-embed.js';
+import { embedCatalogue } from '../../scripts/lib/catalogue-embed.js';
 
 export const config = {
   maxDuration: 300, // seconds
@@ -65,7 +69,7 @@ export default async function handler(req, res) {
     const httpStatus = result.status === 'completed' ? 200 : 500;
     return res.status(httpStatus).json(result);
   } catch (err) {
-    console.error('[cron/embed-laltex] fatal:', err);
+    console.error('[cron/embed-catalogue] fatal:', err);
     return res.status(500).json({ error: err?.message ?? String(err) });
   }
 }

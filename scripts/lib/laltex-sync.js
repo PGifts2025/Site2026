@@ -43,8 +43,8 @@
  * 6. Shared observability table:
  *    job_runs + job_failures are a single source of truth across all
  *    background jobs. Every INSERT must set job_type explicitly —
- *    this module always writes 'sync'. Session 3b's laltex-embed.js
- *    writes 'embed'.
+ *    this module always writes 'sync' (per-supplier). The parallel
+ *    catalogue-embed.js writes 'embed' (supplier-agnostic).
  */
 
 import { normaliseProduct, unwrapFeedResponse } from './laltex-parser.js';

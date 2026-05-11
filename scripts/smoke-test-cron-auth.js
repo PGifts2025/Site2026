@@ -16,7 +16,7 @@
  * Usage:
  *   node scripts/smoke-test-cron-auth.js             # tests both routes
  *   node scripts/smoke-test-cron-auth.js sync        # only sync-laltex
- *   node scripts/smoke-test-cron-auth.js embed       # only embed-laltex
+ *   node scripts/smoke-test-cron-auth.js embed       # only embed-catalogue
  *
  * Exits 0 iff every tested route's three cases pass.
  */
@@ -29,8 +29,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, '..', '.env') });
 
 const ROUTES = {
-  sync:  { label: 'sync-laltex',  path: '../api/cron/sync-laltex.js' },
-  embed: { label: 'embed-laltex', path: '../api/cron/embed-laltex.js' },
+  sync:  { label: 'sync-laltex',     path: '../api/cron/sync-laltex.js' },
+  embed: { label: 'embed-catalogue', path: '../api/cron/embed-catalogue.js' },
 };
 
 function mockReqRes(authHeader) {

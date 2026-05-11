@@ -447,7 +447,7 @@ All three route to `/account/quotes` on success, with a flash banner `"Quote cre
 
 ---
 
-*Last updated: 24 April 2026 — session 4a: §26.11 Multi-supplier product ontology added; §30 PGifts Direct Migration added (mirror strategy, field mapping, approved 25-row category mapping with Safety Wear override for hi-vis-vest, idempotent rerun, follow-ups, invariants). §28.4 pkey-rename gotcha added earlier today (session 3b follow-up). Session 3b: §27 rewritten to cover both sync + embed crons (rename sync_runs→job_runs, job_type column, embed failure policy, per-route env var table); §§28.2 / 28.3 production-vs-local latency + PowerShell 100s timeout. §27 originally added earlier 24 April 2026 (session 3a). §28 opened earlier 24 April 2026 with §28.1 PostgREST 1000-row cap. §§26.10.x added earlier 24 April 2026 (session 2). §26 added 24 April 2026 (session 1). §§19-25 added 23 April 2026 for Buy Now / shared auth gate / transactional email / scroll management / quote total pre-insert / compact product page layout / forgot password. §§2, 3, 8.4, 10, 11, 12, 13, 18 refreshed.*
+*Last updated: 11 May 2026 — session 4a.1: §27 rewritten to clarify sync is per-supplier (one cron per feed) and embed is supplier-agnostic (one cron spans every supplier_products row). Embed module renamed laltex-embed.js → catalogue-embed.js; CLI renamed embed-laltex-catalogue.js → embed-catalogue.js; cron route renamed /api/cron/embed-laltex → /api/cron/embed-catalogue (vercel.json + smoke-test updated). New migration 20260511_job_runs_supplier_id_nullable.sql drops NOT NULL on job_runs.supplier_id with a CHECK keeping it required for job_type='sync'. §26.11 supplier ontology table updated. New invariants added in §27.8. Session 4a (24 April 2026): §26.11 Multi-supplier product ontology added; §30 PGifts Direct Migration added (mirror strategy, field mapping, approved 25-row category mapping with Safety Wear override for hi-vis-vest, idempotent rerun, follow-ups, invariants). §28.4 pkey-rename gotcha added earlier (session 3b follow-up). Session 3b: §27 rewritten to cover both sync + embed crons (rename sync_runs→job_runs, job_type column, embed failure policy, per-route env var table); §§28.2 / 28.3 production-vs-local latency + PowerShell 100s timeout. §27 originally added earlier 24 April 2026 (session 3a). §28 opened earlier 24 April 2026 with §28.1 PostgREST 1000-row cap. §§26.10.x added earlier 24 April 2026 (session 2). §26 added 24 April 2026 (session 1). §§19-25 added 23 April 2026 for Buy Now / shared auth gate / transactional email / scroll management / quote total pre-insert / compact product page layout / forgot password. §§2, 3, 8.4, 10, 11, 12, 13, 18 refreshed.*
 *Update this file at the end of every significant session.*
 
 ---
@@ -1233,8 +1233,13 @@ two rows:
 
 | slug | source | volume | Notes |
 |---|---|---|---|
-| `laltex` | External trade API | 1192 | Nightly pull (`sync-laltex` cron, 03:00 UTC) + embed (`embed-laltex` cron, 04:00 UTC) |
+| `laltex` | External trade API | 1192 | Nightly pull (`sync-laltex` cron, 03:00 UTC) — per-supplier |
 | `pgifts-direct` | Internally curated | 25 | Mirrored from `catalog_products` via `scripts/migrate-catalog-to-supplier-products.js` (idempotent, rerun anytime) |
+
+Both pools embed under the single supplier-agnostic
+`embed-catalogue` cron at 04:00 UTC (see §27.1). Adding a future
+supplier means a new sync route + `vercel.json` cron entry; the embed
+cron picks the new rows up automatically.
 
 The 25 PGifts-Direct products **still live in `catalog_products`** —
 the Designer, ProductDetailPage, and CustomerQuotes continue to read
@@ -1260,38 +1265,67 @@ for direct, unset / Laltex-shape for external).
 
 ---
 
-## 27. NIGHTLY JOBS ARCHITECTURE (sessions 3a + 3b)
+## 27. NIGHTLY JOBS ARCHITECTURE (sessions 3a + 3b + 4a.1)
 
-Two Vercel Cron jobs now run nightly against the Laltex pipeline,
-each on its own 5-minute budget. Both write to a single shared
-observability table (`job_runs`) distinguished by the `job_type`
-column.
+Two Vercel Cron jobs run nightly against the catalogue pipeline, each
+on its own 5-minute budget. Both write to a single shared observability
+table (`job_runs`) distinguished by the `job_type` column.
+
+**Sync is per-supplier; embed is supplier-agnostic.** Session 3b
+originally scoped the embed cron to Laltex because that was the only
+supplier. Session 4a added a second supplier (`pgifts-direct`) and
+session 4a.1 made the embed span every `supplier_products` row in one
+pass — see §27.1 for the rationale. Sync stays per-supplier: each
+external feed (Laltex today; future suppliers each add their own) has
+its own scheduled handler so failure domains stay isolated and the
+5-minute budget stays comfortable.
 
 ### 27.1 Cron split
 
-| Cron | Schedule (UTC) | `job_type` | Purpose | Shipped |
-|---|---|---|---|---|
-| `sync-laltex`  | `0 3 * * *` | `'sync'`  | `/v1/products/list` → UPSERT `supplier_products` | Session 3a |
-| `embed-laltex` | `0 4 * * *` | `'embed'` | hash-gated batched embed of changed `supplier_products` rows | Session 3b |
+| Cron | Schedule (UTC) | `job_type` | `supplier_id` | Purpose | Shipped |
+|---|---|---|---|---|---|
+| `sync-laltex`     | `0 3 * * *` | `'sync'`  | Laltex (NOT NULL) | `/v1/products/list` → UPSERT `supplier_products` for the Laltex feed only | Session 3a |
+| `embed-catalogue` | `0 4 * * *` | `'embed'` | `NULL`            | hash-gated batched embed of changed `supplier_products` rows across **every** supplier | Session 3b (Laltex-scoped); 4a.1 made it supplier-agnostic + renamed from `embed-laltex` |
 
-Why split: Vercel Cron's 5-minute ceiling is uncomfortable for
-sync+embed in one go, and the two operations have different failure
-domains (Laltex outage vs. OpenAI outage) that we want to isolate.
-A failed embed run doesn't block the next night's sync, and vice versa.
+**Why sync is per-supplier.** Each supplier has its own API shape,
+auth header, rate limit, and failure mode. A combined sync would
+couple Laltex outages to PGifts Direct re-mirroring, which is the
+opposite of what we want. New supplier integration = new
+`api/cron/sync-<supplier>.js` + new entry in `vercel.json`.
 
-**Gap rationale.** Observed sync duration on production is ~90s; the
-1-hour gap to 04:00 UTC means embed always runs against a stable,
-fully-settled `supplier_products` state, never mid-UPSERT. If sync
-ever approaches the budget, reconsider — but at 1192 products it's
-nowhere close.
+**Why embed is supplier-agnostic.** Embed is a pure read on
+`supplier_products` followed by an OpenAI batch call. Supplier
+identity is irrelevant to the embedding model — the hash gate is what
+makes a wide read safe (unchanged rows skip the API entirely). One
+cron, one observability row per run, no risk of any supplier's rows
+silently missing the index.
 
-**OpenAI batching today.** The live Laltex catalogue is 1192 products,
-well under the `text-embedding-3-small` 2048-input-per-call cap, so
-embed issues a **single** batched `embeddings.create` call. If the
-catalogue ever crosses ~2000 rows, extend `scripts/lib/laltex-embed.js`
-to chunk at `OPENAI_BATCH_MAX_INPUTS`; the single-batch path throws
-with a clear message if `embedRequested` exceeds the limit — surface,
-not silent half-embed.
+**Why split sync ↔ embed.** Vercel Cron's 5-minute ceiling is
+uncomfortable for sync+embed in one go, and the two operations have
+different failure domains (supplier API outage vs. OpenAI outage)
+that we want to isolate. A failed embed run doesn't block the next
+night's sync, and vice versa.
+
+**Gap rationale.** Observed Laltex sync duration on production is
+~90s; the 1-hour gap to 04:00 UTC means embed always runs against a
+stable, fully-settled `supplier_products` state, never mid-UPSERT.
+If a future supplier's sync ever approaches the budget, reconsider —
+but at current scale it's nowhere close.
+
+**OpenAI batching today.** The combined catalogue is ~1217 products
+(1192 Laltex + 25 PGifts Direct), well under the
+`text-embedding-3-small` 2048-input-per-call cap, so embed issues a
+**single** batched `embeddings.create` call. If the catalogue ever
+crosses ~2000 rows, extend `scripts/lib/catalogue-embed.js` to chunk
+at `OPENAI_BATCH_MAX_INPUTS`; the single-batch path throws with a
+clear message if `embedRequested` exceeds the limit — surface, not
+silent half-embed.
+
+**`job_runs.supplier_id` is nullable** (since session 4a.1) so embed
+runs can be recorded without picking a misleading owning supplier. A
+CHECK constraint (`job_runs_supplier_id_required_for_sync`) keeps
+`job_type='sync'` rows pointing at a supplier — only `job_type='embed'`
+is allowed to leave it NULL.
 
 ### 27.2 DB access patterns — do not mix these up
 
@@ -1394,7 +1428,7 @@ Required Vercel env vars per route:
 | Route | Env vars needed (beyond `CRON_SECRET`) |
 |---|---|
 | `/api/cron/sync-laltex` | `LALTEX_API_KEY`, `VITE_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` |
-| `/api/cron/embed-laltex` | `OPENAI_API_KEY`, `VITE_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` |
+| `/api/cron/embed-catalogue` | `OPENAI_API_KEY`, `VITE_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` |
 
 Missing any → `500` with a clear `{ missing: [...] }` body so the
 cron logs make the misconfiguration obvious.
@@ -1408,17 +1442,18 @@ recovery) in [`docs/VERCEL_CRON_SETUP.md`](../docs/VERCEL_CRON_SETUP.md).
 |---|---|---|
 | `supabase/migrations/20260424_sync_runs_and_failures.sql` | 3a | Initial observability tables + RLS |
 | `supabase/migrations/20260424_rename_sync_runs_to_job_runs.sql` | 3b | Rename to `job_runs`/`job_failures`, add `job_type` |
-| `scripts/lib/laltex-parser.js` | 3a | Pure parsing helpers |
-| `scripts/lib/laltex-sync.js` | 3a | `syncFullCatalogue(...)` — writes `job_type='sync'` |
-| `scripts/lib/laltex-embed.js` | 3b | `embedCatalogue(...)` — hash-gated embed, writes `job_type='embed'` |
+| `supabase/migrations/20260511_job_runs_supplier_id_nullable.sql` | 4a.1 | Drop NOT NULL on `job_runs.supplier_id`; CHECK keeps it required for `job_type='sync'` |
+| `scripts/lib/laltex-parser.js` | 3a | Pure parsing helpers (Laltex-specific) |
+| `scripts/lib/laltex-sync.js` | 3a | `syncFullCatalogue(...)` — writes `job_type='sync'`, per-supplier |
+| `scripts/lib/catalogue-embed.js` | 3b → 4a.1 | `embedCatalogue(...)` — hash-gated embed, writes `job_type='embed'`, supplier-agnostic. Renamed from `laltex-embed.js` in 4a.1 |
 | `scripts/lib/embedding.js` | 2 | Embedding model + source-text recipe + hashing |
 | `scripts/sync-laltex-catalogue.js` | 3a | Local sync CLI |
-| `scripts/embed-laltex-catalogue.js` | 3b | Local embed CLI |
-| `scripts/smoke-test-cron-auth.js` | 3a→3b | Tests both routes' 401/401/200 contract |
+| `scripts/embed-catalogue.js` | 3b → 4a.1 | Local embed CLI. Renamed from `embed-laltex-catalogue.js` in 4a.1 |
+| `scripts/smoke-test-cron-auth.js` | 3a→3b→4a.1 | Tests both routes' 401/401/200 contract; embed route updated to `embed-catalogue` |
 | `api/cron/sync-laltex.js` | 3a | Vercel Serverless Function — sync |
-| `api/cron/embed-laltex.js` | 3b | Vercel Serverless Function — embed |
-| `vercel.json` | 3a→3b | `crons[]` now has both entries |
-| `docs/VERCEL_CRON_SETUP.md` | 3a→3b | Ops playbook (both routes) |
+| `api/cron/embed-catalogue.js` | 3b → 4a.1 | Vercel Serverless Function — embed. Renamed from `embed-laltex.js` in 4a.1 |
+| `vercel.json` | 3a→3b→4a.1 | `crons[]` has both entries; embed path is now `/api/cron/embed-catalogue` |
+| `docs/VERCEL_CRON_SETUP.md` | 3a→3b→4a.1 | Ops playbook (both routes) |
 
 ### 27.8 Invariants — DO NOT BREAK
 
@@ -1444,6 +1479,15 @@ recovery) in [`docs/VERCEL_CRON_SETUP.md`](../docs/VERCEL_CRON_SETUP.md).
 - **Do NOT INSERT into `job_runs` without `job_type`.** The DEFAULT
   was dropped post-backfill precisely so nothing can silently land
   at `'sync'` by accident.
+- **Do NOT re-scope the embed to a single supplier.** The embed cron
+  spans every `supplier_products` row by design (§27.1). Filtering by
+  `supplier_id` will silently exclude any supplier added after the
+  filter was written — the bug session 4a.1 fixed. The hash gate is
+  what keeps a wide read cheap; trust it.
+- **Do NOT add new sync routes without setting `supplier_id`** on the
+  `job_runs` row. The `job_runs_supplier_id_required_for_sync` CHECK
+  will reject the insert, but you'll waste a deploy noticing — clone
+  `laltex-sync.js`'s pattern.
 
 ---
 

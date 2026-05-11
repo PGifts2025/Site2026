@@ -1,15 +1,16 @@
 /**
- * Core batch-embed logic for the Laltex catalogue.
+ * Core batch-embed logic for the supplier_products catalogue.
  *
  * Exports:
  *   embedCatalogue({ ... }) — end-to-end embed run. Creates a
- *     job_runs row with job_type='embed', reads supplier_products,
- *     computes source-text hashes via session 2 helpers, skips
- *     rows whose hash matches the stored embedding_source_hash,
- *     issues a single batched OpenAI embeddings.create call for
- *     the rows that need updating, writes the resulting vectors
- *     back row-by-row, and finalises the job_runs row
- *     (completed | failed).
+ *     job_runs row with job_type='embed' (supplier_id NULL — embed
+ *     is supplier-agnostic, see CLAUDE.md §27), reads supplier_products
+ *     across every supplier, computes source-text hashes via session 2
+ *     helpers, skips rows whose hash matches the stored
+ *     embedding_source_hash, issues a single batched
+ *     OpenAI embeddings.create call for the rows that need updating,
+ *     writes the resulting vectors back row-by-row, and finalises
+ *     the job_runs row (completed | failed).
  *
  * Architecture notes:
  *
@@ -19,27 +20,38 @@
  *    cost-control mechanism documented in CLAUDE.md §26.10.3 and
  *    §26.10.7 — do not bypass it.
  *
- * 2. Single batch OpenAI call:
- *    text-embedding-3-small accepts up to 2048 inputs per call.
- *    The Laltex catalogue is 1192 products (session 3a), so a
- *    complete rebuild fits in one call. No chunking needed at
- *    current scale. If the catalogue ever exceeds ~2000 rows,
- *    extend this module to chunk in slices of 2000.
+ * 2. Supplier-agnostic:
+ *    Session 3b scoped this module to supplier_id='laltex' because
+ *    that was the only supplier. Session 4a added pgifts-direct,
+ *    and session 4a.1 (this file) makes the embed span every row
+ *    of supplier_products. Hash gating is what makes a wide read
+ *    safe — unchanged rows still skip the API call.
  *
- * 3. DB access is PostgREST + service_role:
+ *    Sync remains per-supplier (one cron per supplier feed); see
+ *    laltex-sync.js for the parallel sync code path.
+ *
+ * 3. Single batch OpenAI call:
+ *    text-embedding-3-small accepts up to 2048 inputs per call.
+ *    The combined catalogue is ~1217 products today (1192 Laltex +
+ *    25 PGifts Direct), so a complete rebuild still fits in one
+ *    call. No chunking needed at current scale. If the catalogue
+ *    ever exceeds ~2000 rows, extend this module to chunk in
+ *    slices of OPENAI_BATCH_MAX_INPUTS.
+ *
+ * 4. DB access is PostgREST + service_role:
  *    Same pattern as session 3a laltex-sync.js. Reads are
  *    paginated (guard against the 1000-row cap — CLAUDE.md §28.1).
  *    Writes are per-row UPDATE via PostgREST PATCH keyed on id.
- *    Sequential updates are fine at 1192 scale.
+ *    Sequential updates are fine at sub-2k scale.
  *
- * 4. Continue-with-logging:
+ * 5. Continue-with-logging:
  *    If the OpenAI batch call fails, the whole run is 'failed'
  *    (a batch call is atomic — nothing partial to log).
  *    If an individual per-row UPDATE fails, that row goes to
  *    job_failures and the remaining rows still get written.
  *    try/finally ensures job_runs never stays 'running'.
  *
- * 5. Source recipe coupling:
+ * 6. Source recipe coupling:
  *    buildEmbeddingSourceText() lives in scripts/lib/embedding.js
  *    (session 2). A change there will flip every row's hash on the
  *    next run → every row re-embeds. That's deliberate; see
@@ -62,8 +74,8 @@ import {
 const SUPPLIER_PRODUCTS_PAGE_SIZE = 1000;
 
 // OpenAI text-embedding-3-small accepts 2048 inputs per call. The
-// catalogue is ~1192, so one batch is enough today. Chunk only if
-// we cross this in future.
+// combined catalogue is ~1217, so one batch is enough today. Chunk
+// only if we cross this in future.
 const OPENAI_BATCH_MAX_INPUTS = 2048;
 
 // Fields we need off each supplier_products row to build source text
@@ -111,14 +123,14 @@ async function pgRest(method, url, serviceRoleKey, { body, extraHeaders } = {}) 
 }
 
 // ---------------------------------------------------------------------------
-// job_runs lifecycle helpers (job_type='embed' for this module)
+// job_runs lifecycle helpers (job_type='embed', supplier_id NULL)
 // ---------------------------------------------------------------------------
 
-async function insertJobRun({ supabaseUrl, serviceRoleKey, supplierId, runType, triggeredBy, metadata }) {
+async function insertJobRun({ supabaseUrl, serviceRoleKey, runType, triggeredBy, metadata }) {
   const url = `${supabaseUrl}/rest/v1/job_runs`;
   const rows = await pgRest('POST', url, serviceRoleKey, {
     body: [{
-      supplier_id: supplierId,
+      supplier_id: null,        // embed spans every supplier — see §27 / §26.11
       run_type: runType,
       status: 'running',
       triggered_by: triggeredBy,
@@ -150,32 +162,22 @@ async function insertJobFailures({ supabaseUrl, serviceRoleKey, rows }) {
       extraHeaders: { Prefer: 'return=minimal' },
     });
   } catch (err) {
-    console.error('[laltex-embed] WARNING: job_failures insert failed:', err.message);
+    console.error('[catalogue-embed] WARNING: job_failures insert failed:', err.message);
   }
 }
 
 // ---------------------------------------------------------------------------
-// Supplier + rows
+// Rows — read every supplier_products row, paginated past the 1000-row cap
 // ---------------------------------------------------------------------------
 
-async function getLaltexSupplierId({ supabaseUrl, serviceRoleKey }) {
-  const url = `${supabaseUrl}/rest/v1/suppliers?slug=eq.laltex&select=id`;
-  const rows = await pgRest('GET', url, serviceRoleKey);
-  if (!Array.isArray(rows) || !rows[0]?.id) {
-    throw new Error("suppliers row for slug='laltex' not found");
-  }
-  return rows[0].id;
-}
-
-async function fetchSupplierProducts({ supabaseUrl, serviceRoleKey, supplierId }) {
+async function fetchAllSupplierProducts({ supabaseUrl, serviceRoleKey }) {
   const out = [];
   let offset = 0;
   /* eslint-disable no-await-in-loop */
   for (;;) {
     const url =
       `${supabaseUrl}/rest/v1/supplier_products` +
-      `?supplier_id=eq.${supplierId}` +
-      `&select=${SUPPLIER_PRODUCTS_SELECT}` +
+      `?select=${SUPPLIER_PRODUCTS_SELECT}` +
       `&order=id.asc` +
       `&limit=${SUPPLIER_PRODUCTS_PAGE_SIZE}` +
       `&offset=${offset}`;
@@ -211,7 +213,7 @@ async function updateEmbedding({ supabaseUrl, serviceRoleKey, id, embedding, sou
 // ---------------------------------------------------------------------------
 
 /**
- * Run a full-catalogue embed.
+ * Run a full-catalogue embed across every supplier.
  *
  * @param {object} opts
  * @param {string} opts.openaiKey         OPENAI_API_KEY
@@ -252,14 +254,10 @@ export async function embedCatalogue({
 
   const runStart = Date.now();
 
-  // 1. Resolve supplier_id
-  const supplierId = await getLaltexSupplierId({ supabaseUrl, serviceRoleKey });
-
-  // 2. Open job_runs row (job_type='embed')
+  // 1. Open job_runs row (job_type='embed', supplier_id=NULL)
   const runId = await insertJobRun({
     supabaseUrl,
     serviceRoleKey,
-    supplierId,
     runType: 'full_catalogue',
     triggeredBy,
     metadata: { model: EMBEDDING_MODEL, dims: EMBEDDING_DIMS, started_iso: new Date(runStart).toISOString() },
@@ -276,9 +274,9 @@ export async function embedCatalogue({
   let costUsd = 0;
 
   try {
-    // 3. Pull all Laltex rows (paginated)
+    // 2. Pull all supplier_products rows (paginated, every supplier)
     log(`[embed] run ${runId} — reading supplier_products …`);
-    const rows = await fetchSupplierProducts({ supabaseUrl, serviceRoleKey, supplierId });
+    const rows = await fetchAllSupplierProducts({ supabaseUrl, serviceRoleKey });
     considered = rows.length;
     log(`[embed] considering ${considered} rows`);
 
@@ -291,7 +289,7 @@ export async function embedCatalogue({
       };
     }
 
-    // 4. Partition into skip vs embed
+    // 3. Partition into skip vs embed
     const toEmbed = []; // { id, code, sourceText, hash }
     for (const r of rows) {
       const sourceText = buildEmbeddingSourceText(r);
@@ -319,7 +317,7 @@ export async function embedCatalogue({
     embedRequested = toEmbed.length;
     log(`[embed] ${embedSkipped} unchanged, ${embedRequested} to embed, ${failed} already failed pre-API`);
 
-    // 5. Nothing to do? Finish clean.
+    // 4. Nothing to do? Finish clean.
     if (embedRequested === 0) {
       status = 'completed';
       return {
@@ -329,13 +327,13 @@ export async function embedCatalogue({
       };
     }
 
-    // 6. Issue the OpenAI batch call
+    // 5. Issue the OpenAI batch call
     if (embedRequested > OPENAI_BATCH_MAX_INPUTS) {
-      // Chunking is not implemented at session 3b — we're below the limit.
+      // Chunking is not implemented at current scale — we're below the limit.
       // If this ever fires, either chunk here or raise: the throw makes the
       // failure surface explicit rather than silently half-embedding.
       throw new Error(
-        `embedRequested=${embedRequested} exceeds OpenAI batch limit ${OPENAI_BATCH_MAX_INPUTS}; chunking not yet implemented (extend laltex-embed.js)`,
+        `embedRequested=${embedRequested} exceeds OpenAI batch limit ${OPENAI_BATCH_MAX_INPUTS}; chunking not yet implemented (extend catalogue-embed.js)`,
       );
     }
     log(`[embed] OpenAI embeddings.create — ${embedRequested} inputs, model=${EMBEDDING_MODEL}`);
@@ -355,7 +353,7 @@ export async function embedCatalogue({
     costUsd = Number(cost.usd.toFixed(6));
     log(`[embed] OpenAI ok — tokens_used=${tokensUsed}, cost ≈ $${costUsd.toFixed(6)} (~${cost.pence.toFixed(4)}p)`);
 
-    // 7. Write back per-row (sequential at 1192 scale)
+    // 6. Write back per-row (sequential at sub-2k scale)
     const updateFailures = [];
     for (let i = 0; i < toEmbed.length; i += 1) {
       const target = toEmbed[i];
@@ -401,7 +399,7 @@ export async function embedCatalogue({
   } catch (err) {
     errorMessage = err?.message ?? String(err);
     status = 'failed';
-    console.error('[laltex-embed] run failed:', errorMessage);
+    console.error('[catalogue-embed] run failed:', errorMessage);
   } finally {
     const durationMs = Date.now() - runStart;
     await finaliseJobRun({
@@ -426,7 +424,7 @@ export async function embedCatalogue({
         },
       },
     }).catch((finalErr) => {
-      console.error('[laltex-embed] WARNING: could not finalise job_runs row:', finalErr.message);
+      console.error('[catalogue-embed] WARNING: could not finalise job_runs row:', finalErr.message);
     });
   }
 

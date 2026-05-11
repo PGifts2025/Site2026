@@ -1,12 +1,15 @@
 #!/usr/bin/env node
 /**
- * embed-laltex-catalogue.js — local CLI runner for the full embed job.
+ * embed-catalogue.js — local CLI runner for the full embed job.
  *
  * Thin wrapper around embedCatalogue(). Loads env, prints progress,
- * exits 0/1 based on outcome.
+ * exits 0/1 based on outcome. Embed is supplier-agnostic — one run
+ * covers every supplier_products row (Laltex + PGifts Direct + future
+ * suppliers), gated by SHA-256 source hash so unchanged rows never
+ * touch the OpenAI API.
  *
  * Usage:
- *   node scripts/embed-laltex-catalogue.js
+ *   node scripts/embed-catalogue.js
  *
  * Env required in site/.env:
  *   OPENAI_API_KEY            — embeddings-only restricted key
@@ -22,7 +25,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import dotenv from 'dotenv';
 
-import { embedCatalogue } from './lib/laltex-embed.js';
+import { embedCatalogue } from './lib/catalogue-embed.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, '..', '.env') });
