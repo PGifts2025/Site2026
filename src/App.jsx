@@ -23,6 +23,7 @@ import ScrollToTop from './components/ScrollToTop';
 import { AuthProvider } from './context/AuthContext';
 import { CartProvider } from './context/CartContext';
 import Cart from './components/Cart';
+import AIChatWidget from './components/AIChatWidget/AIChatWidget';
 
 // Customer Account Components
 import CustomerGuard from './components/auth/CustomerGuard';
@@ -141,6 +142,7 @@ function App() {
             <Route path="/reset-password" element={<ResetPassword />} />
           </Routes>
           <Cart />
+          <AIChatWidget />
         </Router>
       </CartProvider>
     </AuthProvider>
