@@ -14,6 +14,8 @@
     "build:email-templates": "node supabase/email-templates/build.mjs"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "0.95.1",
+    "@fingerprintjs/fingerprintjs": "5.2.0",
     "@heroicons/react": "^2.2.0",
     "@react-three/drei": "^10.7.7",
     "@react-three/fiber": "^9.5.0",

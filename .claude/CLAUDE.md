@@ -447,7 +447,7 @@ All three route to `/account/quotes` on success, with a flash banner `"Quote cre
 
 ---
 
-*Last updated: 11 May 2026 — session 4b: §31 Hybrid Search Layer added. Two new serverless endpoints (POST /api/search-products, POST /api/find-alternatives) on the existing Bearer CRON_SECRET pattern; scoring is RRF(k=60) over vector + tsvector ranks with core 1.30× and pgifts-direct 1.05× multipliers (core retuned 1.15 → 1.30 during verification — Query-C diagnostic captured in retune migration). New columns: is_core_product, core_priority, lead_time_days, express_available, in_stock, plus a STORED tsvector + GIN index. 8 PGifts-Direct hero SKUs seeded as is_core_product=true. Laltex parser extended with parseLeadTimeDays + express_available derivation from Supplier='Fast Fit'. No frontend, no AI, no UI — those are sessions 5+. Session 4a.1 (earlier 11 May 2026): §27 rewritten to clarify sync is per-supplier (one cron per feed) and embed is supplier-agnostic (one cron spans every supplier_products row). Embed module renamed laltex-embed.js → catalogue-embed.js; CLI renamed embed-laltex-catalogue.js → embed-catalogue.js; cron route renamed /api/cron/embed-laltex → /api/cron/embed-catalogue (vercel.json + smoke-test updated). New migration 20260511_job_runs_supplier_id_nullable.sql drops NOT NULL on job_runs.supplier_id with a CHECK keeping it required for job_type='sync'. §26.11 supplier ontology table updated. New invariants added in §27.8. Session 4a (24 April 2026): §26.11 Multi-supplier product ontology added; §30 PGifts Direct Migration added (mirror strategy, field mapping, approved 25-row category mapping with Safety Wear override for hi-vis-vest, idempotent rerun, follow-ups, invariants). §28.4 pkey-rename gotcha added earlier (session 3b follow-up). Session 3b: §27 rewritten to cover both sync + embed crons (rename sync_runs→job_runs, job_type column, embed failure policy, per-route env var table); §§28.2 / 28.3 production-vs-local latency + PowerShell 100s timeout. §27 originally added earlier 24 April 2026 (session 3a). §28 opened earlier 24 April 2026 with §28.1 PostgREST 1000-row cap. §§26.10.x added earlier 24 April 2026 (session 2). §26 added 24 April 2026 (session 1). §§19-25 added 23 April 2026 for Buy Now / shared auth gate / transactional email / scroll management / quote total pre-insert / compact product page layout / forgot password. §§2, 3, 8.4, 10, 11, 12, 13, 18 refreshed.*
+*Last updated: 11 May 2026 — session 5: §32 AI Assistant added. First customer-facing surface — POST /api/ai/chat (Anthropic Sonnet 4.6, prompt-cached system prompt + tools, manual tool-use loop dispatching to /api/search-products and /api/find-alternatives via Bearer CRON_SECRET). New tables ai_conversations + ai_quotas; new profiles.ai_chat_enabled boolean. Anonymous quota: 5 searchProducts/24h rolling per visitor_id_hash (SHA-256). Signed-in unlimited. Feature-flag gating: anon via VITE_AI_CHAT_PUBLIC_ENABLED (start false), signed-in via profiles.ai_chat_enabled (manual seed). Minimal AIChatWidget mounted in App.jsx; session 6 polishes UI. Pinned @anthropic-ai/sdk 0.95.1, @fingerprintjs/fingerprintjs 5.2.0. Structural verification (auth contract / validation / quota lib / schema / RLS / flag) ALL PASS; end-to-end (Anthropic + tools) BLOCKED ON ANTHROPIC CREDIT BALANCE — re-run scripts/verify-session-5.js after top-up. Session 4b (earlier 11 May 2026): §31 Hybrid Search Layer added. Two new serverless endpoints (POST /api/search-products, POST /api/find-alternatives) on the existing Bearer CRON_SECRET pattern; scoring is RRF(k=60) over vector + tsvector ranks with core 1.30× and pgifts-direct 1.05× multipliers (core retuned 1.15 → 1.30 during verification — Query-C diagnostic captured in retune migration). New columns: is_core_product, core_priority, lead_time_days, express_available, in_stock, plus a STORED tsvector + GIN index. 8 PGifts-Direct hero SKUs seeded as is_core_product=true. Laltex parser extended with parseLeadTimeDays + express_available derivation from Supplier='Fast Fit'. No frontend, no AI, no UI — those are sessions 5+. Session 4a.1 (earlier 11 May 2026): §27 rewritten to clarify sync is per-supplier (one cron per feed) and embed is supplier-agnostic (one cron spans every supplier_products row). Embed module renamed laltex-embed.js → catalogue-embed.js; CLI renamed embed-laltex-catalogue.js → embed-catalogue.js; cron route renamed /api/cron/embed-laltex → /api/cron/embed-catalogue (vercel.json + smoke-test updated). New migration 20260511_job_runs_supplier_id_nullable.sql drops NOT NULL on job_runs.supplier_id with a CHECK keeping it required for job_type='sync'. §26.11 supplier ontology table updated. New invariants added in §27.8. Session 4a (24 April 2026): §26.11 Multi-supplier product ontology added; §30 PGifts Direct Migration added (mirror strategy, field mapping, approved 25-row category mapping with Safety Wear override for hi-vis-vest, idempotent rerun, follow-ups, invariants). §28.4 pkey-rename gotcha added earlier (session 3b follow-up). Session 3b: §27 rewritten to cover both sync + embed crons (rename sync_runs→job_runs, job_type column, embed failure policy, per-route env var table); §§28.2 / 28.3 production-vs-local latency + PowerShell 100s timeout. §27 originally added earlier 24 April 2026 (session 3a). §28 opened earlier 24 April 2026 with §28.1 PostgREST 1000-row cap. §§26.10.x added earlier 24 April 2026 (session 2). §26 added 24 April 2026 (session 1). §§19-25 added 23 April 2026 for Buy Now / shared auth gate / transactional email / scroll management / quote total pre-insert / compact product page layout / forgot password. §§2, 3, 8.4, 10, 11, 12, 13, 18 refreshed.*
 *Update this file at the end of every significant session.*
 
 ---
@@ -2084,4 +2084,294 @@ merge-duplicates only touches columns present in the payload.
   (401/401/200) against `https://promo-gifts-co.uk/api/search-products`
   and `…/api/find-alternatives` to confirm prod parity. Use `curl`
   with `--max-time 30`.
+
+---
+
+## 32. AI ASSISTANT (session 5)
+
+The PGifts AI assistant — the first customer-facing surface in the
+Laltex integration. Claude Sonnet 4.6 with prompt caching, calling
+session 4b's hybrid search + alternatives endpoints as tools.
+
+Shipped gated behind a feature flag because polish lands in session
+6 and we don't want random visitors meeting a half-baked widget. Dave
+flips himself on as the initial tester.
+
+| Surface | Path | Auth |
+|---|---|---|
+| Chat endpoint | `POST /api/ai/chat` | Supabase JWT (signed-in) OR `visitor_id` body field (anonymous) |
+| Widget | `<AIChatWidget />` mounted globally in `App.jsx` | Visibility gated by env flag + profile flag (§32.3) |
+
+### 32.1 Conversation pipeline
+
+`/api/ai/chat` runs a **manual agentic loop** (not the tool runner):
+
+1. **Identify caller.** Signed-in path: extract Bearer token, validate
+   via `${supabaseUrl}/auth/v1/user` with the anon key. Anonymous path:
+   hash `visitor_id` (SHA-256, with optional `VISITOR_HASH_SALT`); if
+   the field is present but hashing fails, fall back to an IP hash so
+   adblocker'd users aren't blocked. Field MUST be in the body —
+   complete absence is 401.
+2. **Quota pre-check.** Anonymous only — read `ai_quotas` and
+   compute remaining. Does NOT increment yet (we only burn quota
+   when the model actually invokes `searchProducts`). Signed-in
+   skips this entirely.
+3. **Load or create conversation.** Identity guard: a JWT-signed
+   user can only continue their own rows; a visitor can only
+   continue rows matching their hash.
+4. **Append the new user turn.** For anonymous users we attach a
+   `<system-reminder>` text block carrying live quota status —
+   placed at the END of `messages`, never in the cached system
+   prompt (cache-prefix discipline, §32.4).
+5. **Agentic loop** (max 6 iterations as a runaway safeguard):
+   - Call `anthropic.messages.create` with `{system: [<cached>], tools: ALL_TOOLS, messages: [...]}` and Sonnet 4.6.
+   - If `stop_reason === 'tool_use'`: extract each `tool_use` block,
+     check + increment quota (for `searchProducts` only), call
+     `/api/search-products` or `/api/find-alternatives` over loopback
+     with Bearer CRON_SECRET, slim the result via `truncateForModel()`
+     (see §32.7), append a `tool_result` content block, loop.
+     - **Quota exhausted on a searchProducts call:** return an
+       `is_error` tool_result explaining the cap; Claude phrases the
+       polite "sign up for unlimited" refusal itself.
+   - If `stop_reason === 'end_turn'` / `'max_tokens'` / `'refusal'`:
+     break.
+6. **Persist.** Update `ai_conversations` with the full messages
+   array (preserving Anthropic content-block shape) + token
+   counters + estimated cost.
+7. **Respond.** `{ conversation_id, message: {role, content, tool_calls}, stop_reason, quota_status, usage, signed_in }`.
+
+The whole thing is non-streaming. Streaming was explicitly punted
+("implementation choice" in the spec) because persistence + tool
+dispatch is simpler without partial responses. Session 6 can layer
+streaming on top.
+
+### 32.2 Tool surface
+
+Two tools, both calling session 4b endpoints with Bearer
+CRON_SECRET. Defined in
+[`scripts/lib/ai-tools.js`](../scripts/lib/ai-tools.js):
+
+| Tool | Endpoint | Counts against quota |
+|---|---|---|
+| `searchProducts` | `/api/search-products` | Yes (anonymous only) |
+| `findAlternatives` | `/api/find-alternatives` | No |
+
+The model receives a subset of `/api/search-products`'s filter
+surface — every filter the LLM can plausibly use well, omitting
+`material` (free-text in Laltex, see §31.2). Schema in
+`ai-tools.js` is the source of truth.
+
+The Vercel-side base URL for tool dispatch defaults to
+`req.headers['x-forwarded-host']` (production) or
+`req.headers.host` (local). Tests override via
+`AI_CHAT_SELF_BASE_URL` to a loopback router that imports the
+handlers in-process.
+
+### 32.3 Feature flag — two-layer gating
+
+The widget is invisible to random visitors during the soft launch.
+Two switches must both pass for a given user to see it:
+
+| User type | Required for visibility |
+|---|---|
+| Anonymous | `import.meta.env.VITE_AI_CHAT_PUBLIC_ENABLED === 'true'` |
+| Signed-in | `profiles.ai_chat_enabled = true` for their row |
+
+The signed-in switch bypasses the anonymous one — testers can use
+the widget while it's hidden from the public. To onboard a new
+tester, INSERT or UPDATE their `profiles` row. To open to the
+public, flip the env var on Vercel.
+
+**Important — `profiles` is currently empty.** Verified live before
+the migration. The `ai_chat_enabled` column adds with
+`DEFAULT false`; future sign-ups get the safe default. Dave's
+seed UPDATE is deferred (see §32.9) to keep this migration general
+and the seed traceable in git after his email is confirmed.
+
+### 32.4 Prompt caching
+
+Render order is `tools` → `system` → `messages`. We place
+`cache_control: {type: "ephemeral"}` on the last system block,
+which caches **both** the tools array and the system prompt
+together. Per the claude-api skill's prefix-match invariant,
+**`SYSTEM_PROMPT` and `ALL_TOOLS` must remain byte-stable across
+requests** — no timestamps, no per-user interpolation, no
+non-deterministic ordering. Per-request volatility (quota status,
+specific user message) is appended to `messages` after the cache
+breakpoint, where it can't invalidate the cached prefix.
+
+**Spec deviation:** the session 5 prompt asked for
+`anthropic-beta: prompt-caching-2024-07-31`. Prompt caching is GA
+in `@anthropic-ai/sdk@0.95.1` and the beta header is no longer
+required (or accepted in that form). Using the GA pattern.
+
+Cost economics (Sonnet 4.6, 5-min TTL):
+- Standard input: $3.00 / 1M tokens
+- Cache writes: $3.75 / 1M (1.25×)
+- Cache reads: $0.30 / 1M (0.1×)
+- Output: $15.00 / 1M
+
+First turn of a conversation pays the cache write cost (~$0.01
+for a ~3K-token system+tools prefix). Subsequent turns read at
+$0.30/1M and pay full price only on the variable message history.
+For a typical 5-turn anonymous conversation, the cache should be
+hit on turns 2–5, dropping the per-turn input cost by ~85%.
+
+### 32.5 Anthropic config — Sonnet 4.6, no thinking, low effort
+
+Configured in `ANTHROPIC_CONFIG`:
+
+```
+model: 'claude-sonnet-4-6'
+max_tokens: 2048
+thinking: { type: 'disabled' }
+effort: 'low'
+```
+
+Rationale: per the claude-api skill's specific recommendation for
+non-thinking chat workloads — `thinking: disabled` + `effort: low`
+"performs similar or better to Sonnet 4.5 no-thinking" with
+snappier latency and lower cost. A customer chat needs to feel
+fast; reasoning effort is overkill for "find me X under £Y".
+
+If a later session adds harder tasks (rubric-graded outcomes,
+multi-step reasoning), bump `effort` to `medium` and consider
+`thinking: adaptive` per-request.
+
+### 32.6 Quota model
+
+Anonymous users get **5 searchProducts calls per rolling 24h**
+per `visitor_id_hash`. `findAlternatives` is free. Signed-in
+users are unlimited and don't pass through `ai_quotas` at all.
+
+Visitor identity hashing
+(`scripts/lib/ai-quota.js` → `hashVisitorId`):
+- Input: FingerprintJS visitor ID, sent in the chat body's
+  `visitor_id` field
+- Hash: `SHA-256(SALT + visitorId)`, where `SALT = process.env.VISITOR_HASH_SALT || ''`
+- Storage: hex-digest only — the raw fingerprint never lands in
+  the DB
+
+`VISITOR_HASH_SALT` defaults to empty. Add a salt before the
+public launch to prevent rainbow-table attacks on anyone with
+read access to `ai_quotas`. Hardening follow-up §32.9.
+
+Window logic: when an incoming check arrives more than
+`QUOTA_WINDOW_MS` (24h) after `window_started_at`, the row is
+treated as stale and the next `incrementQuota()` resets the
+counter to 1 with a fresh `window_started_at`. Implemented in
+application code, not a Postgres function — math is debuggable
+and the chat endpoint can decide before paying an Anthropic
+round-trip.
+
+Race window: two simultaneous turns from the same fingerprint
+hitting the 5th search can both increment, landing the counter
+at 6. Acceptable — the next call still blocks at remaining=0.
+At 5/24h limits this is theoretical, not load-bearing.
+
+### 32.7 Tool result slimming
+
+The model invoking `searchProducts` with `limit=10` would receive
+~50K tokens of raw JSON if we passed the full response through
+(deep JSONB blobs: `product_pricing`, `print_details`, `items`,
+`images`, `plain_images`, all `raw_payload`). At Sonnet 4.6's
+$3/1M input price that's ~$0.15 per search just to pipe results
+to the model.
+
+`api/ai/chat.js` → `slimProduct()` strips raw JSONB and keeps
+what the model needs to synthesise a useful reply:
+`supplier_product_code`, `name`, `supplier`, `category`,
+`sub_category`, `description` (capped at 600 chars),
+`minimum_order_qty`, `lead_time_days`, `express_available`,
+`in_stock`, `is_core_product`, top 6 non-POA price tiers as
+`{min, max, price}`, the relevance scores, and `images[0]?.url` only.
+
+If session 6's UI needs more (full price tier table, all images),
+the search endpoint already returns it — the widget can fetch
+the raw row directly via PostgREST when rendering, rather than
+routing it through the chat context.
+
+### 32.8 Files
+
+| File | Purpose |
+|---|---|
+| `supabase/migrations/20260511_ai_assistant_tables.sql` | Schema: ai_conversations, ai_quotas, profiles.ai_chat_enabled, RLS |
+| `api/ai/chat.js` | Chat endpoint — manual agentic loop |
+| `scripts/lib/ai-system-prompt.js` | Frozen `SYSTEM_PROMPT` constant (cached prefix) |
+| `scripts/lib/ai-tools.js` | `ALL_TOOLS` definitions + `ANTHROPIC_CONFIG` |
+| `scripts/lib/ai-quota.js` | Hash + check + increment helpers |
+| `src/components/AIChatWidget/AIChatWidget.jsx` | Minimal functional widget (session 6 polishes) |
+| `src/App.jsx` | Adds `<AIChatWidget />` after `<Cart />` inside the router |
+| `scripts/verify-session-5.js` | Structural + end-to-end verification harness |
+
+### 32.9 Known follow-ups
+
+- **Seed Dave as the initial tester.** Run AFTER confirming his
+  email (two candidates in `auth.users`: `dave@alpha-omegaltd.com`
+  vs `dave@sport-of-kings.com`). One-line SQL once chosen:
+  ```sql
+  INSERT INTO profiles (id, ai_chat_enabled)
+  VALUES ((SELECT id FROM auth.users WHERE email = '<confirmed_email>'), true)
+  ON CONFLICT (id) DO UPDATE SET ai_chat_enabled = true;
+  ```
+  (`profiles` is empty today, so the row likely doesn't exist
+  yet — the UPSERT handles both cases.)
+- **`VISITOR_HASH_SALT` rotation.** Add a 32-byte hex value to
+  Vercel Production env and `.env` before public launch. Changing
+  the salt rebases every existing `ai_quotas` row to a different
+  identity (everyone gets fresh quota) — fine on launch, but
+  document this if rotating later.
+- **Set `VITE_AI_CHAT_PUBLIC_ENABLED=true` for public launch.**
+  Until then the widget stays invisible to anonymous users.
+- **End-to-end verification needs Anthropic credit balance.**
+  The session 5 verification probe failed with "credit balance
+  too low" — schema + auth + quota lib all PASS structurally,
+  but Queries B/C/D/E/F/I cannot run without API credits. Top up
+  and re-run `node scripts/verify-session-5.js`.
+- **Streaming the assistant response.** Currently non-streaming
+  for simplicity. Session 6 can add streaming via
+  `anthropic.messages.stream()` — but persistence has to happen
+  after the stream finalises, and the widget needs to render
+  partial deltas. Non-trivial; defer until UX requires it.
+- **Production smoke test (Query K).** After deploy:
+  1. `curl -X POST https://promo-gifts-co.uk/api/ai/chat -d '{"message":"hi"}' -H 'Content-Type: application/json'` → expect 401.
+  2. Same with `visitor_id` field → expect 200.
+  3. Real conversation from Dave's flagged account → 200, conversation persists with non-null `user_id`.
+- **Conversation listing for signed-in users.** Schema supports
+  it (`ai_conversations_user_idx` exists, RLS allows the user to
+  SELECT their own). Session 6 builds the "My Conversations"
+  dashboard tab on top.
+
+### 32.10 Invariants — DO NOT BREAK
+
+- **Do NOT interpolate per-request values into `SYSTEM_PROMPT`
+  or `ALL_TOOLS`.** Any byte change to either invalidates the
+  cached prefix (§32.4). Quota status, user IDs, timestamps,
+  conversation IDs all go in `messages`, not the prefix.
+- **Do NOT bypass the quota check before invoking
+  `searchProducts`.** Anonymous users are capped at 5/24h; the
+  check is in the agentic loop's `tool_use` branch.
+  `findAlternatives` is explicitly NOT quota-gated.
+- **Do NOT store the raw FingerprintJS visitor ID in the DB.**
+  Hash it via `hashVisitorId()` first. The raw value should
+  never leave the chat endpoint's request body.
+- **Do NOT save partial conversations.** The PATCH to
+  `ai_conversations` happens AFTER the agentic loop finishes —
+  if the loop throws, the row stays at its prior committed
+  state. Persisting mid-loop would corrupt the messages array
+  with orphaned `tool_use` blocks (no matching `tool_result`).
+- **Do NOT flatten messages to plain text on save.** The full
+  Anthropic content-block shape (text + tool_use + tool_result)
+  must round-trip through the DB so a conversation can be
+  resumed. The JSONB array preserves this verbatim.
+- **Do NOT ship the widget without the feature-flag gate.** Both
+  layers (env flag + profile flag) are load-bearing. Removing
+  the gates is a public-launch decision, not a tidy-up edit.
+- **Do NOT call Anthropic from the browser.** The widget posts
+  to `/api/ai/chat`; the server holds the API key. There's no
+  client-side `@anthropic-ai/sdk` import for a reason.
+- **Do NOT pin `@anthropic-ai/sdk` to a major version without
+  re-reading the claude-api skill.** Method names, type names,
+  and beta-header behavior shift across major releases. Pin
+  exact versions; bump deliberately.
 
