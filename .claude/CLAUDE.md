@@ -1857,6 +1857,14 @@ multiplier means very different things. 1.15× on a 0.85 similarity
 is +0.13 absolute (significant); 1.30× would be +0.26, biasing too
 aggressively when the source product itself is the anchor.
 
+**Tune these two multipliers independently.** It is correct and
+expected that `rpc_search_supplier_products.CORE_MULTIPLIER`
+diverges from `rpc_find_alternatives.CORE_MULTIPLIER` — they
+operate on different score scales. Future re-tunes that touch one
+should NOT reflexively copy the change to the other. Each value
+lives in its own RPC's `DECLARE` block precisely so they can move
+separately.
+
 #### 31.1.1 The core multiplier was retuned during verification
 
 Shipped value: **1.30**. Initial spec value was 1.15. The retune
@@ -2039,11 +2047,32 @@ merge-duplicates only touches columns present in the payload.
   this awkward, alias at the RPC's RETURNS TABLE level. Cheap
   rename, deferred until we see whether it actually matters.
 - **Per-product `core_priority` weighting.** All 8 hero SKUs share
-  `core_priority=1` today. If a future curation pass wants "Ocean
-  Octopus is the single most-promoted product" (the prompt's
-  expectation for Query C), the RPC needs to incorporate
-  `core_priority` into the scoring — e.g. divide RRF by
-  `core_priority` so 1 > 2 > 3. Out of scope until requested.
+  `core_priority=1` today. The scoring logic only knows "is this a
+  core product, yes/no". **Adopt this enhancement when ordering
+  *among* hero products matters more than which group they're in** —
+  e.g. when a curation pass declares "Ocean Octopus is the single
+  most-promoted product" or sets up 3-tier hero/secondary/tertiary
+  hierarchy. The RPC then needs to incorporate `core_priority` into
+  the scoring (e.g. divide RRF by `core_priority` so 1 > 2 > 3, or
+  apply a tier-based multiplier). Probably session 5 or 5.1 if
+  customer search behaviour reveals the need.
+- **12 Laltex SKUs with unparseable / missing `lead_time_days`.**
+  When `maxLeadTimeDays` is supplied, the RPC's
+  `lead_time_days IS NOT NULL AND lead_time_days <= ...` predicate
+  silently excludes any row with a null lead time. Today that's 12
+  Laltex products (1180/1192 parsed). Acceptable on launch because
+  the failure mode is "fewer results, never wrong results". Verify
+  in production with real queries; if those 12 turn out to be
+  high-value SKUs that customers actually search for, audit the
+  unparseable strings and extend `parseLeadTimeDays` in
+  `scripts/lib/laltex-parser.js`. The 12 rows are findable with:
+  ```sql
+  SELECT supplier_product_code, name,
+         raw_payload->'PrintDetails'->0->>'LeadTime' AS raw_lt
+    FROM supplier_products sp
+    JOIN suppliers s ON s.id=sp.supplier_id
+   WHERE s.slug='laltex' AND lead_time_days IS NULL;
+  ```
 - **Stale Laltex SKUs from earlier sync.** 2 SKUs that were in the
   feed pre-session-4b dropped out of the live feed by the verification
   re-sync. Their last_synced_at sits at 2026-05-08 — still inside
