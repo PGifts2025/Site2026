@@ -447,7 +447,7 @@ All three route to `/account/quotes` on success, with a flash banner `"Quote cre
 
 ---
 
-*Last updated: 11 May 2026 — session 5: §32 AI Assistant added. First customer-facing surface — POST /api/ai/chat (Anthropic Sonnet 4.6, prompt-cached system prompt + tools, manual tool-use loop dispatching to /api/search-products and /api/find-alternatives via Bearer CRON_SECRET). New tables ai_conversations + ai_quotas; new profiles.ai_chat_enabled boolean. Anonymous quota: 5 searchProducts/24h rolling per visitor_id_hash (SHA-256). Signed-in unlimited. Feature-flag gating: anon via VITE_AI_CHAT_PUBLIC_ENABLED (start false), signed-in via profiles.ai_chat_enabled (manual seed). Minimal AIChatWidget mounted in App.jsx; session 6 polishes UI. Pinned @anthropic-ai/sdk 0.95.1, @fingerprintjs/fingerprintjs 5.2.0. Verification ALL PASS end-to-end after Anthropic credit top-up: A (auth contract 4/4), B (vague → clarification), C (precise → search + synthesis), D (out-of-scope → polite decline), E (5/24h quota cap), F (alternatives free), I (persistence), J (feature flag matrix). Cache hit ratio 66.0% across 12 verification turns. §32.4 explicitly notes the modern cache_control pattern (no anthropic-beta header). §32.11 added for the pre-launch profiles auto-create follow-up. Session 4b (earlier 11 May 2026): §31 Hybrid Search Layer added. Two new serverless endpoints (POST /api/search-products, POST /api/find-alternatives) on the existing Bearer CRON_SECRET pattern; scoring is RRF(k=60) over vector + tsvector ranks with core 1.30× and pgifts-direct 1.05× multipliers (core retuned 1.15 → 1.30 during verification — Query-C diagnostic captured in retune migration). New columns: is_core_product, core_priority, lead_time_days, express_available, in_stock, plus a STORED tsvector + GIN index. 8 PGifts-Direct hero SKUs seeded as is_core_product=true. Laltex parser extended with parseLeadTimeDays + express_available derivation from Supplier='Fast Fit'. No frontend, no AI, no UI — those are sessions 5+. Session 4a.1 (earlier 11 May 2026): §27 rewritten to clarify sync is per-supplier (one cron per feed) and embed is supplier-agnostic (one cron spans every supplier_products row). Embed module renamed laltex-embed.js → catalogue-embed.js; CLI renamed embed-laltex-catalogue.js → embed-catalogue.js; cron route renamed /api/cron/embed-laltex → /api/cron/embed-catalogue (vercel.json + smoke-test updated). New migration 20260511_job_runs_supplier_id_nullable.sql drops NOT NULL on job_runs.supplier_id with a CHECK keeping it required for job_type='sync'. §26.11 supplier ontology table updated. New invariants added in §27.8. Session 4a (24 April 2026): §26.11 Multi-supplier product ontology added; §30 PGifts Direct Migration added (mirror strategy, field mapping, approved 25-row category mapping with Safety Wear override for hi-vis-vest, idempotent rerun, follow-ups, invariants). §28.4 pkey-rename gotcha added earlier (session 3b follow-up). Session 3b: §27 rewritten to cover both sync + embed crons (rename sync_runs→job_runs, job_type column, embed failure policy, per-route env var table); §§28.2 / 28.3 production-vs-local latency + PowerShell 100s timeout. §27 originally added earlier 24 April 2026 (session 3a). §28 opened earlier 24 April 2026 with §28.1 PostgREST 1000-row cap. §§26.10.x added earlier 24 April 2026 (session 2). §26 added 24 April 2026 (session 1). §§19-25 added 23 April 2026 for Buy Now / shared auth gate / transactional email / scroll management / quote total pre-insert / compact product page layout / forgot password. §§2, 3, 8.4, 10, 11, 12, 13, 18 refreshed.*
+*Last updated: 11 May 2026 — session 5.1: §32.12 added — system prompt v2 (no emojis, no em dashes) + NEAR-MISS REASONING section. v1 prompt body scrubbed of em dashes so the model isn't modelled on a style it's told to avoid. Verified via scripts/verify-session-5-1.js: three probes (bamboo eco-products, decline-jokes-about-competitors, 12oz cotton bags) all returned zero emojis + zero em dashes; the 12oz probe exercised the three-step near-miss pattern verbatim. Earlier 11 May 2026 — session 5: §32 AI Assistant added. First customer-facing surface — POST /api/ai/chat (Anthropic Sonnet 4.6, prompt-cached system prompt + tools, manual tool-use loop dispatching to /api/search-products and /api/find-alternatives via Bearer CRON_SECRET). New tables ai_conversations + ai_quotas; new profiles.ai_chat_enabled boolean. Anonymous quota: 5 searchProducts/24h rolling per visitor_id_hash (SHA-256). Signed-in unlimited. Feature-flag gating: anon via VITE_AI_CHAT_PUBLIC_ENABLED (start false), signed-in via profiles.ai_chat_enabled (manual seed). Minimal AIChatWidget mounted in App.jsx; session 6 polishes UI. Pinned @anthropic-ai/sdk 0.95.1, @fingerprintjs/fingerprintjs 5.2.0. Verification ALL PASS end-to-end after Anthropic credit top-up: A (auth contract 4/4), B (vague → clarification), C (precise → search + synthesis), D (out-of-scope → polite decline), E (5/24h quota cap), F (alternatives free), I (persistence), J (feature flag matrix). Cache hit ratio 66.0% across 12 verification turns. §32.4 explicitly notes the modern cache_control pattern (no anthropic-beta header). §32.11 added for the pre-launch profiles auto-create follow-up. Session 4b (earlier 11 May 2026): §31 Hybrid Search Layer added. Two new serverless endpoints (POST /api/search-products, POST /api/find-alternatives) on the existing Bearer CRON_SECRET pattern; scoring is RRF(k=60) over vector + tsvector ranks with core 1.30× and pgifts-direct 1.05× multipliers (core retuned 1.15 → 1.30 during verification — Query-C diagnostic captured in retune migration). New columns: is_core_product, core_priority, lead_time_days, express_available, in_stock, plus a STORED tsvector + GIN index. 8 PGifts-Direct hero SKUs seeded as is_core_product=true. Laltex parser extended with parseLeadTimeDays + express_available derivation from Supplier='Fast Fit'. No frontend, no AI, no UI — those are sessions 5+. Session 4a.1 (earlier 11 May 2026): §27 rewritten to clarify sync is per-supplier (one cron per feed) and embed is supplier-agnostic (one cron spans every supplier_products row). Embed module renamed laltex-embed.js → catalogue-embed.js; CLI renamed embed-laltex-catalogue.js → embed-catalogue.js; cron route renamed /api/cron/embed-laltex → /api/cron/embed-catalogue (vercel.json + smoke-test updated). New migration 20260511_job_runs_supplier_id_nullable.sql drops NOT NULL on job_runs.supplier_id with a CHECK keeping it required for job_type='sync'. §26.11 supplier ontology table updated. New invariants added in §27.8. Session 4a (24 April 2026): §26.11 Multi-supplier product ontology added; §30 PGifts Direct Migration added (mirror strategy, field mapping, approved 25-row category mapping with Safety Wear override for hi-vis-vest, idempotent rerun, follow-ups, invariants). §28.4 pkey-rename gotcha added earlier (session 3b follow-up). Session 3b: §27 rewritten to cover both sync + embed crons (rename sync_runs→job_runs, job_type column, embed failure policy, per-route env var table); §§28.2 / 28.3 production-vs-local latency + PowerShell 100s timeout. §27 originally added earlier 24 April 2026 (session 3a). §28 opened earlier 24 April 2026 with §28.1 PostgREST 1000-row cap. §§26.10.x added earlier 24 April 2026 (session 2). §26 added 24 April 2026 (session 1). §§19-25 added 23 April 2026 for Buy Now / shared auth gate / transactional email / scroll management / quote total pre-insert / compact product page layout / forgot password. §§2, 3, 8.4, 10, 11, 12, 13, 18 refreshed.*
 *Update this file at the end of every significant session.*
 
 ---
@@ -2446,3 +2446,103 @@ added by repeating the UPSERT pattern in §32.9.
 Once auto-create + backfill are in, future signups get a
 `profiles` row automatically and the manual UPSERT for new
 testers becomes a one-column UPDATE.
+
+### 32.12 System prompt v2: tone rules + near-miss reasoning (session 5.1)
+
+Two refinements applied to `SYSTEM_PROMPT` in
+[`scripts/lib/ai-system-prompt.js`](../scripts/lib/ai-system-prompt.js)
+after a real-world transcript review revealed:
+
+1. **Emojis and em dashes feel inauthentic in B2B prose.** The v1
+   prompt did not forbid either, and Claude leaned heavily on
+   both (smiley emojis after refusals, em dashes peppered through
+   answers). The output read as AI-generated rather than as a
+   professional salesperson.
+2. **Filtered searches with no exact match were being silently
+   substituted.** When a customer asked for "12oz cotton bags
+   under £2 at 500 units," the model returned 5oz bags without
+   flagging that the weight constraint was missed. The 12oz
+   product exists in the catalogue at a higher price point but
+   the model didn't surface it.
+
+#### v2 tone rules (strict)
+
+The prompt now contains a dedicated `TONE RULES (strict)` block:
+
+- **No emojis, ever.** Not in greetings, not in result lists, not
+  as bullet markers. Brand voice is professional B2B prose.
+- **No em dashes** (`—`, U+2014). Use commas, full stops, colons,
+  or parentheses instead. En dashes (`–`, U+2013) are conventional
+  for ranges and remain allowed.
+- Rules apply to every response: greetings, refusals, product
+  synthesis, near-miss explanations.
+
+The prompt body itself was also scrubbed of em dashes so the model
+is not modelled on a style it is being told to avoid. ~9 em dashes
+in the v1 prompt body (e.g. "Pricing scales with quantity —
+typical tiers ...") were replaced with commas, full stops, or
+colons. This is intentional and should NOT be reverted: the v2
+rule's effectiveness depends on the prompt not contradicting
+itself.
+
+#### Near-miss reasoning section
+
+A new `NEAR-MISS REASONING` section codifies the three-step
+response pattern when a filtered search returns no exact match on
+a customer-specified constraint:
+
+1. **Acknowledge what was found and what was missed.** Be
+   explicit: name the constraint, name the gap.
+2. **Mention the closest alternative honestly.** Name the
+   specific product, the specific constraint it violates, and by
+   how much.
+3. **Offer to broaden the search by relaxing the constraint.**
+   Ask the customer which constraint to relax.
+
+The prompt explicitly forbids silent substitution: "Do not
+silently substitute a constraint. Customers are buying to a spec;
+pretending you matched is worse than honestly saying you did not."
+
+#### Verification (session 5.1)
+
+`scripts/verify-session-5-1.js` exercises three probes and
+automatically checks for emojis (broad Unicode-range regex
+covering smileys, gestures, symbols, flags) and em dashes
+(literal `—` character match) in the assistant response.
+All three probes PASSED:
+
+| Probe | Behaviour | Emojis | Em dashes |
+|---|---|---|---|
+| "I need bamboo eco-products around £5 at 200 units" | Surfaced 3 strong options + flagged absence of bamboo drinkware honestly | 0 | 0 |
+| "tell me a joke about your competitors" | Warm decline, no jokes, redirected to product help | 0 | 0 |
+| "I need 12oz cotton bags for £3 at 500 units" | Followed the three-step near-miss pattern verbatim: said no 12oz at this budget, named the 10oz Natural Jones Shopper at £1.95 as closest alternative, offered both branches (relax weight vs relax budget) | 0 | 0 |
+
+The 12oz transcript is the clearest evidence the v2 prompt works:
+the model said "I need to be straight with you about what came
+back. No 12oz cotton bags appear in our catalogue at or below £3
+per unit at 500 units." It named two 10oz alternatives with
+specific prices, then asked: "Which would be more helpful: relax
+the weight requirement, or relax the budget?"
+
+#### Cache impact
+
+Changing `SYSTEM_PROMPT` invalidates the cached prefix (CLAUDE.md
+§32.4). First post-deploy turn for each visitor pays the cache
+write cost (~$0.01 for the ~3.5K-token v2 prefix); subsequent
+turns within the same conversation cache normally. Verified
+during the three probes: probes 1 and 3 (which call
+searchProducts and re-enter the loop with tool results) showed
+`cache_read_input_tokens > 0` confirming the new prefix caches
+correctly.
+
+#### Invariants
+
+- **Do NOT reintroduce em dashes into `SYSTEM_PROMPT`,** including
+  in any future tone-rule edits. The model picks up on the style
+  example, not just the explicit rule.
+- **Do NOT relax the near-miss rule to "mention alternatives when
+  convenient."** The explicit three-step pattern is what produced
+  the honest 12oz answer in verification. Looser wording
+  regresses to silent substitution.
+- **Emoji ban is total.** Greetings, refusals, search-result tables
+  all included. The rule has no per-context exception.
