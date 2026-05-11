@@ -447,7 +447,7 @@ All three route to `/account/quotes` on success, with a flash banner `"Quote cre
 
 ---
 
-*Last updated: 11 May 2026 — session 4a.1: §27 rewritten to clarify sync is per-supplier (one cron per feed) and embed is supplier-agnostic (one cron spans every supplier_products row). Embed module renamed laltex-embed.js → catalogue-embed.js; CLI renamed embed-laltex-catalogue.js → embed-catalogue.js; cron route renamed /api/cron/embed-laltex → /api/cron/embed-catalogue (vercel.json + smoke-test updated). New migration 20260511_job_runs_supplier_id_nullable.sql drops NOT NULL on job_runs.supplier_id with a CHECK keeping it required for job_type='sync'. §26.11 supplier ontology table updated. New invariants added in §27.8. Session 4a (24 April 2026): §26.11 Multi-supplier product ontology added; §30 PGifts Direct Migration added (mirror strategy, field mapping, approved 25-row category mapping with Safety Wear override for hi-vis-vest, idempotent rerun, follow-ups, invariants). §28.4 pkey-rename gotcha added earlier (session 3b follow-up). Session 3b: §27 rewritten to cover both sync + embed crons (rename sync_runs→job_runs, job_type column, embed failure policy, per-route env var table); §§28.2 / 28.3 production-vs-local latency + PowerShell 100s timeout. §27 originally added earlier 24 April 2026 (session 3a). §28 opened earlier 24 April 2026 with §28.1 PostgREST 1000-row cap. §§26.10.x added earlier 24 April 2026 (session 2). §26 added 24 April 2026 (session 1). §§19-25 added 23 April 2026 for Buy Now / shared auth gate / transactional email / scroll management / quote total pre-insert / compact product page layout / forgot password. §§2, 3, 8.4, 10, 11, 12, 13, 18 refreshed.*
+*Last updated: 11 May 2026 — session 4b: §31 Hybrid Search Layer added. Two new serverless endpoints (POST /api/search-products, POST /api/find-alternatives) on the existing Bearer CRON_SECRET pattern; scoring is RRF(k=60) over vector + tsvector ranks with core 1.30× and pgifts-direct 1.05× multipliers (core retuned 1.15 → 1.30 during verification — Query-C diagnostic captured in retune migration). New columns: is_core_product, core_priority, lead_time_days, express_available, in_stock, plus a STORED tsvector + GIN index. 8 PGifts-Direct hero SKUs seeded as is_core_product=true. Laltex parser extended with parseLeadTimeDays + express_available derivation from Supplier='Fast Fit'. No frontend, no AI, no UI — those are sessions 5+. Session 4a.1 (earlier 11 May 2026): §27 rewritten to clarify sync is per-supplier (one cron per feed) and embed is supplier-agnostic (one cron spans every supplier_products row). Embed module renamed laltex-embed.js → catalogue-embed.js; CLI renamed embed-laltex-catalogue.js → embed-catalogue.js; cron route renamed /api/cron/embed-laltex → /api/cron/embed-catalogue (vercel.json + smoke-test updated). New migration 20260511_job_runs_supplier_id_nullable.sql drops NOT NULL on job_runs.supplier_id with a CHECK keeping it required for job_type='sync'. §26.11 supplier ontology table updated. New invariants added in §27.8. Session 4a (24 April 2026): §26.11 Multi-supplier product ontology added; §30 PGifts Direct Migration added (mirror strategy, field mapping, approved 25-row category mapping with Safety Wear override for hi-vis-vest, idempotent rerun, follow-ups, invariants). §28.4 pkey-rename gotcha added earlier (session 3b follow-up). Session 3b: §27 rewritten to cover both sync + embed crons (rename sync_runs→job_runs, job_type column, embed failure policy, per-route env var table); §§28.2 / 28.3 production-vs-local latency + PowerShell 100s timeout. §27 originally added earlier 24 April 2026 (session 3a). §28 opened earlier 24 April 2026 with §28.1 PostgREST 1000-row cap. §§26.10.x added earlier 24 April 2026 (session 2). §26 added 24 April 2026 (session 1). §§19-25 added 23 April 2026 for Buy Now / shared auth gate / transactional email / scroll management / quote total pre-insert / compact product page layout / forgot password. §§2, 3, 8.4, 10, 11, 12, 13, 18 refreshed.*
 *Update this file at the end of every significant session.*
 
 ---
@@ -1811,3 +1811,248 @@ difference worth surfacing.
   mapping is baked into the script AND §30.4 — both must stay in
   sync. Future supplier additions that need similar mapping should
   follow the same human-checkpoint pattern used in session 4a.
+
+---
+
+## 31. HYBRID SEARCH LAYER (session 4b)
+
+Two Vercel serverless endpoints that turn `supplier_products` into a
+callable search engine. The AI assistant (session 5) consumes these
+via tool calls; the layer below is purely retrieval + ranking, no
+generative model is touched here.
+
+| Endpoint | Purpose | Auth |
+|---|---|---|
+| `POST /api/search-products` | Hybrid (vector + tsvector) catalogue search with structured filters | Bearer `${CRON_SECRET}` |
+| `POST /api/find-alternatives` | Vector-only nearest neighbours of a known product | Bearer `${CRON_SECRET}` |
+
+Server-to-server only at this stage. Same shared secret as the cron
+routes — rotation rotates everything together. A future public-facing
+exposure (if ever needed) gets its own auth layer; out of scope here.
+
+### 31.1 Scoring
+
+`/api/search-products` uses **Reciprocal Rank Fusion** (RRF, k=60)
+over two retrievers, multiplied by curation boosts:
+
+```
+base_rrf = 1/(60 + vector_rank) + 1/(60 + tsvector_rank)
+final    = base_rrf
+           * (1.30 if is_core_product             else 1.0)
+           * (1.05 if supplier='pgifts-direct'    else 1.0)
+```
+
+RRF was chosen over weighted-sum because cosine similarity (0–1) and
+`ts_rank` (unbounded) have wildly different score scales and any
+weighted blend requires per-corpus normalisation; RRF is
+scale-invariant by construction. ROW_NUMBER (not RANK) assigns
+positions inside the filtered candidate set, with a stable
+tiebreaker on `supplier_product_code`.
+
+**`/api/find-alternatives`** uses pure cosine similarity (no
+text query, no tsvector) multiplied by the **same** boost factors
+**except** `CORE_MULTIPLIER stays at 1.15`. The scoring domains
+differ — RRF base ≈ 0.025–0.033, raw cosine ≈ 0.5–0.9 — so the same
+multiplier means very different things. 1.15× on a 0.85 similarity
+is +0.13 absolute (significant); 1.30× would be +0.26, biasing too
+aggressively when the source product itself is the anchor.
+
+#### 31.1.1 The core multiplier was retuned during verification
+
+Shipped value: **1.30**. Initial spec value was 1.15. The retune
+happened during session 4b verification on Query C ("charging
+cable"): at 1.15, only 2 of the 4 PGifts-Direct hero cable products
+landed in the top 5 because their product names don't contain the
+word "cable" so `ts_rank` ranked them ~40th vs ~1–3 for Laltex
+products whose names do (e.g. *NOVA 100W 4-in-1 Fast Charge Cable*).
+At 1.30 all four (mr-bio-pd-long, mr-bio, octopus-mini,
+ocean-octopus) take positions 1–4 with the strongest Laltex match
+(ZP0200) sandwiched at #5. See migration
+`20260511_search_layer_retune_core_multiplier.sql` for the math and
+the raw rank data that informed the decision.
+
+Ocean Octopus cannot be #1 in this query under any boost — its base
+vector similarity is the lowest of the four core cable products
+(0.477 vs 0.488 for mr-bio-pd-long). Per-product priority weighting
+via `core_priority` would be the lever for that; out of scope here
+(all 8 hero SKUs currently uniform `core_priority=1`).
+
+### 31.2 Filters
+
+All optional unless noted. Validated in the endpoint, parameterised
+into the RPC — no string concatenation of user input into SQL.
+
+| Filter | Type | Notes |
+|---|---|---|
+| `query` | string | **Required.** ≤500 chars. Embedded via `text-embedding-3-small` for the vector side; passed to `websearch_to_tsquery` for the tsvector side. |
+| `filters.category` | string | Exact match (Laltex's canonical capitalisation). |
+| `filters.sub_category` | string | Exact match. |
+| `filters.supplierSlug` | string | `'laltex'` or `'pgifts-direct'`. |
+| `filters.minOrderQuantity` | integer | Products whose `minimum_order_qty` exceeds this are excluded (treats DB null as "no MOQ" = always passes). |
+| `filters.quantity` | integer | Sets the price-tier bracket for `maxUnitPrice`. **Required** if `maxUnitPrice` is set. |
+| `filters.maxUnitPrice` | number | POA rows always excluded when this is set. Without `quantity`, *any* tier below the ceiling qualifies; with `quantity`, only the tier whose range contains the qty is tested. |
+| `filters.maxLeadTimeDays` | integer | NULL `lead_time_days` rows are excluded when this filter is set (no signal to rank). |
+| `filters.inStockOnly` | boolean | Default **true**. |
+| `filters.expressOnly` | boolean | Default **false**. Maps to `express_available = true` (currently `supplier_division='Fast Fit'` for Laltex; always false for PGifts-Direct). |
+| `filters.product_indicator` | string | Exact match (e.g. `'Clearance'`, `'Best Seller'`, `'To Be Discontinued'`). |
+| `filters.limit` | integer | Default 10, max 50. Clamped both in JS and inside the RPC. |
+
+**`material` is intentionally NOT a filter.** Laltex's `material`
+column is free-text ("PP plastic", "AS plastic", "Stainless steel"
+vs "stainless steel") and would need normalisation that hasn't been
+done. Customers express material preferences in natural language;
+session 3b retrieval tests confirmed embeddings catch this well.
+Revisit only with a normalised facet column.
+
+### 31.3 Staleness exclusion (non-bypassable)
+
+Both RPCs apply `last_synced_at > now() - interval '14 days'`. The
+filter lives INSIDE the function so callers cannot disable it.
+Rationale: discontinued Laltex SKUs whose feed entries vanish age
+out of search results without manual intervention. The window must
+be longer than the longest realistic cron-outage window — 14 days
+covers any plausible incident plus weekend response time.
+
+PGifts-Direct rows refresh `last_synced_at` on every re-run of
+`scripts/migrate-catalog-to-supplier-products.js`; Laltex rows
+refresh on every nightly cron. Verified end-to-end in session 4b
+verification Query I (backdate row → search misses → restore →
+search finds).
+
+### 31.4 Database surface
+
+Schema changes (migration `20260511_search_layer_additions.sql`):
+
+```
+ALTER TABLE supplier_products ADD COLUMN is_core_product   BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE supplier_products ADD COLUMN core_priority     INTEGER;
+ALTER TABLE supplier_products ADD COLUMN lead_time_days    INTEGER;
+ALTER TABLE supplier_products ADD COLUMN express_available BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE supplier_products ADD COLUMN in_stock          BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE supplier_products ADD COLUMN search_tsv tsvector
+  GENERATED ALWAYS AS (
+    setweight(to_tsvector('english', coalesce(name, '')),                                          'A') ||
+    setweight(to_tsvector('english', coalesce(description, '') || ' ' || coalesce(web_description, '')), 'B') ||
+    setweight(to_tsvector('english', coalesce(keywords, '')),                                      'C') ||
+    setweight(to_tsvector('english', coalesce(category, '') || ' ' || coalesce(sub_category, '')), 'D')
+  ) STORED;
+```
+
+`search_tsv` is GENERATED STORED — no trigger needed; Postgres
+recomputes automatically on any source-column UPDATE. The GIN index
+build needed `maintenance_work_mem = '128MB'` (raised via `SET
+LOCAL` in the migration transaction; default 32MB was insufficient
+even at 1217 rows).
+
+Two RPC functions, parameterised end-to-end:
+
+- `rpc_search_supplier_products(query_embedding, query_text, ...11 filter params, p_limit)`
+- `rpc_find_alternatives(p_supplier_product_code, p_exclude_out_of_stock, p_limit)`
+
+`EXECUTE` granted to `service_role` only; the serverless endpoints
+use the service-role key (same pattern as cron). Public/anon cannot
+call these RPCs directly.
+
+### 31.5 Core seeding (8 hero SKUs)
+
+Seeded in `20260511_search_layer_additions.sql`:
+
+```
+ocean-octopus     octopus-mini     mr-bio       mr-bio-pd-long
+ice-p             luggie           gamma-lite   chi-cup
+```
+
+All set `is_core_product = true, core_priority = 1` — uniform tier
+today. Future hero additions should land via a follow-up migration
+(traceable git history) rather than a script UPDATE. The
+PostgREST-driven migrate script (`migrate-catalog-to-supplier-products.js`)
+deliberately **omits** `is_core_product` / `core_priority` /
+`in_stock` from its upsert body so curated state survives re-runs —
+merge-duplicates only touches columns present in the payload.
+
+### 31.6 Files
+
+| File | Purpose |
+|---|---|
+| `supabase/migrations/20260511_search_layer_additions.sql` | Schema + RPCs + core seed (canonical source of truth, contains the post-retune 1.30 multiplier) |
+| `supabase/migrations/20260511_search_layer_patch_alternatives.sql` | `rpc_find_alternatives` column-ambiguity fix (caught in verification) |
+| `supabase/migrations/20260511_search_layer_retune_core_multiplier.sql` | Core multiplier 1.15 → 1.30 retune with the diagnostic math captured |
+| `api/search-products.js` | Hybrid search endpoint |
+| `api/find-alternatives.js` | Companion alternatives endpoint |
+| `scripts/lib/search-auth.js` | Shared auth + env guard + RPC fetch + tier picker helpers |
+| `scripts/lib/laltex-parser.js` | Extended with `parseLeadTimeDays` + `LALTEX_EXPRESS_DIVISION` const + new fields in `normaliseProduct` |
+| `scripts/migrate-catalog-to-supplier-products.js` | Adds `lead_time_days: null`, `express_available: false` to PGifts-Direct rows |
+| `scripts/verify-session-4b.js` | In-process verification harness — runs Queries A–I |
+
+### 31.7 What this layer does NOT do
+
+- **No live stock check.** `in_stock` is a manually-overridable
+  column. Real-time Laltex `/stocks` polling is session 5+ (on-demand
+  at quote/cart time, not at search time).
+- **No AI / no chat.** This is retrieval + ranking only. Session 5
+  wires it to function-calling.
+- **No UI.** Session 6 builds the chat widget that consumes
+  `/api/search-products` + `/api/find-alternatives`.
+- **No public exposure.** Bearer `${CRON_SECRET}` gates everything;
+  the AI Edge Function (session 5) calls these with the secret.
+
+### 31.8 Invariants — DO NOT BREAK
+
+- **Do NOT bypass the staleness filter.** The 14-day cutoff lives
+  inside both RPCs precisely because a caller-set parameter is too
+  easy to leave true accidentally. Discontinued SKUs ageing out of
+  search results is load-bearing for AI quality.
+- **Do NOT remove the parameterisation.** Query text goes through
+  `websearch_to_tsquery` (safe by construction) and filter values
+  are JSON params on `POST /rest/v1/rpc/...` — never concatenated
+  into SQL. The next person to add a filter should follow the
+  named-parameter pattern, not invent ad-hoc query construction.
+- **Do NOT diverge `api/search-products.js`'s `SCORING` constant
+  from the RPC.** The RPC is authoritative; the JS const is
+  documentation + response metadata. If you retune the RPC, mirror
+  the change in `SCORING` so callers can see what produced their
+  ranking.
+- **Do NOT include `is_core_product` / `core_priority` / `in_stock`
+  in any sync or migrate upsert body.** PostgREST merge-duplicates
+  would overwrite curated state. The shipped sync (Laltex) + migrate
+  (PGifts-Direct) scripts omit these on purpose.
+- **Do NOT change Dave's core 8 SKU list via script.** Future
+  additions/removals go through a fresh migration so the curation
+  history is in git.
+- **Do NOT collapse the two RPCs into one.** Search needs a query
+  text + tsvector; alternatives doesn't (it's vector-only against a
+  source row's embedding). The scoring domains differ (RRF vs raw
+  cosine) and so do the boost multipliers (1.30 vs 1.15) — see §31.1.
+- **Do NOT add `material` as a filter** without first normalising
+  the column. Free-text values today; embeddings handle natural-
+  language material preferences fine.
+- **Do NOT rely on a particular `core_multiplier` value persisting**
+  through future tuning sessions — it's tunable on purpose. Always
+  read from the RPC source if you need to know what's live.
+
+### 31.9 Known follow-ups
+
+- **`minimum_order_qty` vs `minimum_order_quantity`.** The spec used
+  `minimum_order_quantity` in the response shape; the response
+  surfaces `minimum_order_qty` (the actual DB column name) instead
+  for consistency with the rest of the schema. If session 5 finds
+  this awkward, alias at the RPC's RETURNS TABLE level. Cheap
+  rename, deferred until we see whether it actually matters.
+- **Per-product `core_priority` weighting.** All 8 hero SKUs share
+  `core_priority=1` today. If a future curation pass wants "Ocean
+  Octopus is the single most-promoted product" (the prompt's
+  expectation for Query C), the RPC needs to incorporate
+  `core_priority` into the scoring — e.g. divide RRF by
+  `core_priority` so 1 > 2 > 3. Out of scope until requested.
+- **Stale Laltex SKUs from earlier sync.** 2 SKUs that were in the
+  feed pre-session-4b dropped out of the live feed by the verification
+  re-sync. Their last_synced_at sits at 2026-05-08 — still inside
+  the 14-day window, so they're still searchable for now. They'll
+  age out naturally if they don't reappear.
+- **Query H (production smoke test).** Not run in this session
+  because the branch isn't pushed/deployed. After Dave approves and
+  the branch lands on Vercel, run the same three auth cases
+  (401/401/200) against `https://promo-gifts-co.uk/api/search-products`
+  and `…/api/find-alternatives` to confirm prod parity. Use `curl`
+  with `--max-time 30`.
+

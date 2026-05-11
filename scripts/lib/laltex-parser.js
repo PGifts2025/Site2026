@@ -87,6 +87,49 @@ export function parseQtyRequired(raw) {
   return n == null ? 0 : n;
 }
 
+/**
+ * Parse a Laltex PrintDetails.LeadTime string into integer working days.
+ *
+ * Verified live samples (session 4b probe, 11 May 2026):
+ *   "5 working days from artwork approval."   -> 5
+ *   "10 working days from artwork approval."  -> 10
+ *   "Immediate according to stock availability." -> 0
+ *
+ * Defensive fallbacks for shapes we haven't seen but might appear:
+ *   "24 hours" -> 1, "48 hours" -> 2   (ceil(hours/24))
+ *   "X days" without "working" prefix  -> X
+ *   anything else (null, '', unparseable) -> null
+ *
+ * Returning null is the "don't filter on this" signal for the search
+ * layer (maxLeadTimeDays excludes nulls only when the filter is set).
+ *
+ * @param {string|null|undefined} raw
+ * @returns {number|null}
+ */
+export function parseLeadTimeDays(raw) {
+  if (raw == null) return null;
+  const s = String(raw).trim();
+  if (!s) return null;
+  if (/^immediate/i.test(s)) return 0;
+  const daysMatch = s.match(/(\d+)\s*(?:working\s+)?days?/i);
+  if (daysMatch) {
+    const n = parseInt(daysMatch[1], 10);
+    return Number.isFinite(n) ? n : null;
+  }
+  const hoursMatch = s.match(/(\d+)\s*hours?/i);
+  if (hoursMatch) {
+    const h = parseInt(hoursMatch[1], 10);
+    return Number.isFinite(h) ? Math.max(1, Math.ceil(h / 24)) : null;
+  }
+  return null;
+}
+
+// Express-capable Laltex division. Verified live: SELECT DISTINCT
+// supplier_division -> {'Laltex Promo', 'Pencom', 'Source IT',
+// 'Bags HQ', 'Fast Fit'}. Spec said 'FFP' but that's a short code
+// not present in the feed.
+export const LALTEX_EXPRESS_DIVISION = 'Fast Fit';
+
 // ---------------------------------------------------------------------------
 // Array transforms (raw Laltex shape -> our JSONB shape)
 // ---------------------------------------------------------------------------
@@ -273,6 +316,22 @@ export function normaliseProduct(raw) {
     print_details: parsePrintDetails(printArr),
     shipping_charges: Array.isArray(raw.ShippingCharge) ? raw.ShippingCharge : [],
     priority_service: Array.isArray(raw.PriorityService) ? raw.PriorityService : [],
+    // Session 4b: structured search facets. Parsed from the same raw
+    // payload — no extra API call. lead_time_days falls back to null
+    // when PrintDetails is missing or LeadTime is unparseable; that's
+    // the "no filterable signal" state.
+    lead_time_days: parseLeadTimeDays(
+      Array.isArray(raw.PrintDetails) && raw.PrintDetails.length > 0
+        ? raw.PrintDetails[0]?.LeadTime
+        : null,
+    ),
+    express_available: raw.Supplier === LALTEX_EXPRESS_DIVISION,
+    // is_core_product / core_priority / in_stock are intentionally
+    // NOT set here. is_core_product is curated state owned by the
+    // search-layer migration (and future curation updates); in_stock
+    // defaults to true in the schema and is manually overridden.
+    // Including them in the UPSERT payload would clobber that state
+    // on every nightly sync.
     raw_payload: raw,
     // last_synced_at intentionally omitted — it is set by the sync
     // layer ONLY on successful UPSERT. Failed upserts must not touch it.

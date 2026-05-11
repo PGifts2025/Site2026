@@ -341,6 +341,14 @@ async function shapeOne(ctx, product, supplierId, warnings) {
     print_details: shapePrintDetails(printRows),
     shipping_charges: [],
     priority_service: [],
+    // Session 4b search facets. PGifts-Direct gets the same shape as
+    // Laltex sync. We deliberately do NOT include is_core_product /
+    // core_priority / in_stock here — those are curated state owned
+    // by the search-layer migration and would be clobbered on re-run
+    // if included. PostgREST merge-duplicates only updates columns
+    // present in the body, so omitting them is the right pattern.
+    lead_time_days: null,        // catalog_products has no lead-time column today
+    express_available: false,    // no PGifts-Direct products are express
     raw_payload: {
       source: 'catalog_products',
       migrated_at: new Date().toISOString(),
