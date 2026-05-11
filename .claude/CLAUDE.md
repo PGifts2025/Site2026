@@ -2249,6 +2249,19 @@ Anonymous users get **5 searchProducts calls per rolling 24h**
 per `visitor_id_hash`. `findAlternatives` is free. Signed-in
 users are unlimited and don't pass through `ai_quotas` at all.
 
+**Quota is scoped to `searchProducts` tool calls only.**
+Conversation turns, greetings, clarifying questions, and
+`findAlternatives` are all free. This intentionally protects
+customers from burning their daily allowance on small talk.
+Verified live during Query K.2 (production smoke test,
+11 May 2026): a "hi" greeting returned `remaining: 5` —
+no quota consumed because the model chose not to call
+`searchProducts` (correct behaviour, `tool_calls: []`,
+`ai_quotas` row never created for that visitor). If a future
+session ever has reason to count something other than
+`searchProducts` against quota, that's a deliberate policy
+change — not an "oversight" to fix.
+
 Visitor identity hashing
 (`scripts/lib/ai-quota.js` → `hashVisitorId`):
 - Input: FingerprintJS visitor ID, sent in the chat body's
@@ -2364,6 +2377,13 @@ routing it through the chat context.
   `searchProducts`.** Anonymous users are capped at 5/24h; the
   check is in the agentic loop's `tool_use` branch.
   `findAlternatives` is explicitly NOT quota-gated.
+- **Do NOT broaden quota to count conversation turns or non-
+  `searchProducts` activity.** Greetings, clarifications,
+  out-of-scope refusals, and `findAlternatives` calls are all
+  free by design — see §32.6 for the rationale. Counting them
+  would burn customers' daily allowance on small talk and
+  defeat the point of having an assistant for product
+  discovery.
 - **Do NOT store the raw FingerprintJS visitor ID in the DB.**
   Hash it via `hashVisitorId()` first. The raw value should
   never leave the chat endpoint's request body.
