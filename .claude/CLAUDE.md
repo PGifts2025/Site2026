@@ -2406,6 +2406,14 @@ routing it through the chat context.
   re-reading the claude-api skill.** Method names, type names,
   and beta-header behavior shift across major releases. Pin
   exact versions; bump deliberately.
+- **When introducing a tone rule, audit the prompt body for
+  examples that contradict it.** Claude pattern-matches on style
+  examples in the prefix in addition to following explicit
+  instructions. A prompt that says "no em dashes" but is itself
+  full of em dashes gives the model conflicting signal and the
+  rule degrades. Surfaced in session 5.1 (§32.12): scrubbing
+  ~9 em dashes from the prompt body was load-bearing for the
+  rule taking effect.
 
 ### 32.11 PRE-LAUNCH FOLLOW-UP — profiles is unpopulated
 
