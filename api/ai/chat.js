@@ -383,6 +383,12 @@ export default async function handler(req, res) {
   let quotaAfter = preQuota;
   let assistantContentBlocks = null;
   let stopReason = null;
+  // Session 6: accumulate slimmed product cards from successful tool
+  // calls. The widget renders these as clickable cards alongside the
+  // assistant prose. We collect from BOTH searchProducts and
+  // findAlternatives; the latest call's results win when codes
+  // overlap.
+  const productCardMap = new Map();
 
   const MAX_LOOP_ITERATIONS = 6; // safety net; typical turn is 1-3 iterations
   let iter = 0;
@@ -445,22 +451,34 @@ export default async function handler(req, res) {
           const out = await dispatchTool({
             name: 'searchProducts', input: tool.input, baseUrl, cronSecret,
           });
+          const slimmed = out.ok ? truncateForModel(out.payload) : null;
+          if (slimmed?.results) {
+            for (const r of slimmed.results) {
+              if (r?.supplier_product_code) productCardMap.set(r.supplier_product_code, r);
+            }
+          }
           toolResults.push({
             type: 'tool_result',
             tool_use_id: tool.id,
             is_error: !out.ok,
-            content: JSON.stringify(out.ok ? truncateForModel(out.payload) : { error: out.error }),
+            content: JSON.stringify(slimmed ?? { error: out.error }),
           });
         } else if (tool.name === 'findAlternatives') {
           alternativeCalls += 1;
           const out = await dispatchTool({
             name: 'findAlternatives', input: tool.input, baseUrl, cronSecret,
           });
+          const slimmed = out.ok ? truncateForModel(out.payload) : null;
+          if (slimmed?.alternatives) {
+            for (const r of slimmed.alternatives) {
+              if (r?.supplier_product_code) productCardMap.set(r.supplier_product_code, r);
+            }
+          }
           toolResults.push({
             type: 'tool_result',
             tool_use_id: tool.id,
             is_error: !out.ok,
-            content: JSON.stringify(out.ok ? truncateForModel(out.payload) : { error: out.error }),
+            content: JSON.stringify(slimmed ?? { error: out.error }),
           });
         } else {
           toolResults.push({
@@ -511,13 +529,25 @@ export default async function handler(req, res) {
     .filter((b) => b.type === 'tool_use')
     .map((b) => ({ name: b.name, input: b.input }));
 
+  // Session 6: build the product cards payload. If the assistant text
+  // mentions specific codes, surface only those (most relevant); else
+  // return everything we accumulated this turn, capped at 6.
+  const assistantText = assistantTextBlocks.join('\n\n');
+  const allCards = Array.from(productCardMap.values());
+  const mentioned = allCards.filter((c) =>
+    c.supplier_product_code &&
+    assistantText.toLowerCase().includes(String(c.supplier_product_code).toLowerCase()),
+  );
+  const productCards = (mentioned.length > 0 ? mentioned : allCards).slice(0, 6);
+
   return res.status(200).json({
     conversation_id: conversation.id,
     message: {
       role: 'assistant',
-      content: assistantTextBlocks.join('\n\n'),
+      content: assistantText,
       tool_calls: toolCallSummaries,
     },
+    products: productCards,
     stop_reason: stopReason,
     quota_status: {
       used: quotaAfter.used,
