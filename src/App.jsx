@@ -72,6 +72,11 @@ function App() {
             {/* Home */}
             <Route path="/" element={<Home />} />
 
+            {/* Generic supplier-aware product route (session 6).
+                Resolves catalog_products.slug first, falls back to
+                supplier_products.supplier_product_code. */}
+            <Route path="/products/:identifier" element={<ProductDetail />} />
+
             {/* Dynamic Product Detail Routes - Must come BEFORE category routes */}
             <Route path="/bags/:productSlug" element={<ProductDetail />} />
             <Route path="/cups/:productSlug" element={<ProductDetail />} />

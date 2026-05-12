@@ -189,15 +189,16 @@ export const getCatalogProductBySlug = async (slug) => {
       query = query.eq('status', 'active');
     }
 
-    const { data, error } = await query.single();
+    // `.maybeSingle()` returns {data: null, error: null} for zero rows
+    // — which is what we want for a slug lookup that may legitimately
+    // miss (e.g. Laltex SKU passed through the generic /products
+    // route). `.single()` returned a 406 + PGRST116 error which the
+    // try/catch was re-throwing past the catalog→supplier fallthrough
+    // in getProductByIdentifier.
+    const { data, error } = await query.maybeSingle();
 
-    if (error) {
-      // If no rows found, return null
-      if (error.code === 'PGRST116' || error.message.includes('no rows')) {
-        return null;
-      }
-      throw error;
-    }
+    if (error) throw error;
+    if (!data) return null;
 
     // Filter active colors for non-admin users
     if (!isAdmin && data?.colors) {
@@ -925,6 +926,287 @@ export const getDesignerUrl = (productKey, color = null, view = null) => {
   return url;
 };
 
+// =====================================================
+// SUPPLIER PRODUCTS (session 6 — Laltex + PGifts Direct unified catalogue)
+// =====================================================
+
+/**
+ * Get a single supplier_products row by supplier_product_code (joins
+ * supplier). Used by the generic /products/:identifier route to fetch
+ * Laltex products. PGifts Direct products are normally served from
+ * catalog_products via getCatalogProductBySlug; this is a fallback
+ * for the unified normaliser.
+ *
+ * @param {string} code - supplier_product_code (Laltex SKU or PGifts slug)
+ * @returns {Promise<Object|null>} supplier_products row + supplier join, or null
+ */
+export const getSupplierProductByCode = async (code) => {
+  if (isMockAuth) return null;
+  if (!code) return null;
+
+  try {
+    const client = getSupabaseClient();
+    const { data, error } = await client
+      .from('supplier_products')
+      .select(`
+        *,
+        supplier:suppliers(id, slug, name)
+      `)
+      .eq('supplier_product_code', code)
+      .limit(1)
+      .maybeSingle();
+
+    if (error) {
+      if (error.code === 'PGRST116') return null;
+      throw error;
+    }
+    return data || null;
+  } catch (err) {
+    console.error('Error fetching supplier product:', err);
+    return null;
+  }
+};
+
+/**
+ * Try-catalog-first product loader for the generic /products/:identifier
+ * route. Returns the unified `{ source, raw, normalised }` shape so
+ * ProductDetailPage can branch cleanly without re-fetching.
+ *
+ * Resolution order:
+ *   1. catalog_products by slug   (PGifts Direct primary path)
+ *   2. supplier_products by code  (Laltex primary path, also a fallback
+ *                                  if a PGifts Direct slug exists only
+ *                                  in the mirror)
+ *
+ * @param {string} identifier
+ * @returns {Promise<{source:'catalog'|'supplier', raw:Object, normalised:Object}|null>}
+ */
+export const getProductByIdentifier = async (identifier) => {
+  if (!identifier) return null;
+
+  // Path 1: catalog_products (preserves existing rendering for PGifts Direct)
+  try {
+    const catalogRow = await getCatalogProductBySlug(identifier);
+    if (catalogRow) {
+      return {
+        source: 'catalog',
+        raw: catalogRow,
+        normalised: normaliseProduct(catalogRow, 'pgifts-direct'),
+      };
+    }
+  } catch (e) {
+    console.warn('[getProductByIdentifier] catalog lookup failed:', e?.message);
+  }
+
+  // Path 2: supplier_products (Laltex by SKU code).
+  //
+  // URL params arrive lowercase by convention (`/products/mg0192`)
+  // but Laltex stores codes uppercase (`MG0192`). Try the given
+  // casing first, then uppercase as a fallback. PGifts Direct mirror
+  // codes are the lowercase slugs (chi-cup), so as-given covers
+  // them; uppercase covers Laltex.
+  let supplierRow = await getSupplierProductByCode(identifier);
+  if (!supplierRow) {
+    const upper = identifier.toUpperCase();
+    if (upper !== identifier) {
+      supplierRow = await getSupplierProductByCode(upper);
+    }
+  }
+  if (supplierRow) {
+    const supplierSlug = supplierRow.supplier?.slug || 'laltex';
+    return {
+      source: 'supplier',
+      raw: supplierRow,
+      normalised: normaliseProduct(supplierRow, supplierSlug),
+    };
+  }
+
+  return null;
+};
+
+// ---------------------------------------------------------------------------
+// Unified product shape — normalises catalog_products vs supplier_products
+// ---------------------------------------------------------------------------
+//
+// Two suppliers, two storage shapes, but ProductDetailPage needs ONE input
+// to render against. PGifts Direct rows from catalog_products keep their
+// nested catalog_* joins (existing rendering path preserved). Laltex rows
+// from supplier_products store everything as Laltex-shaped JSONB (PascalCase
+// inside arrays). This helper flattens both into a stable shape.
+//
+// Key divergences absorbed:
+//   - PascalCase (PGifts Direct items[].ItemColour) vs snake_case
+//     (Laltex items[].item_colour). The Items array survives both shapes
+//     because parseItems() in laltex-parser.js already lower-snakes Laltex
+//     keys; PGifts Direct migrate script wrote PascalCase by mistake (or
+//     by design — see CLAUDE.md §30.2). We accept both.
+//   - print_details: one entry per product (PGifts Direct, matrix folded)
+//     vs N entries (Laltex, one per position). We surface positions[] as
+//     the natural unit either way.
+//   - Hex swatches (PGifts Direct items[].HexValue or color_hex) vs
+//     image-based swatches (Laltex items[].item_images[0]).
+//
+// pricingModel values:
+//   - 'flat' | 'clothing' | 'coverage' for catalog_products
+//   - 'laltex' for supplier_products (Laltex feed)
+// =====================================================
+export const normaliseProduct = (row, supplier) => {
+  if (!row) return null;
+
+  if (supplier === 'pgifts-direct' && row.slug) {
+    // catalog_products row — preserve existing fields, just flatten a
+    // small unified view for branches that care about supplier semantics.
+    return {
+      id: row.id,
+      code: row.slug,
+      slug: row.slug,
+      supplier: 'pgifts-direct',
+      name: row.name,
+      description: row.description,
+      subtitle: row.subtitle,
+      category: row.category?.slug === 'clothing' ? 'Clothing' : (row.category?.name || null),
+      categorySlug: row.category?.slug || null,
+      subCategory: null,
+      minimumOrderQty: row.min_order_quantity ?? null,
+      leadTimeDays: null,
+      expressAvailable: false,
+      inStock: true,
+      isCore: !!row.is_featured,
+      colours: (row.colors || []).map((c) => ({
+        id: c.id,
+        name: c.color_name,
+        code: c.color_code,
+        hex: c.hex_value || null,
+        pms: null,
+        images: c.swatch_image_url ? [c.swatch_image_url] : [],
+        indicator: null,
+      })),
+      images: (row.images || []).map((i) => ({
+        url: i.image_url,
+        medium: i.medium_url || i.image_url,
+        large: i.large_url || i.image_url,
+        thumbnail: i.thumbnail_url || i.image_url,
+        colorId: i.color_id || null,
+        altText: i.alt_text || null,
+        isPrimary: !!i.is_primary,
+        imageType: i.image_type || null,
+        sortOrder: i.sort_order ?? 0,
+      })),
+      pricingTiers: (row.pricing || []).map((t) => ({
+        minQty: t.min_quantity,
+        maxQty: t.max_quantity,
+        pricePerUnit: parseFloat(t.price_per_unit),
+        isPopular: !!t.is_popular,
+      })),
+      pricingModel: row.pricing_model || 'flat',
+      // PGifts Direct doesn't surface positions[] today — Configure & Quote
+      // reads catalog_print_pricing directly via the existing rendering
+      // path. Leaving this empty makes the data shape consistent but the
+      // page only consumes it for the 'laltex' branch.
+      printDetails: { positions: [] },
+      features: (row.features || []).map((f) => f.feature_text),
+      specifications: row.specifications?.specifications || {},
+      designerProduct: row.designer_product || null,
+      raw: row,
+    };
+  }
+
+  // supplier_products row — Laltex feed (or PGifts Direct mirror)
+  const items = Array.isArray(row.items) ? row.items : [];
+  const images = Array.isArray(row.images) ? row.images : [];
+  const productPricing = Array.isArray(row.product_pricing) ? row.product_pricing : [];
+  const printDetailsArr = Array.isArray(row.print_details) ? row.print_details : [];
+  const rawSource = row.raw_payload?.source === 'catalog_products' ? 'pgifts-direct' : 'laltex';
+  const supplierSlug = supplier || row.supplier?.slug || rawSource;
+
+  // PGifts Direct mirror rows use the legacy pricing_model from raw_payload.
+  // Laltex rows are always 'laltex'.
+  const pricingModel = supplierSlug === 'pgifts-direct'
+    ? (row.raw_payload?.pricing_model || 'flat')
+    : 'laltex';
+
+  return {
+    id: row.id,
+    code: row.supplier_product_code,
+    slug: row.supplier_product_code,
+    supplier: supplierSlug,
+    name: row.name,
+    description: row.description || row.web_description || '',
+    subtitle: row.title || row.name,
+    category: row.category || null,
+    categorySlug: null,
+    subCategory: row.sub_category || null,
+    minimumOrderQty: row.minimum_order_qty ?? null,
+    leadTimeDays: row.lead_time_days ?? null,
+    expressAvailable: !!row.express_available,
+    inStock: row.in_stock !== false,
+    isCore: !!row.is_core_product,
+    productIndicator: row.product_indicator || null,
+    material: row.material || null,
+    productDims: row.product_dims || null,
+    countryOfOrigin: row.country_of_origin || null,
+    colours: items.map((it, idx) => ({
+      id: it.item_code || it.ItemCode || `colour-${idx}`,
+      name: it.item_colour || it.ItemColour || `Colour ${idx + 1}`,
+      code: it.item_code || it.ItemCode || it.item_colour || it.ItemColour || null,
+      hex: it.HexValue || it.hex_value || null,
+      pms: it.pms || it.PMS || null,
+      images: (it.item_images || it.ItemImages || []).filter(Boolean),
+      plainImages: (it.plain_images || it.PlainImages || []).filter(Boolean),
+      indicator: it.item_indicator || it.ItemIndicator || null,
+      size: it.item_size || it.ItemSize || null,
+    })),
+    images: images.map((url, i) => ({
+      url,
+      medium: url,
+      large: url,
+      thumbnail: url,
+      colorId: null,
+      altText: row.name,
+      isPrimary: i === 0,
+      imageType: 'main',
+      sortOrder: i,
+    })),
+    pricingTiers: productPricing.map((t) => ({
+      minQty: t.min_qty,
+      maxQty: t.max_qty,
+      pricePerUnit: t.price,
+      isPoa: !!t.is_poa,
+      note: t.note || null,
+    })),
+    pricingModel,
+    printDetails: {
+      positions: printDetailsArr.map((pd) => ({
+        name: pd.print_position || pd.PrintPosition || 'Print',
+        area: pd.print_area || pd.PrintArea || null,
+        leadTime: pd.lead_time || pd.LeadTime || null,
+        maxColours: pd.max_colours || pd.MaxColours || null,
+        printType: pd.print_type || pd.PrintType || null,
+        setupCharge: pd.setup_charge ?? null,
+        setupChargeRaw: pd.setup_charge_raw || pd.SetupCharge || null,
+        extraColourSetupCharge: pd.extra_colour_setup_charge ?? null,
+        defaultOption: !!(pd.default_print_option ?? pd.DefaultPrintOption),
+        notes: pd.notes || pd.Notes || null,
+        tiers: (pd.print_price || pd.PrintPrice || []).map((t) => ({
+          numColours: t.num_colours ?? t.NumColours,
+          numPosition: t.num_position ?? t.NumPosition,
+          minQty: t.min_qty ?? t.MinQuantity,
+          maxQty: t.max_qty ?? t.MaxQuantity,
+          price: t.price ?? t.Price,
+          isPoa: !!(t.is_poa ?? false),
+          colourVariant: t.colour_variant ?? t.ColourVariant ?? null,
+          allInUnitPrice: t.all_in_unit_price ?? null,
+        })),
+        coordinates: pd.print_area_coordinates || pd.PrintAreaCoordinates || [],
+      })),
+    },
+    features: [],
+    specifications: {},
+    designerProduct: null,
+    raw: row,
+  };
+};
+
 /**
  * Get print pricing data for a product
  * Used by ProductDetailPage to show position/colour/coverage selectors and calculate print costs.
@@ -962,6 +1244,9 @@ export default {
   // Products
   getCatalogProducts,
   getCatalogProductBySlug,
+  getSupplierProductByCode,
+  getProductByIdentifier,
+  normaliseProduct,
   getCatalogProductsByCategory,
   createCatalogProduct,
   updateCatalogProduct,

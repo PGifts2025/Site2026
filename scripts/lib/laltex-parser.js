@@ -186,24 +186,76 @@ export function parsePrintAreaCoordinates(arr) {
 
 export function parsePrintDetails(arr) {
   if (!Array.isArray(arr)) return [];
-  return arr.map((pd) => ({
-    print_class: pd?.PrintClass || null,
-    print_type: pd?.PrintType || null,
-    print_position: pd?.PrintPosition || null,
-    print_area: pd?.PrintArea || null,
-    max_colours: pd?.MaxColours || null,
-    notes: pd?.Notes || null,
-    lead_time: pd?.LeadTime || null,
-    setup_charge: parsePriceString(pd?.SetupCharge).price,
-    setup_charge_raw: pd?.SetupCharge || null,
-    rpt_setup_charge: parsePriceString(pd?.RptSetupCharge).price,
-    rpt_setup_charge_raw: pd?.RptSetupCharge || null,
-    extra_colour_setup_charge: parsePriceString(pd?.ExtraColourSetupCharge).price,
-    extra_colour_setup_charge_raw: pd?.ExtraColourSetupCharge || null,
-    default_print_option: !!pd?.DefaultPrintOption,
-    print_price: parsePrintPrice(pd?.PrintPrice),
-    print_area_coordinates: parsePrintAreaCoordinates(pd?.PrintAreaCoordinates),
-  }));
+  return arr.map((pd) => {
+    const setupCharge = parsePriceString(pd?.SetupCharge).price;
+    const extraColourSetup = parsePriceString(pd?.ExtraColourSetupCharge).price;
+    const printPriceTiers = parsePrintPrice(pd?.PrintPrice);
+    return {
+      print_class: pd?.PrintClass || null,
+      print_type: pd?.PrintType || null,
+      print_position: pd?.PrintPosition || null,
+      print_area: pd?.PrintArea || null,
+      max_colours: pd?.MaxColours || null,
+      notes: pd?.Notes || null,
+      lead_time: pd?.LeadTime || null,
+      setup_charge: setupCharge,
+      setup_charge_raw: pd?.SetupCharge || null,
+      rpt_setup_charge: parsePriceString(pd?.RptSetupCharge).price,
+      rpt_setup_charge_raw: pd?.RptSetupCharge || null,
+      extra_colour_setup_charge: extraColourSetup,
+      extra_colour_setup_charge_raw: pd?.ExtraColourSetupCharge || null,
+      default_print_option: !!pd?.DefaultPrintOption,
+      print_price: bakeSetupIntoPrintPrice(printPriceTiers, setupCharge, extraColourSetup),
+      print_area_coordinates: parsePrintAreaCoordinates(pd?.PrintAreaCoordinates),
+    };
+  });
+}
+
+/**
+ * Inject `all_in_unit_price` into every print_price tier, baking
+ * per-position setup charge (and ExtraColourSetupCharge for >1 colour)
+ * into the per-unit price.
+ *
+ * Formula (per CLAUDE.md §32 follow-up / session 6 spec):
+ *   setup_per_unit       = setup_charge / min_qty
+ *   extra_colours        = max(num_colours - 1, 0)
+ *   extra_setup_per_unit = (extra_colours * extra_colour_setup_charge) / min_qty
+ *   all_in_unit_price    = print_unit + setup_per_unit + extra_setup_per_unit
+ *
+ * Notes:
+ * - The amortisation uses the TIER'S min_qty, which gives a stable
+ *   customer-facing unit price across the tier (the worst-case at the
+ *   tier boundary). Above min_qty the customer pays the same unit
+ *   price; setup is recovered earlier.
+ * - POA tiers (price=null, is_poa=true) are passed through with
+ *   all_in_unit_price=null — no math possible without a base.
+ * - Missing setup_charge is treated as 0 (defensive; in practice
+ *   Laltex always provides one for printable products).
+ * - RptSetupCharge is intentionally ignored — no repeat-order
+ *   detection yet (flagged for future).
+ *
+ * @param {Array} tiers - output of parsePrintPrice
+ * @param {number|null} setupCharge
+ * @param {number|null} extraColourSetupCharge
+ * @returns {Array} same shape with all_in_unit_price added
+ */
+export function bakeSetupIntoPrintPrice(tiers, setupCharge, extraColourSetupCharge) {
+  if (!Array.isArray(tiers)) return [];
+  const setup = Number.isFinite(setupCharge) ? setupCharge : 0;
+  const extraSetup = Number.isFinite(extraColourSetupCharge) ? extraColourSetupCharge : 0;
+  return tiers.map((tier) => {
+    if (tier.is_poa || tier.price == null || !Number.isFinite(tier.min_qty) || tier.min_qty <= 0) {
+      return { ...tier, all_in_unit_price: null };
+    }
+    const setupPerUnit = setup / tier.min_qty;
+    const extraColours = Math.max(0, (tier.num_colours || 1) - 1);
+    const extraSetupPerUnit = extraColours > 0 ? (extraColours * extraSetup) / tier.min_qty : 0;
+    const allIn = tier.price + setupPerUnit + extraSetupPerUnit;
+    return {
+      ...tier,
+      all_in_unit_price: Number(allIn.toFixed(6)),
+    };
+  });
 }
 
 export function parseItems(arr) {

@@ -32,6 +32,7 @@ import {
 } from 'lucide-react';
 import {
   getCatalogProductBySlug,
+  getProductByIdentifier,
   calculatePriceForQuantity,
   checkProductCustomizable,
   getDesignerUrl,
@@ -39,6 +40,7 @@ import {
 } from '../services/productCatalogService';
 import { supabase, getUserDesign } from '../services/supabaseService';
 import { useAuth } from '../context/AuthContext';
+import LaltexProductView from './LaltexProductView';
 
 // Helper constants and functions for apparel size selector
 const APPAREL_SIZES = ['S', 'M', 'L', 'XL', 'XXL'];
@@ -47,13 +49,22 @@ const APPAREL_SIZES = ['S', 'M', 'L', 'XL', 'XXL'];
 const ALL_POSITION_LABELS = ['Front', 'Back', 'Left Breast', 'Right Breast', 'Right Arm'];
 // Colour count options for each print position dropdown
 const COLOUR_OPTIONS = ['None', '1 col', '2 col', '3 col', '4 col', '5 col', '6 col'];
+// Apparel detection — prefers category slug ('clothing') with a slug
+// fallback for the few PGifts Direct catalog rows whose category join
+// might be missing. The hard-coded list captures the only apparel
+// slugs the page has ever supported.
+const APPAREL_SLUGS = ['hoodie', 't-shirts', 'polo', 'sweatshirts'];
 const isApparelProduct = (product) => {
   if (!product) return false;
-  const apparelSlugs = ['hoodie', 't-shirts', 'polo', 'sweatshirts'];
-  return apparelSlugs.includes(product.slug);
+  if (product.category?.slug === 'clothing') return true;
+  return APPAREL_SLUGS.includes(product.slug);
 };
 
-const ProductDetailPage = ({ productSlug }) => {
+const ProductDetailPage = ({ productSlug, identifier }) => {
+  // session 6: prefer `identifier` (set by /products/:identifier and the
+  // forwarded slug from /:category/:productSlug). Falls back to
+  // productSlug for any older callers that still pass it directly.
+  const effectiveId = identifier || productSlug;
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { user } = useAuth();
@@ -129,6 +140,13 @@ const ProductDetailPage = ({ productSlug }) => {
       img.src = imageUrl;
     });
   };
+
+  // Session 6: supplier-product short-circuit. When the identifier
+  // resolves to a Laltex (supplier_products) row, we render via the
+  // dedicated LaltexProductView and skip the catalog_products code
+  // path entirely. `null` = not yet determined; `false` = confirmed
+  // catalog (or not found); an object = supplier row to render.
+  const [supplierProduct, setSupplierProduct] = useState(null);
 
   // UI State
   const [selectedColor, setSelectedColor] = useState('');
@@ -235,29 +253,45 @@ const ProductDetailPage = ({ productSlug }) => {
    * Validate required props
    */
   useEffect(() => {
-    if (!productSlug) {
-      setError('Product slug is required');
+    if (!effectiveId) {
+      setError('Product identifier is required');
       setLoading(false);
     }
-  }, [productSlug]);
+  }, [effectiveId]);
 
   /**
    * Load product data from database
+   *
+   * Session 6: now goes through getProductByIdentifier which tries
+   * catalog_products.slug first and falls back to
+   * supplier_products.supplier_product_code. Supplier rows take the
+   * Laltex render path; catalog rows keep the existing PGifts Direct
+   * flow byte-for-byte.
    */
   const loadProductData = async () => {
-    if (!productSlug) return;
+    if (!effectiveId) return;
 
     setLoading(true);
     setError(null);
 
     try {
-      const data = await getCatalogProductBySlug(productSlug);
+      const resolved = await getProductByIdentifier(effectiveId);
 
-      if (!data) {
-        setError(`Product "${productSlug}" not found. Please make sure the product has been seeded.`);
+      if (!resolved) {
+        setError(`Product "${effectiveId}" not found.`);
         setLoading(false);
         return;
       }
+
+      if (resolved.source === 'supplier') {
+        // Laltex product — bail out and let LaltexProductView take over.
+        setSupplierProduct(resolved.normalised);
+        setLoading(false);
+        return;
+      }
+
+      // Catalog path — existing rendering. Unwrap the raw row.
+      const data = resolved.raw;
 
       // Set product data
       setProduct(data);
@@ -279,8 +313,7 @@ const ProductDetailPage = ({ productSlug }) => {
       setProductImages(productImgs);
 
       // Set initial selected color - WHITE for apparel, first color for others
-      const apparelSlugs = ['hoodie', 't-shirts', 'polo', 'sweatshirts'];
-      const isApparel = data.category?.slug === 'clothing' || apparelSlugs.includes(data.slug);
+      const isApparel = isApparelProduct(data);
 
       if (data.colors && data.colors.length > 0) {
         if (isApparel) {
@@ -321,10 +354,9 @@ const ProductDetailPage = ({ productSlug }) => {
 
       // Initialise colour order rows with the default colour (White for apparel, first otherwise)
       if (data.pricing_model === 'clothing' && data.colors && data.colors.length > 0) {
-        const apparelSlugs = ['hoodie', 't-shirts', 'polo', 'sweatshirts'];
-        const isApparel = data.category?.slug === 'clothing' || apparelSlugs.includes(data.slug);
+        const isApparelInner = isApparelProduct(data);
         let defaultColor = data.colors[0];
-        if (isApparel) {
+        if (isApparelInner) {
           const whiteColor = data.colors.find(c =>
             c.color_name?.toLowerCase() === 'white' || c.color_code?.toLowerCase() === 'white'
           );
@@ -378,10 +410,11 @@ const ProductDetailPage = ({ productSlug }) => {
     }
   };
 
-  // Load product data on mount or when productSlug changes
+  // Load product data on mount or when identifier changes
   useEffect(() => {
     loadProductData();
-  }, [productSlug]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [effectiveId]);
 
   // Pre-load a saved design from ?design=<id> (My Designs → Add to Quote).
   // Runs once per page view after product + colors are loaded; failures are silent.
@@ -712,16 +745,6 @@ const ProductDetailPage = ({ productSlug }) => {
   };
 
   /**
-   * Check if product is apparel (needs color overlay)
-   */
-  const isApparelProduct = () => {
-    if (!product) return false;
-
-    const apparelSlugs = ['hoodie', 't-shirts', 'polo', 'sweatshirts'];
-    return product.category?.slug === 'clothing' || apparelSlugs.includes(product.slug);
-  };
-
-  /**
    * Get white template URL for apparel products
    */
   const getWhiteTemplateUrl = (slug) => {
@@ -761,7 +784,7 @@ const ProductDetailPage = ({ productSlug }) => {
     console.log('[handleColorSelect] Color object:', selectedColorObj.color_name, selectedColorObj.hex_value);
 
     // Check if this is an apparel product
-    if (isApparelProduct() && selectedColorObj.hex_value) {
+    if (isApparelProduct(product) && selectedColorObj.hex_value) {
       const whiteTemplateUrl = getWhiteTemplateUrl(product.slug);
 
       // Check if selected color is white - skip overlay for white
@@ -1122,6 +1145,13 @@ const ProductDetailPage = ({ productSlug }) => {
         </div>
       </div>
     );
+  }
+
+  // Session 6: supplier-product render path — handle BEFORE the
+  // `!product` guard so the catalog-shaped error doesn't fire on
+  // Laltex SKUs that were never expected to populate `product`.
+  if (supplierProduct) {
+    return <LaltexProductView product={supplierProduct} />;
   }
 
   // Error State

@@ -133,6 +133,7 @@ export default function AIChatWidget() {
           role: 'assistant',
           content: data?.message?.content ?? '(no response)',
           tool_calls: data?.message?.tool_calls ?? [],
+          products: Array.isArray(data?.products) ? data.products : [],
         },
       ]);
     } catch (err) {
@@ -188,7 +189,18 @@ export default function AIChatWidget() {
                 <div style={{ fontSize: 11, opacity: 0.55, marginBottom: 2 }}>
                   {m.role === 'user' ? 'You' : 'Assistant'}
                 </div>
-                <div style={{ whiteSpace: 'pre-wrap' }}>{m.content}</div>
+                <div style={{ whiteSpace: 'pre-wrap' }}>
+                  {m.role === 'assistant'
+                    ? linkifyProductCodes(m.content, m.products)
+                    : m.content}
+                </div>
+                {Array.isArray(m.products) && m.products.length > 0 && (
+                  <div style={cardListStyle}>
+                    {m.products.map((p) => (
+                      <ProductCard key={p.supplier_product_code} product={p} />
+                    ))}
+                  </div>
+                )}
                 {Array.isArray(m.tool_calls) && m.tool_calls.length > 0 && (
                   <div style={toolCallStyle}>
                     {m.tool_calls.map((c, j) => (
@@ -243,6 +255,114 @@ export default function AIChatWidget() {
       )}
     </>
   );
+}
+
+// -----------------------------------------------------------------
+// Product card rendering — session 6.
+//
+// The chat endpoint returns slimmed product records alongside the
+// assistant prose (see api/ai/chat.js productCardMap). We render them
+// as compact clickable cards below the assistant message. Clicking
+// navigates to /products/<code> which the new generic route resolves
+// to either catalog_products (PGifts Direct) or supplier_products
+// (Laltex).
+//
+// We also linkify bare code mentions in the prose — when the model
+// writes "MG0192" or "ocean-octopus" inline, we wrap it in an anchor
+// so the customer can jump directly without scrolling to the card.
+// -----------------------------------------------------------------
+
+function ProductCard({ product }) {
+  const href = `/products/${encodeURIComponent(product.supplier_product_code)}`;
+  const tier = Array.isArray(product.pricing) && product.pricing.length > 0
+    ? product.pricing[0]
+    : null;
+  const priceLabel = product.unit_price_at_quantity != null && !product.unit_price_at_quantity_is_poa
+    ? `£${Number(product.unit_price_at_quantity).toFixed(2)}/unit`
+    : tier
+      ? `From £${Number(tier.price).toFixed(2)} (${tier.min}+)`
+      : product.unit_price_at_quantity_is_poa
+        ? 'POA'
+        : null;
+  return (
+    <a
+      href={href}
+      style={cardStyle}
+      onClick={(e) => {
+        // Soft-navigate via location to keep the widget mount alive.
+        // BrowserRouter picks up the change.
+        e.preventDefault();
+        window.history.pushState({}, '', href);
+        window.dispatchEvent(new PopStateEvent('popstate'));
+      }}
+    >
+      <div style={cardImgWrap}>
+        {product.image_url ? (
+          <img
+            src={product.image_url}
+            alt={product.name}
+            style={cardImg}
+            loading="lazy"
+          />
+        ) : (
+          <div style={cardImgPlaceholder}>📦</div>
+        )}
+      </div>
+      <div style={cardBody}>
+        <div style={cardName}>{product.name}</div>
+        <div style={cardMeta}>
+          <span style={cardCode}>{product.supplier_product_code}</span>
+          {priceLabel && <span style={cardPrice}>{priceLabel}</span>}
+        </div>
+      </div>
+    </a>
+  );
+}
+
+/**
+ * Wrap supplier_product_codes inside the assistant text in anchor
+ * tags so they're clickable. Codes are matched against the product
+ * cards returned for this turn (no codes mentioned = no rewriting).
+ *
+ * We do a literal substring scan rather than regex so we don't
+ * accidentally match unrelated alphanumeric strings.
+ */
+function linkifyProductCodes(text, products) {
+  if (!text || !Array.isArray(products) || products.length === 0) return text;
+  const codes = products
+    .map((p) => p?.supplier_product_code)
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length); // longest first so "octopus-mini" wins over "octopus"
+  if (codes.length === 0) return text;
+
+  const segments = [text];
+  for (const code of codes) {
+    for (let i = 0; i < segments.length; i += 1) {
+      const seg = segments[i];
+      if (typeof seg !== 'string') continue;
+      const idx = seg.indexOf(code);
+      if (idx === -1) continue;
+      const before = seg.slice(0, idx);
+      const after = seg.slice(idx + code.length);
+      const href = `/products/${encodeURIComponent(code)}`;
+      const link = (
+        <a
+          key={`${code}-${i}`}
+          href={href}
+          onClick={(e) => {
+            e.preventDefault();
+            window.history.pushState({}, '', href);
+            window.dispatchEvent(new PopStateEvent('popstate'));
+          }}
+          style={inlineLinkStyle}
+        >
+          {code}
+        </a>
+      );
+      segments.splice(i, 1, before, link, after);
+    }
+  }
+  return segments;
 }
 
 // -----------------------------------------------------------------
@@ -352,4 +472,80 @@ const sendBtnStyle = {
   padding: '0 12px',
   cursor: 'pointer',
   fontWeight: 600,
+};
+
+// Product cards
+const cardListStyle = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 6,
+  marginTop: 8,
+};
+const cardStyle = {
+  display: 'flex',
+  gap: 8,
+  background: 'white',
+  border: '1px solid #d1d5db',
+  borderRadius: 6,
+  padding: 6,
+  textDecoration: 'none',
+  color: 'inherit',
+  cursor: 'pointer',
+  transition: 'border-color 120ms',
+};
+const cardImgWrap = {
+  width: 48,
+  height: 48,
+  flexShrink: 0,
+  background: '#f3f4f6',
+  borderRadius: 4,
+  overflow: 'hidden',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+};
+const cardImg = {
+  width: '100%',
+  height: '100%',
+  objectFit: 'contain',
+};
+const cardImgPlaceholder = { fontSize: 24 };
+const cardBody = {
+  flex: 1,
+  minWidth: 0,
+  display: 'flex',
+  flexDirection: 'column',
+  justifyContent: 'center',
+  gap: 2,
+};
+const cardName = {
+  fontSize: 12,
+  fontWeight: 600,
+  color: '#111827',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  display: '-webkit-box',
+  WebkitLineClamp: 2,
+  WebkitBoxOrient: 'vertical',
+};
+const cardMeta = {
+  display: 'flex',
+  gap: 8,
+  fontSize: 11,
+  color: '#6b7280',
+};
+const cardCode = {
+  fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+  background: '#f3f4f6',
+  padding: '0 4px',
+  borderRadius: 3,
+};
+const cardPrice = {
+  fontWeight: 600,
+  color: '#1d4ed8',
+};
+const inlineLinkStyle = {
+  color: '#1d4ed8',
+  textDecoration: 'underline',
+  textUnderlineOffset: 2,
 };
