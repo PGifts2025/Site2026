@@ -3160,3 +3160,118 @@ node scripts/smoke-test-mydesigns-duplicate.js
 - **Do NOT remove the `?design=<id>` query-param consumer in
   either Designer.** It's the only resume-saved-design path
   used by both flavours of the Edit button.
+
+---
+
+## 42. V1 DESIGNER COLOUR/POSITION SWAP — VARIANT-KEYED SAVE MODEL
+
+Designer-v1 supports an explicit **per-variant save** feature:
+clicking *Save Position* writes the current user objects to
+`localStorage.userDesigns[variantKey]`, where:
+
+```js
+variantKey = `${selectedProduct}-${colorName.toLowerCase().replace(/\s+/g, '-')}-${selectedView}-${printAreaKey}`;
+```
+
+This means the customer can have **different objects on different
+colour × view × print-area combinations** — Red Front Front-Print
+can carry one design, Blue Front Front-Print another. The variant
+key changes when ANY of those four dimensions changes.
+
+### 42.1 The wipe-and-restore must be ATOMIC
+
+`restoreDesignsForPrintArea` ([`Designer.jsx`](../src/pages/Designer.jsx))
+is invoked from `updateCanvasImage` after every template swap (colour
+change, view change, position change). Its job is to:
+
+1. Read the saved variant for the current `variantKey` from localStorage
+2. If found → wipe existing user objects, deserialise the saved variant, add them
+3. If not found → leave the existing user objects in place
+
+**The bug fixed in session 8 (2026-05-13):** the function used to wipe
+user objects **unconditionally** at the start, then bail when no saved
+variant existed. Every colour change generated a fresh variant key
+(it changes per colour by construction); v1 has no auto-save by design
+(CLAUDE.md §12), so the new colour's key was always empty → the function
+wiped customer work and restored nothing. Customer adds text, clicks
+Black → text gone.
+
+The fix is one-place: read storage FIRST, branch on whether a saved
+variant exists, **wipe only inside the "saved variant found" branch**.
+The wipe-and-restore pair becomes atomic — no wipe without replacement.
+
+```js
+// CORRECT order
+const designs = allDesigns[variantKey];
+if (!designs || designs.length === 0) {
+  canvas.renderAll();
+  return;   // ← no wipe; existing user objects preserved
+}
+// Saved variant exists — wipe and restore as one operation
+const existingUserObjects = canvas.getObjects().filter(...);
+existingUserObjects.forEach(obj => canvas.remove(obj));
+// ...restore loop using fabric.Image.fromURL / new fabric.IText
+```
+
+### 42.2 Why this isn't v2's pattern
+
+DesignerV2 uses `fabric.util.enlivenObjects` + `canvas.add()` (CLAUDE.md
+§40.5) because v2 has no per-variant save model — there's exactly one
+saved design per row in `user_designs`, and it's loaded once on
+`?design=<id>`. v1 has multiple per-variant saves in localStorage AND
+loads/swaps them on every colour/view/print-area change. The fix
+shapes differ because the underlying models differ.
+
+If a future session unifies the two designers (e.g. moves v1 to the
+shared `useDeferredDesignApply` hook), the per-variant localStorage
+feature needs first-class support in the shared code OR has to be
+deliberately retired. Don't paper over it.
+
+### 42.3 Dev-only canvas exposure
+
+`Designer.jsx` exposes the live Fabric canvas and the fabric module
+on `window` ONLY in dev builds:
+
+```js
+if (import.meta.env.DEV) {
+  window.__designerCanvas = fabricCanvas;
+  window.__fabric = fabric;
+}
+```
+
+Stripped from production by Vite's compile-time `import.meta.env.DEV`
+constant (verified: `grep __designerCanvas dist/assets/` returns 0
+matches post-build). Lets playwright-mcp regression probes add /
+inspect canvas objects without going through UI click chains, which
+is fragile for canvas-based UI. Disposed on unmount via the same
+`if (import.meta.env.DEV)` block.
+
+DesignerV2 does NOT have an equivalent exposure today; add one if you
+need playwright-driven canvas probes there, mirroring this pattern.
+
+### 42.4 Invariants — DO NOT BREAK
+
+- **Do NOT wipe `user-image` / `user-text` objects without an
+  immediately-following restore in the same code path.** Wipe-and-
+  restore is one operation. An orphan wipe is the bug session 8
+  fixed; reintroducing it deletes customer work mid-colour-change.
+- **Do NOT change the variant-key shape** (`product-color-view-printArea`)
+  without migrating existing localStorage entries. Customers' saved
+  variants are keyed on this string; a shape change orphans them.
+- **Do NOT include `?design=<id>` saved-design data in the
+  variant-key model.** `?design=<id>` is the auth'd DB-row restore
+  path (CLAUDE.md §40.5 for v2 semantics); variant-key is the
+  client-side per-colour save. They coexist and the
+  `designLoadedRef` flag (Designer.jsx:2102) makes
+  `restoreDesignsForPrintArea` a no-op while a DB-loaded design is
+  in play, so the two paths can't trample each other.
+- **Do NOT remove the dev-only canvas exposure** without first
+  re-checking that no playwright regression script depends on it.
+  Production strip is verified by `grep __designerCanvas dist/`
+  returning zero matches; it's strictly compile-time dead code in
+  prod.
+- **Cup products (`isCupProduct`) bypass this whole path.** They
+  use panoramic / 3D rendering with their own colour-change logic;
+  see Designer.jsx:1111 and 2662 for the early-returns. Do not
+  fold them into the apparel/2D path "for consistency" — they have
+  their own correctness model.

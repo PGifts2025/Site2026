@@ -645,11 +645,22 @@ const Designer = () => {
       setCanvas(fabricCanvas);
       canvasReady.current = true;
 
+      // Dev-only handles for playwright regression probes (CLAUDE.md §42).
+      // Stripped from production by Vite's import.meta.env.DEV constant.
+      if (import.meta.env.DEV) {
+        window.__designerCanvas = fabricCanvas;
+        window.__fabric = fabric;
+      }
+
       // ONLY dispose on component UNMOUNT (when user leaves page)
       return () => {
         console.log('[Designer] Component unmounting, disposing canvas');
         canvasReady.current = false;
         fabricCanvas.dispose();
+        if (import.meta.env.DEV) {
+          delete window.__designerCanvas;
+          delete window.__fabric;
+        }
       };
     } catch (error) {
       console.error('[Designer] Error initializing Fabric canvas:', error);
@@ -2119,25 +2130,34 @@ const Designer = () => {
 
     console.log('[restoreDesignsForPrintArea] Loading from key:', variantKey);
 
-    // Clear existing user objects
-    const existingUserObjects = canvas.getObjects().filter(obj =>
-      obj.name === 'user-image' || obj.name === 'user-text'
-    );
-    console.log('[restoreDesignsForPrintArea] Clearing', existingUserObjects.length, 'existing user objects');
-    existingUserObjects.forEach(obj => canvas.remove(obj));
-
     try {
+      // Read storage FIRST so we know whether there's a saved variant
+      // to swap in. Previously the existing user objects were wiped
+      // before the lookup ran, and when no saved designs existed for
+      // this colour's variant key the helper bailed without restoring
+      // anything — wiping customer work mid-colour-change. The
+      // wipe-and-restore pair is now atomic (CLAUDE.md §42).
       const allDesigns = JSON.parse(localStorage.getItem('userDesigns') || '{}');
       console.log('[restoreDesignsForPrintArea] Available keys:', Object.keys(allDesigns));
 
       const designs = allDesigns[variantKey];
 
       if (!designs || designs.length === 0) {
-        console.log('[restoreDesignsForPrintArea] Å’ No saved designs for this print area');
+        console.log('[restoreDesignsForPrintArea] No saved designs for this variant — preserving existing user objects');
         canvas.renderAll();
-        console.log('[restoreDesignsForPrintArea] ===============================');
+        console.log('[restoreDesignsForPrintArea] ===============================');
         return;
       }
+
+      // We have a saved variant to apply — NOW wipe current user
+      // objects so the saved-variant load is the single source of
+      // truth on the canvas.
+      const existingUserObjects = canvas.getObjects().filter(obj =>
+        obj.name === 'user-image' || obj.name === 'user-text'
+      );
+      console.log('[restoreDesignsForPrintArea] Clearing', existingUserObjects.length, 'existing user objects ahead of variant restore');
+      existingUserObjects.forEach(obj => canvas.remove(obj));
+
 
       console.log('[restoreDesignsForPrintArea] Found', designs.length, 'saved designs');
 
