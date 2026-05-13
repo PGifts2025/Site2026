@@ -2554,3 +2554,184 @@ correctly.
   regresses to silent substitution.
 - **Emoji ban is total.** Greetings, refusals, search-result tables
   all included. The rule has no per-context exception.
+
+---
+
+## 33. SUPPLIER PRODUCT CODE CASING (session 7 lesson)
+
+`supplier_products.supplier_product_code` is stored case-sensitively in
+Postgres. The corpus split is:
+
+- **Laltex SKUs are UPPERCASE** (e.g. `MG0192`, `AF0001`)
+- **PGifts Direct mirror rows are lowercase** (e.g. `chi-cup`, `mr-bio-pd-long`)
+
+URL params and AI-tool results arrive lowercase by convention.
+PostgREST `eq.` is case-sensitive — a lowercase URL slug like
+`mg0192` MISSES the row stored as `MG0192`.
+
+**Always go through the helper:**
+
+```js
+import { getSupplierProductByCode } from 'src/services/productCatalogService';
+
+const row = await getSupplierProductByCode(anyCaseCode);
+```
+
+`getSupplierProductByCode` tries the code as-given first (catches
+PGifts mirror's lowercase) and then uppercase (catches Laltex).
+Single source of truth.
+
+**Do NOT** write inline `.from('supplier_products').eq('supplier_product_code', ...)`
+queries from a component, page, or AI tool dispatcher. The lowercase
+URL slug will silently miss Laltex rows and the consumer's local
+state will fall through to `undefined`. Same bug hit session 6 and
+session 7 in two consecutive weeks.
+
+The check: `grep -rn "supplier_product_code" src/` — the only
+`.eq()` against that column should live inside
+`getSupplierProductByCode` itself.
+
+---
+
+## 34. BROWSER-RENDERED FEATURES REQUIRE HUMAN VISUAL VERIFICATION
+
+When code touches Fabric canvas rendering, image loading, CORS, DOM
+mounting, useEffect lifecycle, or any visual output, CLI verification
+is **necessary but not sufficient**. The change is NOT verified
+until a human has confirmed the visual outcome in a browser.
+
+What CLI verifies — and only that:
+
+| Signal | Tells you | Does NOT tell you |
+|---|---|---|
+| `vite build` passes | module compiles | runtime behaviour |
+| Route returns HTTP 200 | SPA shell serves | the component mounted correctly |
+| `console.log(...)` line is in source | the line exists | the line actually executed |
+| SQL probe returns rows | data layer healthy | UI rendered the data |
+| Unit-test math passes | helper function correct | the helper was called at runtime |
+
+Specifically called out for rendering work:
+
+- **Do NOT claim "verified" or "fixed"** without a human-reported
+  visual outcome.
+- Status updates must distinguish "build passes + routes 200" (CLI
+  necessary checks) from "Dave confirmed in browser at \<step\>"
+  (sufficient check).
+- For unconfirmed work, the honest framing is: "Fix applied locally,
+  awaiting browser verification by \<human\>."
+- Apply this in PR descriptions: visual verification points belong
+  in the "owed by reviewer" section, not the "verified" section,
+  until a human has reported back.
+
+Triggered by session 7 where four consecutive rounds of "CLI-verified
+fix" failed in the browser because the actual rendering path was
+broken on a layer CLI checks couldn't see.
+
+---
+
+## 35. THIRD-PARTY IMAGE URLs MUST BE `encodeURI()`'d BEFORE FABRIC
+
+Laltex's `pac/` and `markedpac/` URLs (the marked-up print-area
+reference images that DesignerV2 needs as canvas backgrounds) contain
+raw spaces:
+
+```
+https://laltex-extranet.co.uk/images/pac/MG0192 AM Print.jpg
+                                                ^   ^   raw spaces
+```
+
+The browser's plain `<img src>` attribute auto-encodes raw spaces
+when the request fires. `fabric.Image.fromURL` in Fabric 5.x does
+not — it silently fails the load (no error, no fired callback, no
+network request) and your canvas stays blank.
+
+**Always wrap third-party URLs in `encodeURI()` before passing to
+Fabric loaders:**
+
+```js
+fabric.Image.fromURL(encodeURI(rawUrl), (img) => { … });
+```
+
+`encodeURI` is the right tool (not `encodeURIComponent`): it
+preserves existing `%XX` sequences and the URL structure (`:`, `/`,
+`?`, `#`), and only encodes characters that wouldn't otherwise be
+safe in a URL — including spaces.
+
+Same likely applies to any third-party supplier whose CDN serves
+file paths with un-escaped special characters. Don't trust the URL
+the API returns; encode it at the consumption boundary.
+
+---
+
+## 36. SERVICE HELPER RETURN SHAPES — VERIFY BEFORE CONSUMING
+
+When you write code that consumes a `productCatalogService` (or any
+service-layer) helper, read its return signature first. Don't assume
+based on the helper's name.
+
+In particular: `getProductByIdentifier(identifier)` returns a
+**wrapper envelope**, not the normalised product directly:
+
+```js
+{
+  source: 'catalog' | 'supplier',
+  raw: <original DB row>,
+  normalised: <unified product object>,
+}
+```
+
+So the consumer pattern is:
+
+```js
+const resolved = await getProductByIdentifier(code);
+if (!resolved) return notFound();
+const product = resolved.normalised;       // ← THIS, not `resolved`
+setProduct(product);
+```
+
+By contrast, `getSupplierProductByCode(code)` and
+`getCatalogProductBySlug(slug)` return their row objects directly
+(or `null`), no envelope.
+
+**Mismatched shape consumption** is invisible at compile time but
+catastrophic at runtime — local state ends up `undefined`,
+early-return guards stay true forever, useEffects that gate on
+state never fire, and the UI silently bricks. Always:
+
+1. Open the helper's source
+2. Read the JSDoc and the return statement
+3. Mirror the shape exactly at the call site
+
+If the helper's return shape isn't obvious from one read, that's a
+helper-API smell — improve the JSDoc as part of the consuming PR.
+
+Triggered by session 7: a handover prompt claimed `getProductByIdentifier`
+returned the normalised product directly. It does not. The actual
+contract is `{source, raw, normalised}`. Mis-applying the suggested
+"fix" would have broken the working state.
+37. LALTEX print_area_coordinates SHAPE IS NOT GEOMETRICALLY GUARANTEED
+Laltex's print_details[].print_area_coordinates[] array does NOT guarantee:
+
+Coverage per colour. Some positions have entries for only a subset of the product's available colours. MG0192's "Back" has 11 colours but is missing Amber and Black, even though both are listed as available colours of the product. A naive find(c => c.colour === selectedColour) MISSES, and the consumer must decide what to do — never silently fall back to allCoords[0] (the customer ends up looking at a different colour cup than the swatch they clicked).
+Per-position rect coordinates. ~12.6% of Laltex products (corpus probe: 100 of 792) have the SAME (x, y, width, height) rect copied across every position, even when their reference images use entirely different camera framings. MG0192 is the canonical example: the print rect was authored against the Wrap view, and the Front and Back views show the cup from 3/4 angles where that rect floats in empty space beside the cup. Detect at component-load time:
+
+jsconst positionsHaveDistinctRects = (() => {
+  const positions = product.printDetails?.positions || [];
+  if (positions.length <= 1) return true;
+  const tuples = new Set();
+  for (const pos of positions) {
+    for (const coord of (pos.coordinates || [])) {
+      tuples.add(`${coord.x},${coord.y},${coord.width},${coord.height}`);
+    }
+  }
+  return tuples.size > 1;
+})();
+When positionsHaveDistinctRects === false, treat one position as the canonical preview (Wrap for drinkware, otherwise the position with the most coord entries) and mute the others with a "preview unavailable" notice. Customer can still order any position; just don't show a misleading floating rect.
+Required UI patterns when coordinates are unreliable:
+
+No silent colour-swap fallback. Show the catalogue thumb (items[i].item_images[0]) for the SELECTED colour and skip the print rectangle overlay. Display a small notice ("Print preview not available for this colour combination. Your order will print correctly.").
+No misleading rect on positions with copied coords. Lock the canvas to the canonical position; let other position tabs stay clickable to capture the order's print-position choice, but visually muted with a tooltip.
+
+The corpus distribution (run scripts/diagnostic/probe-af0001-and-corpus.mjs to refresh):
+PatternCount%Single-position products (always fine)~18023%Multi-position with distinct rects (good data)59074%Multi-position with single copied rect (bug class)10012.6%
+Triggered by session 7 / DesignerV2. The probe scripts in scripts/diagnostic/ are the canonical audit tools — keep them committed and use them whenever a new Laltex data shape question comes up rather than spelunking ad-hoc SQL.
