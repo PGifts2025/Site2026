@@ -35,6 +35,12 @@
  *   - user_designs.user_id OR session_id: existing v1 contract
  */
 
+/* Mount-diagnosis marker — must fire on module load.
+ * If this log does NOT appear in console, the running app is loading
+ * a different module than this file. */
+// eslint-disable-next-line no-console
+console.log('[DESIGNERV2-FILE-LOADED]', new Date().toISOString());
+
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { fabric } from 'fabric';
@@ -79,6 +85,13 @@ const TEMPLATE_IMAGE_ID = 'template-image';
 const PRINT_AREA_OVERLAY_ID = 'printAreaOverlay';
 
 const DesignerV2 = () => {
+  /* Mount-diagnosis marker — must fire on every render of this
+   * component. If [DESIGNERV2-FILE-LOADED] appears but this does NOT,
+   * the file is being imported but the component never instantiated
+   * (route mismatch). */
+  // eslint-disable-next-line no-console
+  console.log('[DESIGNERV2-COMPONENT-CALLED]');
+
   const { productCode } = useParams();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
