@@ -119,6 +119,13 @@ const DesignerV2 = () => {
   const [activePositionIdx, setActivePositionIdx] = useState(0);
   const [selectedColourId, setSelectedColourId] = useState(null);
 
+  // -------- Preview-quality state --------
+  // Fix #1 (Bug A): true when the canvas shows the catalogue thumb because
+  // the active position's print_area_coordinates has no entry for the
+  // selected colour. No print rectangle is drawn in that case; a small
+  // notice tells the customer their print will still be produced.
+  const [colourPreviewUnavailable, setColourPreviewUnavailable] = useState(false);
+
   // -------- Edit UI state --------
   const [selectedObject, setSelectedObject] = useState(null);
   const [textInput, setTextInput] = useState('');
@@ -289,13 +296,66 @@ const DesignerV2 = () => {
     return positions[activePositionIdx] || null;
   }, [product, activePositionIdx]);
 
+  // Fix #2 (Bug B): detect the "single rect copied across every position"
+  // pattern (CLAUDE.md §37, MG0192 et al). True means the data is honest
+  // - every position carries its own distinct (x,y,w,h). False means
+  // only one of the listed positions has a faithful image+rect pairing
+  // and the rest would render the rect floating off the product.
+  // Single-position products are trivially "honest" (length<=1 → true).
+  const positionsHaveDistinctRects = useMemo(() => {
+    const positions = product?.printDetails?.positions || [];
+    if (positions.length <= 1) return true;
+    const tuples = new Set();
+    for (const pos of positions) {
+      for (const coord of (pos.coordinates || [])) {
+        tuples.add(`${coord.x}|${coord.y}|${coord.width}|${coord.height}`);
+      }
+    }
+    return tuples.size > 1;
+  }, [product]);
+
+  // When positionsHaveDistinctRects is false we lock the canvas to one
+  // canonical position regardless of the user's selection. Heuristic:
+  // - Drinkware ships with a head-on "Wrap" image whose rect coords align
+  //   with the visible cup body — prefer Wrap if present.
+  // - Otherwise pick the position with the most colour entries (most
+  //   field-tested / most likely to be the canonical framing).
+  const canonicalPositionIdx = useMemo(() => {
+    const positions = product?.printDetails?.positions || [];
+    if (positions.length === 0) return 0;
+    const wrapIdx = positions.findIndex((p) => p.name === 'Wrap');
+    if (wrapIdx !== -1) return wrapIdx;
+    let bestIdx = 0;
+    let bestCount = -1;
+    positions.forEach((p, i) => {
+      const cnt = (p.coordinates || []).length;
+      if (cnt > bestCount) { bestCount = cnt; bestIdx = i; }
+    });
+    return bestIdx;
+  }, [product]);
+
+  // The position whose image+rect actually drives the canvas. Equals
+  // activePosition for normal products; locked to canonical for the
+  // 12.6% single-rect-multi-position bucket.
+  const renderPosition = useMemo(() => {
+    if (!product) return null;
+    const positions = product.printDetails?.positions || [];
+    const idx = positionsHaveDistinctRects ? activePositionIdx : canonicalPositionIdx;
+    return positions[idx] || null;
+  }, [product, activePositionIdx, canonicalPositionIdx, positionsHaveDistinctRects]);
+
+  const canonicalPositionName = useMemo(() => {
+    const positions = product?.printDetails?.positions || [];
+    return positions[canonicalPositionIdx]?.name || null;
+  }, [product, canonicalPositionIdx]);
+
   const selectedColour = useMemo(() => {
     if (!product) return null;
     return (product.colours || []).find((c) => c.id === selectedColourId) || null;
   }, [product, selectedColourId]);
 
   useEffect(() => {
-    if (!canvas || !canvasReadyRef.current || !product || !activePosition) return;
+    if (!canvas || !canvasReadyRef.current || !product || !renderPosition) return;
 
     // Step 1 — pick the right COORDINATE entry first. For Laltex products
     // the print_area_coordinates[].image_url is the photo Laltex MARKED
@@ -304,22 +364,32 @@ const DesignerV2 = () => {
     // DIFFERENT image at different dimensions/crop and would put the
     // rectangle in the wrong place.
     //
-    // Find the entry for the selected colour (case-tolerant); fall back
-    // to the first entry (single-coordinate products use one canonical
-    // image across all colours, e.g. MG0192's Wrap).
-    const allCoords = activePosition.coordinates || [];
-    const colourCoord =
-      allCoords.find((c) =>
-        c.colour && selectedColour?.name &&
-        c.colour.toLowerCase() === selectedColour.name.toLowerCase(),
-      ) ||
-      allCoords[0] ||
-      null;
+    // Fix #1 (Bug A, session 7): strict colour match. If the selected
+    // colour has no entry in this position's coordinates, we do NOT fall
+    // back to allCoords[0] - that silently swapped the customer's chosen
+    // colour for whichever sorted first (the original "Amber selected,
+    // Blue cup rendered" bug on MG0192's Back).
+    const allCoords = renderPosition.coordinates || [];
+    const colourCoord = allCoords.find((c) =>
+      c.colour && selectedColour?.name &&
+      c.colour.toLowerCase().trim() === selectedColour.name.toLowerCase().trim(),
+    ) || null;
 
-    // Step 2 — pick the BACKGROUND image. Primary source is the
-    // coordinate entry's image_url (correct dimensions for the coord
-    // math). Degraded fallback (no coordinates available at all) is the
-    // catalogue thumb — render but skip the print-area rectangle.
+    // Step 2 — pick the BACKGROUND image.
+    // - colourCoord present: use its image_url. Coords match this exact
+    //   image's pixel space, so we can draw the print rect on top.
+    // - colourCoord missing AND the position HAS coords for other
+    //   colours: render the per-colour catalogue thumb so the customer
+    //   sees their actual colour, and SUPPRESS the print rect (the
+    //   coords would land in the wrong place against the thumb). Show
+    //   a notice via `colourPreviewUnavailable`.
+    // - Position has NO coords at all (PGifts Direct, etc.): render the
+    //   per-colour thumb, no rect, no notice - this isn't a colour-
+    //   mismatch failure, this product type never had print previews.
+    const positionHasAnyCoords = allCoords.length > 0;
+    const previewUnavailable = positionHasAnyCoords && !colourCoord;
+    setColourPreviewUnavailable(previewUnavailable);
+
     const rawImageUrl =
       colourCoord?.image_url ||
       selectedColour?.images?.[0] ||
@@ -342,13 +412,16 @@ const DesignerV2 = () => {
     // Diagnostic trace — surfaces the resolved image URL + coord entry.
     // If the canvas stays blank, paste this from devtools.
     console.log('[DesignerV2] effect run', {
-      position: activePosition.name,
+      activePosition: activePosition?.name,
+      renderPosition: renderPosition.name,
+      positionsHaveDistinctRects,
       colour: selectedColour?.name,
       coordsLen: allCoords.length,
       colourCoord: colourCoord ? {
         colour: colourCoord.colour,
         image_url: colourCoord.image_url,
       } : null,
+      previewUnavailable,
       rawImageUrl,
       imageUrl,
     });
@@ -473,7 +546,7 @@ const DesignerV2 = () => {
       },
       // NO crossOrigin — see CORS note above.
     );
-  }, [canvas, product, activePosition, selectedColour]);
+  }, [canvas, product, renderPosition, selectedColour, activePosition, positionsHaveDistinctRects]);
 
   // ---------------------------------------------------------------------
   // 6. Race-condition guarded deferred-apply of saved design
@@ -482,7 +555,7 @@ const DesignerV2 = () => {
     canvas,
     canvasReadyRef,
     printAreasLoaded,
-    printAreas: activePosition ? [activePosition] : [],
+    printAreas: renderPosition ? [renderPosition] : [],
     pendingDesignData,
     setPendingDesignData,
     designLoadedRef,
@@ -784,22 +857,61 @@ const DesignerV2 = () => {
                 )}
                 {positions.map((p, idx) => {
                   const method = p.printType || 'Print';
+                  const isActive = idx === activePositionIdx;
+                  const isCanonical = idx === canonicalPositionIdx;
+                  // Fix #2: non-canonical tabs of a single-rect product
+                  // stay clickable (the customer still records their
+                  // intended print position for the quote) but are
+                  // visually muted to signal the canvas preview is
+                  // locked to the canonical view.
+                  const isMutedForPreview =
+                    !positionsHaveDistinctRects && !isCanonical;
                   return (
                     <button
                       key={idx}
                       onClick={() => setActivePositionIdx(idx)}
+                      title={isMutedForPreview
+                        ? `Preview shown is the ${canonicalPositionName} view. Print on ${p.name} is still orderable.`
+                        : p.name}
                       className={`w-full text-left px-3 py-2 rounded-lg border transition-colors ${
-                        idx === activePositionIdx
+                        isActive
                           ? 'border-blue-500 bg-blue-50/60'
                           : 'border-gray-200 hover:border-gray-300'
-                      }`}
+                      } ${isMutedForPreview ? 'opacity-60' : ''}`}
                     >
                       <div className="text-sm font-medium text-gray-800">{p.name}</div>
-                      <div className="text-xs text-slate-500 truncate">{method}</div>
+                      <div className="text-xs text-slate-500 truncate">
+                        {isMutedForPreview ? 'preview unavailable' : method}
+                      </div>
                     </button>
                   );
                 })}
               </div>
+              {/* Fix #2 notice: surfaces when the product is in the
+                  single-rect-multi-position bucket (~12.6% of Laltex
+                  catalogue, mainly mugs + power banks). */}
+              {!positionsHaveDistinctRects && positions.length > 1 && (
+                <div className="mt-3 p-2.5 rounded-lg bg-amber-50 border border-amber-200">
+                  <p className="text-[11px] text-amber-900 leading-snug">
+                    Live preview available on <strong>{canonicalPositionName}</strong> only.
+                    Other positions are still orderable and your design will print
+                    correctly; the printer uses your chosen position when producing
+                    the order.
+                  </p>
+                </div>
+              )}
+              {/* Fix #1 notice: surfaces when the active position has
+                  print coordinates for some colours but not the one the
+                  customer just selected. Canvas shows the catalogue
+                  thumb in the right colour, no rect overlaid. */}
+              {colourPreviewUnavailable && (
+                <div className="mt-3 p-2.5 rounded-lg bg-amber-50 border border-amber-200">
+                  <p className="text-[11px] text-amber-900 leading-snug">
+                    Print preview unavailable for this colour combination. Your
+                    order will print correctly.
+                  </p>
+                </div>
+              )}
             </div>
 
             {/* Colour swatches (image-based — Laltex has PMS, no hex) */}
