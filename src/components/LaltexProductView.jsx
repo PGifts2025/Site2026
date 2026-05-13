@@ -20,7 +20,8 @@
  *   - Per-position price configurator (Front / Back / Wrap / etc.)
  *   - Pre-computed all_in_unit_price (setup-baked at sync time, NEVER
  *     recomputed here — CLAUDE.md §32 follow-up / session 6 spec)
- *   - "Open Designer" button hidden (Designer-v2 lands in session 7)
+ *   - "Open Designer" routes to DesignerV2 at /design/<supplier_product_code>;
+ *     hidden when the product has zero print_area_coordinates
  *
  * Unit conventions:
  *   Prices are stored as numbers throughout. Rounding to pence happens
@@ -42,6 +43,7 @@ import {
   Shield,
   Zap,
   X,
+  Palette,
 } from 'lucide-react';
 
 import { supabase } from '../services/supabaseService';
@@ -210,6 +212,15 @@ const LaltexProductView = ({ product }) => {
     if (selectedColour?.images?.[0]) return selectedColour.images[0];
     return product?.images?.[0]?.url || null;
   }, [colourGalleryUrl, selectedColour, product?.images]);
+
+  // Designable products are those with at least one print-area
+  // coordinate entry across any position. DesignerV2 needs those to
+  // render the print rect; products with zero coords have no preview
+  // to offer and the button is hidden.
+  const isDesignable = useMemo(() => {
+    const positions = product?.printDetails?.positions || [];
+    return positions.some((pos) => (pos.coordinates?.length || 0) > 0);
+  }, [product?.printDetails]);
 
   const baseTier = useMemo(
     () => pickTier(product?.pricingTiers || [], quantity),
@@ -835,9 +846,35 @@ const LaltexProductView = ({ product }) => {
                       )}
                     </button>
 
-                    {/* Designer button intentionally hidden for Laltex —
-                        Designer-v2 lands in session 7 and a small follow-up
-                        PR re-enables it. */}
+                    {/* DesignerV2 entry — mirror visual treatment of the
+                        v1 Customize card on ProductDetailPage so the UX
+                        feels consistent across catalog vs supplier
+                        products. Hidden when the product has zero
+                        print_area_coordinates across all positions
+                        (no preview to render). Route: /design/<code>
+                        - case-sensitive in PostgREST but
+                        productCatalogService.getSupplierProductByCode
+                        handles either case per CLAUDE.md §33; we send
+                        the code as stored (uppercase for Laltex). */}
+                    {isDesignable && (
+                      <div className="p-4 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-2xl border border-blue-200/50 shadow-lg">
+                        <div className="flex items-center space-x-3 mb-3">
+                          <div className="bg-gradient-to-br from-blue-500 to-indigo-600 w-10 h-10 rounded-lg flex items-center justify-center shadow-md">
+                            <Palette className="h-5 w-5 text-white" />
+                          </div>
+                          <div>
+                            <h3 className="font-bold text-gray-900">Customize This Product</h3>
+                            <p className="text-sm text-gray-600">Add your logo & design</p>
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => navigate(`/design/${product.code}`)}
+                          className="w-full bg-gradient-to-r from-blue-500 to-indigo-600 text-white py-2 px-4 rounded-lg font-semibold hover:from-blue-600 hover:to-indigo-700 transition-all duration-300 shadow-md hover:shadow-lg transform hover:scale-105"
+                        >
+                          Open Designer
+                        </button>
+                      </div>
+                    )}
 
                     <button className="w-full border-2 border-gray-300 text-gray-700 py-2 text-sm rounded-xl font-semibold hover:border-gray-400 hover:bg-gray-50 transition-all duration-300">
                       Request Sample
