@@ -7,6 +7,7 @@ import { createMockSupabase } from '../utils/mockAuth';
 import productsConfig from '../config/products.json';
 import { applyColorOverlay, needsColorOverlay, getOptimalIntensity } from '../utils/colorOverlay';
 import { cacheColoredImage, getCachedImage } from '../utils/imageCache';
+import { exportCanvasAsPNG, exportCanvasAsPDF } from '../utils/fabricCanvasManager';
 import AuthModal from '../components/auth/AuthModal';
 import { createQuoteFromDesign } from '../services/quoteService';
 import WaterBottle3DPreview from '../components/WaterBottle3DPreview';
@@ -4427,73 +4428,21 @@ const Designer = () => {
     };
   }, [canvas]);
 
+  // Export paths delegated to the supplier-agnostic helpers in
+  // utils/fabricCanvasManager.js (session 7). Behaviour is identical to
+  // the previous inline implementation:
+  //   - multiplier=3 for both PNG and PDF (CLAUDE.md §8.4)
+  //   - printAreaOverlay always hidden during export
+  //   - watermark hidden only when watermarkVisible=false (user toggle)
+  //   - chrome restored to its prior visibility after the export
   const exportDesign = () => {
-    if (!canvas) return;
-
-    // Hide print area overlay for export
-    const overlay = canvas.getObjects().find(obj => obj.id === 'printAreaOverlay');
-    if (overlay) {
-      overlay.set('visible', false);
-    }
-
-    // Hide watermark if needed
-    const watermark = canvas.getObjects().find(obj => obj.id === 'watermark');
-    if (watermark && !watermarkVisible) {
-      watermark.set('visible', false);
-    }
-
-    canvas.renderAll();
-
-    // Export as image
-    const dataURL = canvas.toDataURL({
-      format: 'png',
-      quality: 1,
-      multiplier: 3
-    });
-
-    // Create download link
-    const link = document.createElement('a');
-    link.download = `${currentProduct.name.toLowerCase().replace(/\s+/g, '-')}-design.png`;
-    link.href = dataURL;
-    link.click();
-
-    // Restore overlay visibility
-    if (overlay) {
-      overlay.set('visible', true);
-    }
-    if (watermark) {
-      watermark.set('visible', watermarkVisible);
-    }
-    canvas.renderAll();
+    const filename = `${currentProduct.name.toLowerCase().replace(/\s+/g, '-')}-design`;
+    exportCanvasAsPNG(canvas, { filename, hideWatermark: !watermarkVisible });
   };
 
   const exportPDF = () => {
-    if (!canvas) return;
-
-    // Hide overlays for export
-    const overlay = canvas.getObjects().find(obj => obj.id === 'printAreaOverlay');
-    if (overlay) overlay.set('visible', false);
-
-    const watermark = canvas.getObjects().find(obj => obj.id === 'watermark');
-    if (watermark && !watermarkVisible) watermark.set('visible', false);
-
-    canvas.renderAll();
-
-    // Create PDF
-    const pdf = new jsPDF({
-      orientation: 'portrait',
-      unit: 'mm',
-      format: 'a4'
-    });
-
-    const imgData = canvas.toDataURL({ format: 'png', quality: 1, multiplier: 3 });
-    pdf.addImage(imgData, 'PNG', 10, 10, 190, 190);
-    pdf.save(`${currentProduct.name.toLowerCase().replace(/\s+/g, '-')}-design.pdf`);
-
-    // Restore visibility
-    if (overlay) overlay.set('visible', true);
-    if (watermark) watermark.set('visible', watermarkVisible);
-    canvas.renderAll();
+    const filename = `${currentProduct.name.toLowerCase().replace(/\s+/g, '-')}-design`;
+    exportCanvasAsPDF(canvas, { filename, hideWatermark: !watermarkVisible });
   };
 
   /**

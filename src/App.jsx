@@ -13,6 +13,7 @@ import Speakers from './pages/Speakers';
 import Pens from './pages/Pens';
 import TeaTowels from './pages/TeaTowels';
 import Designer from './pages/Designer';
+import DesignerV2 from './pages/DesignerV2';
 import ProductManager from './pages/ProductManager';
 import AdminSeedData from './pages/AdminSeedData';
 import Checkout from './pages/Checkout';
@@ -117,6 +118,11 @@ function App() {
 
             {/* Tools */}
             <Route path="/designer" element={<Designer />} />
+            {/* Designer-v2 (session 7) — serves Laltex products. v1 still
+                handles the 25 PGifts Direct products (incl. 2 with 3D
+                previews) at /designer. The Open Designer button routing
+                between v1 vs v2 lands in a small follow-up PR. */}
+            <Route path="/design/:productCode" element={<DesignerV2 />} />
 
             {/* Customer Account - Protected Routes */}
             <Route path="/account" element={<CustomerGuard><CustomerDashboard /></CustomerGuard>} />
