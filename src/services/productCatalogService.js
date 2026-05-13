@@ -932,19 +932,30 @@ export const getDesignerUrl = (productKey, color = null, view = null) => {
 
 /**
  * Get a single supplier_products row by supplier_product_code (joins
- * supplier). Used by the generic /products/:identifier route to fetch
- * Laltex products. PGifts Direct products are normally served from
- * catalog_products via getCatalogProductBySlug; this is a fallback
- * for the unified normaliser.
+ * supplier). Case-tolerant: tries the code as-given first, then upper-
+ * case as a fallback, so any caller can pass URL slugs without
+ * worrying about casing.
  *
- * @param {string} code - supplier_product_code (Laltex SKU or PGifts slug)
+ * Why both casings:
+ *   - Laltex SKUs are stored UPPERCASE (`MG0192`)
+ *   - PGifts Direct mirror rows are stored LOWERCASE (`chi-cup`)
+ * URL params and AI tool results arrive lowercase by convention. Try
+ * as-given to keep PGifts mirror lookups cheap, then upper as the
+ * Laltex fallback.
+ *
+ * This is the single source of truth for supplier_products lookups by
+ * code. callers (including getProductByIdentifier, DesignerV2,
+ * LaltexProductView, etc.) MUST go through this helper rather than
+ * issuing their own .eq() — same bug hit in session 6 and session 7.
+ *
+ * @param {string} code - supplier_product_code (any case)
  * @returns {Promise<Object|null>} supplier_products row + supplier join, or null
  */
 export const getSupplierProductByCode = async (code) => {
   if (isMockAuth) return null;
   if (!code) return null;
 
-  try {
+  const tryFetch = async (variant) => {
     const client = getSupabaseClient();
     const { data, error } = await client
       .from('supplier_products')
@@ -952,15 +963,22 @@ export const getSupplierProductByCode = async (code) => {
         *,
         supplier:suppliers(id, slug, name)
       `)
-      .eq('supplier_product_code', code)
+      .eq('supplier_product_code', variant)
       .limit(1)
       .maybeSingle();
-
     if (error) {
       if (error.code === 'PGRST116') return null;
       throw error;
     }
     return data || null;
+  };
+
+  try {
+    const asGiven = await tryFetch(code);
+    if (asGiven) return asGiven;
+    const upper = code.toUpperCase();
+    if (upper === code) return null;
+    return await tryFetch(upper);
   } catch (err) {
     console.error('Error fetching supplier product:', err);
     return null;
@@ -998,20 +1016,10 @@ export const getProductByIdentifier = async (identifier) => {
     console.warn('[getProductByIdentifier] catalog lookup failed:', e?.message);
   }
 
-  // Path 2: supplier_products (Laltex by SKU code).
-  //
-  // URL params arrive lowercase by convention (`/products/mg0192`)
-  // but Laltex stores codes uppercase (`MG0192`). Try the given
-  // casing first, then uppercase as a fallback. PGifts Direct mirror
-  // codes are the lowercase slugs (chi-cup), so as-given covers
-  // them; uppercase covers Laltex.
-  let supplierRow = await getSupplierProductByCode(identifier);
-  if (!supplierRow) {
-    const upper = identifier.toUpperCase();
-    if (upper !== identifier) {
-      supplierRow = await getSupplierProductByCode(upper);
-    }
-  }
+  // Path 2: supplier_products (Laltex by SKU code, or PGifts mirror
+  // by slug). Case handling lives inside getSupplierProductByCode now
+  // — every caller of that helper gets the same casing tolerance.
+  const supplierRow = await getSupplierProductByCode(identifier);
   if (supplierRow) {
     const supplierSlug = supplierRow.supplier?.slug || 'laltex';
     return {
