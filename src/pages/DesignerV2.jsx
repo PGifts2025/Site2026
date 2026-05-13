@@ -72,7 +72,6 @@ import {
   exportCanvasAsPDF,
   captureUserCanvasJSON,
   captureCanvasThumbnail,
-  translateLaltexCoord,
   useDeferredDesignApply,
   isUserObject,
 } from '../utils/fabricCanvasManager';
@@ -456,11 +455,47 @@ const DesignerV2 = () => {
         }
         console.log('[DesignerV2] image loaded OK', { imageUrl, w: img.width, h: img.height });
 
-        // Native dimensions of the source — translateLaltexCoord scales
-        // print-area rect from this space onto canvas space.
+        // Native dimensions of the source image.
         const natW = img.width;
         const natH = img.height;
         const scale = Math.min(CANVAS_SIZE / natW, CANVAS_SIZE / natH);
+        const renderedW = natW * scale;
+        const renderedH = natH * scale;
+
+        // Centring strategy:
+        // - Rect-anchor (colourCoord present): align the print rectangle
+        //   centre to the canvas centre. Laltex frames products in
+        //   varying portions of their reference photos (MG0192's mug
+        //   sits high; AF0001's apron is roughly central). Centring the
+        //   image bounds put the mug body in the upper portion of the
+        //   canvas because the source image had empty space at the
+        //   bottom. Anchoring on the rect makes the actual print area
+        //   - what the customer cares about - land at canvas centre.
+        // - Image-bounds (colourCoord missing): the Fix #1 fallback
+        //   path renders a per-colour catalogue thumb that has no
+        //   matching rect to anchor on; centre the image bounds.
+        let imageLeft;
+        let imageTop;
+        if (colourCoord) {
+          const rectCx_src = Number(colourCoord.x) + Number(colourCoord.width) / 2;
+          const rectCy_src = Number(colourCoord.y) + Number(colourCoord.height) / 2;
+          imageLeft = CANVAS_SIZE / 2 - rectCx_src * scale;
+          imageTop = CANVAS_SIZE / 2 - rectCy_src * scale;
+          // Defensive clamp: if the image is narrower than the canvas
+          // along an axis (Math.min(scale) leaves slack), don't let
+          // the rect-anchor push the image off-canvas. For products
+          // where renderedW or renderedH equals CANVAS_SIZE (the
+          // limiting axis) the clamp is a no-op.
+          if (renderedW < CANVAS_SIZE) {
+            imageLeft = Math.max(0, Math.min(CANVAS_SIZE - renderedW, imageLeft));
+          }
+          if (renderedH < CANVAS_SIZE) {
+            imageTop = Math.max(0, Math.min(CANVAS_SIZE - renderedH, imageTop));
+          }
+        } else {
+          imageLeft = (CANVAS_SIZE - renderedW) / 2;
+          imageTop = (CANVAS_SIZE - renderedH) / 2;
+        }
 
         // Capture user objects BEFORE clearing chrome so we can restore
         // them on top of the new background. Position-aware behaviour
@@ -476,15 +511,15 @@ const DesignerV2 = () => {
         // Explicit origin — Fabric 5.3 defaults to 'left'/'top' but be
         // defensive: any inherited or future-default drift would shift
         // the image relative to its left/top coords. Pinning these
-        // means natW*scale and natH*scale are the rendered dimensions
-        // starting from (left, top).
+        // means renderedW × renderedH are the rendered dimensions
+        // starting from (imageLeft, imageTop).
         img.set({
           id: TEMPLATE_IMAGE_ID,
           name: TEMPLATE_IMAGE_ID,
           originX: 'left',
           originY: 'top',
-          left: (CANVAS_SIZE - natW * scale) / 2,
-          top: (CANVAS_SIZE - natH * scale) / 2,
+          left: imageLeft,
+          top: imageTop,
           scaleX: scale,
           scaleY: scale,
           selectable: false,
@@ -496,31 +531,35 @@ const DesignerV2 = () => {
         // off-centre symptom is reproducible from the console.
         console.log('[DesignerV2] image placed', {
           natW, natH, scale,
-          left: (CANVAS_SIZE - natW * scale) / 2,
-          top: (CANVAS_SIZE - natH * scale) / 2,
-          renderedW: natW * scale,
-          renderedH: natH * scale,
+          anchor: colourCoord ? 'rect' : 'image',
+          left: imageLeft,
+          top: imageTop,
+          renderedW,
+          renderedH,
         });
         canvas.add(img);
         canvas.sendToBack(img);
 
-        // Print area overlay rectangle — only when we have a coordinate
-        // entry. Degraded fallback (catalogue thumb only, no
-        // print_area_coordinates rows) renders the image without an
-        // overlay since the math would be wrong against the wrong image.
+        // Print area overlay rectangle — only when we have a matching
+        // coordinate entry (Fix #1: no rect on the catalogue-thumb
+        // fallback path, since the coords were calculated against a
+        // different image and would land in empty space). Coords use
+        // the SAME imageLeft/imageTop offset as the image itself, so
+        // any clamp that fired stays in lockstep.
         if (colourCoord) {
-          const t = translateLaltexCoord(
-            colourCoord, natW, natH, CANVAS_SIZE, CANVAS_SIZE,
-          );
+          const rectLeft = Number(colourCoord.x) * scale + imageLeft;
+          const rectTop = Number(colourCoord.y) * scale + imageTop;
+          const rectWidth = Number(colourCoord.width) * scale;
+          const rectHeight = Number(colourCoord.height) * scale;
           const rect = new fabric.Rect({
             id: PRINT_AREA_OVERLAY_ID,
             name: PRINT_AREA_OVERLAY_ID,
             originX: 'left',
             originY: 'top',
-            left: t.x,
-            top: t.y,
-            width: t.width,
-            height: t.height,
+            left: rectLeft,
+            top: rectTop,
+            width: rectWidth,
+            height: rectHeight,
             fill: 'rgba(59, 130, 246, 0.08)',
             stroke: '#3b82f6',
             strokeDashArray: [6, 4],
@@ -531,7 +570,7 @@ const DesignerV2 = () => {
             excludeFromExport: true,
           });
           console.log('[DesignerV2] print rect placed', {
-            left: t.x, top: t.y, width: t.width, height: t.height, scale: t.scale,
+            left: rectLeft, top: rectTop, width: rectWidth, height: rectHeight, scale,
           });
           canvas.add(rect);
         }
