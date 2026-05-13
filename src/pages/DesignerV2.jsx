@@ -222,6 +222,38 @@ const DesignerV2 = () => {
       canvasReadyRef.current = true;
       console.log('[DesignerV2] canvas ready');
 
+      // Force Fabric's display geometry to scale to the parent card.
+      // The fabric.Canvas constructor sets inline width/height on BOTH
+      // the canvas element and the auto-injected .canvas-container
+      // wrapper (`width: 800px; height: 800px`). When the parent column
+      // is narrower than 800px (small viewports, or lg:col-span-6 of a
+      // ~1024px container), those inline styles win over the JSX-side
+      // maxWidth:100% and the right half of the canvas renders OUTSIDE
+      // the card boundary - the bug that hid four rounds of correct
+      // centring math behind an overflow-clip.
+      //
+      // Override after construction. Drawing buffer stays 800x800 (the
+      // canvas attributes set the buffer, NOT these styles) so render
+      // math and export resolution are unchanged. aspect-ratio:1/1 is
+      // load-bearing: without it, width:100% + height:auto on a canvas
+      // collapses to zero height. Fabric's pointer hit-testing reads
+      // getBoundingClientRect() so the scaled display works for events.
+      const wrapperEl = canvasEl.parentElement;
+      const fitStyles = {
+        maxWidth: '100%',
+        width: '100%',
+        height: 'auto',
+        aspectRatio: '1 / 1',
+      };
+      Object.assign(canvasEl.style, fitStyles);
+      if (wrapperEl && wrapperEl.classList.contains('canvas-container')) {
+        Object.assign(wrapperEl.style, fitStyles);
+        // The upper (interactive) canvas Fabric stacks for events also
+        // needs the same treatment - it's a sibling of the lower one.
+        const upperCanvas = wrapperEl.querySelector('canvas.upper-canvas');
+        if (upperCanvas) Object.assign(upperCanvas.style, fitStyles);
+      }
+
       const handleSelection = () => {
         setSelectedObject(fabricCanvas.getActiveObject());
       };
