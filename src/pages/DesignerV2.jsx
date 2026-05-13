@@ -35,12 +35,6 @@
  *   - user_designs.user_id OR session_id: existing v1 contract
  */
 
-/* Mount-diagnosis marker — must fire on module load.
- * If this log does NOT appear in console, the running app is loading
- * a different module than this file. */
-// eslint-disable-next-line no-console
-console.log('[DESIGNERV2-FILE-LOADED]', new Date().toISOString());
-
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { fabric } from 'fabric';
@@ -84,13 +78,6 @@ const TEMPLATE_IMAGE_ID = 'template-image';
 const PRINT_AREA_OVERLAY_ID = 'printAreaOverlay';
 
 const DesignerV2 = () => {
-  /* Mount-diagnosis marker — must fire on every render of this
-   * component. If [DESIGNERV2-FILE-LOADED] appears but this does NOT,
-   * the file is being imported but the component never instantiated
-   * (route mismatch). */
-  // eslint-disable-next-line no-console
-  console.log('[DESIGNERV2-COMPONENT-CALLED]');
-
   const { productCode } = useParams();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -220,7 +207,6 @@ const DesignerV2 = () => {
       });
       fabricCanvasRef.current = fabricCanvas;
       canvasReadyRef.current = true;
-      console.log('[DesignerV2] canvas ready');
 
       // Force Fabric's display geometry to scale to the parent card.
       // The fabric.Canvas constructor sets inline width/height on BOTH
@@ -440,23 +426,6 @@ const DesignerV2 = () => {
     // path is less forgiving.
     const imageUrl = encodeURI(rawImageUrl);
 
-    // Diagnostic trace — surfaces the resolved image URL + coord entry.
-    // If the canvas stays blank, paste this from devtools.
-    console.log('[DesignerV2] effect run', {
-      activePosition: activePosition?.name,
-      renderPosition: renderPosition.name,
-      positionsHaveDistinctRects,
-      colour: selectedColour?.name,
-      coordsLen: allCoords.length,
-      colourCoord: colourCoord ? {
-        colour: colourCoord.colour,
-        image_url: colourCoord.image_url,
-      } : null,
-      previewUnavailable,
-      rawImageUrl,
-      imageUrl,
-    });
-
     // Token guards against effect re-runs racing each other (Strict
     // Mode, rapid colour clicks). A stale callback bails out without
     // touching the canvas.
@@ -473,19 +442,12 @@ const DesignerV2 = () => {
     fabric.Image.fromURL(
       imageUrl,
       (img) => {
-        if (myToken !== imageLoadTokenRef.current) {
-          console.log('[DesignerV2] image load callback stale, bailing', { imageUrl });
-          return;
-        }
-        if (!canvasReadyRef.current) {
-          console.log('[DesignerV2] canvas not ready in callback, bailing', { imageUrl });
-          return;
-        }
+        if (myToken !== imageLoadTokenRef.current) return;
+        if (!canvasReadyRef.current) return;
         if (!img || !img.width) {
           console.warn('[DesignerV2] image failed to load (img null or width=0):', { imageUrl, img });
           return;
         }
-        console.log('[DesignerV2] image loaded OK', { imageUrl, w: img.width, h: img.height });
 
         // Native dimensions of the source image.
         const natW = img.width;
@@ -559,16 +521,6 @@ const DesignerV2 = () => {
           hoverCursor: 'default',
           excludeFromExport: false,
         });
-        // Extra diagnostic — log the actual placed geometry so any
-        // off-centre symptom is reproducible from the console.
-        console.log('[DesignerV2] image placed', {
-          natW, natH, scale,
-          anchor: colourCoord ? 'rect' : 'image',
-          left: imageLeft,
-          top: imageTop,
-          renderedW,
-          renderedH,
-        });
         canvas.add(img);
         canvas.sendToBack(img);
 
@@ -600,9 +552,6 @@ const DesignerV2 = () => {
             evented: false,
             hoverCursor: 'default',
             excludeFromExport: true,
-          });
-          console.log('[DesignerV2] print rect placed', {
-            left: rectLeft, top: rectTop, width: rectWidth, height: rectHeight, scale,
           });
           canvas.add(rect);
         }
