@@ -2735,3 +2735,47 @@ No misleading rect on positions with copied coords. Lock the canvas to the canon
 The corpus distribution (run scripts/diagnostic/probe-af0001-and-corpus.mjs to refresh):
 PatternCount%Single-position products (always fine)~18023%Multi-position with distinct rects (good data)59074%Multi-position with single copied rect (bug class)10012.6%
 Triggered by session 7 / DesignerV2. The probe scripts in scripts/diagnostic/ are the canonical audit tools — keep them committed and use them whenever a new Laltex data shape question comes up rather than spelunking ad-hoc SQL.
+
+---
+
+## 38. PLAYWRIGHT MCP IS AVAILABLE — USE IT FOR ANY UI WORK
+
+The project has Microsoft's official Playwright MCP server registered
+(`.mcp.json`, project scope). It gives Claude Code direct browser control.
+
+**When to use it:**
+
+- Any session-7-style work touching Fabric canvas, image loading, DOM
+  layout, useEffect lifecycle, CSS rendering, or visual output
+- Before claiming any rendering fix is "verified" — capture a
+  snapshot or screenshot first
+- Edge cases that depend on viewport size, browser rendering, or
+  interaction timing
+
+**Invocation:**
+
+In the first request of a session, mention "playwright mcp" explicitly
+to disambiguate from bash-based playwright invocations. After that,
+the playwright tools are available in the normal tool surface.
+
+Example: "Use playwright mcp to open localhost:5173/design/MG0192,
+take a snapshot, and report the canvas element's position and size."
+
+**Verification protocol going forward:**
+
+For rendering work, the workflow is now:
+1. Make the code change
+2. Use playwright mcp to navigate to the affected page
+3. Capture an accessibility snapshot OR a screenshot
+4. Compare against expected outcome
+5. Only THEN claim "verified" in the PR description
+
+CLAUDE.md §34 still applies — even with playwright mcp, a human
+should sign off on customer-facing UI before merge. But the
+"unverified between CC pushes" gap is now closeable from CC's side.
+
+**Browser binaries** are installed to `%LOCALAPPDATA%\ms-playwright`
+(Chromium, Firefox, WebKit, plus FFmpeg + Winldd helpers). One-time
+install via `npx playwright install`; no admin elevation required.
+Re-run after a major Playwright bump if the MCP server starts erroring
+about missing browsers.
