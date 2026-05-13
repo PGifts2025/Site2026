@@ -2779,3 +2779,112 @@ should sign off on customer-facing UI before merge. But the
 install via `npx playwright install`; no admin elevation required.
 Re-run after a major Playwright bump if the MCP server starts erroring
 about missing browsers.
+
+---
+
+## 39. THIRD-PARTY IMAGES MUST GO THROUGH `/api/proxy-image`
+
+Third-party supplier images (Laltex today, future suppliers later)
+MUST be loaded via the project's image proxy, not fetched directly
+from the supplier's CDN.
+
+**Why.** Supplier CDNs typically don't return CORS headers. Fabric
+will draw the image fine, but the canvas becomes "tainted" — and
+`canvas.toDataURL()` then throws `SecurityError` on PNG/PDF export.
+DesignerV2's `runExport` catches that and surfaces a friendly toast,
+but the customer still can't download their design. The proxy closes
+the loophole by re-serving the bytes same-origin with
+`Access-Control-Allow-Origin: *`.
+
+**The proxy.** [`api/proxy-image.js`](../api/proxy-image.js) is a
+Vercel serverless function. It fetches an allowlisted upstream URL
+server-side and re-serves with CORS + cache headers. The host
+allowlist lives in the function body as a frozen `Set` — adding a
+new supplier requires a code change, not a config flag. That's
+deliberate: an env-var-driven allowlist would be one mis-deploy
+away from being an open proxy / SSRF surface.
+
+**Usage in components.**
+
+```js
+const PROXIED_IMAGE_HOSTS = new Set(['laltex-extranet.co.uk']);
+
+function resolveImageUrl(rawUrl) {
+  try {
+    const parsed = new URL(rawUrl, window.location.origin);
+    if (PROXIED_IMAGE_HOSTS.has(parsed.hostname.toLowerCase())) {
+      return {
+        url: `/api/proxy-image?url=${encodeURIComponent(rawUrl)}`,
+        crossOrigin: 'anonymous',
+      };
+    }
+  } catch {}
+  return { url: encodeURI(rawUrl), crossOrigin: undefined };
+}
+
+const { url, crossOrigin } = resolveImageUrl(rawSupplierUrl);
+fabric.Image.fromURL(url, callback, crossOrigin ? { crossOrigin } : undefined);
+```
+
+Two encodings to keep straight:
+
+- **Proxy path** uses `encodeURIComponent` because the raw URL is
+  being passed as a query-string value — the `:`, `/`, `?` and `#`
+  in the URL must be `%`-encoded so the URL parser sees them as
+  data, not structure.
+- **Direct path** uses `encodeURI` to preserve URL structure but
+  encode raw spaces (CLAUDE.md §35).
+
+The client-side `PROXIED_IMAGE_HOSTS` must mirror the server-side
+`ALLOWED_HOSTS` in `api/proxy-image.js`. Drift means clients try to
+proxy URLs the server will 403. Keep them in lockstep.
+
+**Edge caching.** The proxy sets `s-maxage=86400` so Vercel's edge
+CDN caches each unique image for a day. Repeated requests for the
+same image are near-instant after the first hit and don't hammer
+the supplier's CDN.
+
+**Status codes.**
+
+| Code | Meaning |
+|---|---|
+| 200 | Image bytes returned with CORS + cache headers |
+| 400 | Malformed URL, missing `url` param, non-HTTPS, or embedded credentials |
+| 403 | Upstream host not in allowlist |
+| 404 | Upstream returned 404 |
+| 405 | Non-GET method |
+| 415 | Upstream returned non-image content-type |
+| 502 | Upstream fetch failed, returned 5xx, or exceeded 10MB cap |
+
+**Failure handling.** The proxy can be down, an image can be gone,
+upstream can rate-limit. Components consuming through Fabric should
+keep their try/catch around `toDataURL` for defense — the friendly
+error toast in DesignerV2's `runExport` is the canonical pattern.
+Leave it in place even after this proxy lands; it costs nothing and
+covers any new image source that someone forgets to route through.
+
+**Same-origin / already-CORS-clean URLs do NOT proxy.** Supabase
+Storage URLs (PGifts Direct mirror images, user-uploaded artwork)
+already return `Access-Control-Allow-Origin: *` and load cleanly
+with `crossOrigin: 'anonymous'` directly. The `resolveImageUrl`
+helper only diverts hosts in the allowlist; everything else stays
+on the direct path with the `encodeURI` space-encoding workaround.
+
+### 39.1 Hard rules — DO NOT BREAK
+
+- **Allowlist is REQUIRED.** No new upstream host without an
+  explicit Set entry in `api/proxy-image.js`. Code review only —
+  no env var, no remote config.
+- **HTTPS-only upstream.** The proxy rejects `http:` URLs with 400.
+  Don't loosen this even if a supplier's CDN happens to serve HTTP.
+- **GET only.** Image fetches are GET; the proxy refuses anything
+  else with 405. Don't extend to POST/PUT for "uploads" — that's
+  a different problem with different threat model.
+- **No cookie / auth header forwarding** in either direction. The
+  proxy sets its own minimal request headers (UA, Accept) and
+  ignores whatever the client sent.
+- **Client + server allowlists must mirror.** When you add a host
+  on one side, add it on the other in the same PR.
+- **Do NOT remove the export-failure toast in DesignerV2.** It is
+  the safety net for any image source that isn't routed through
+  the proxy (regressions, new sources added without thinking).

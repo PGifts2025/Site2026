@@ -36,6 +36,9 @@ build/
 # Vercel
 .vercel
 
+# Playwright MCP scratch
+.playwright-mcp/
+
 # OS files
 Thumbs.db
 .DS_Store
