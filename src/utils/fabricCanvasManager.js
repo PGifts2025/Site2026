@@ -127,15 +127,27 @@ export function exportCanvasAsPNG(canvas, { filename, hideWatermark = true, mult
   if (watermark && hideWatermark) watermark.set('visible', false);
   canvas.renderAll();
 
-  const dataURL = canvas.toDataURL({ format: 'png', quality: 1, multiplier });
-  const link = document.createElement('a');
-  link.download = `${filename}.png`;
-  link.href = dataURL;
-  link.click();
-
-  if (overlay) overlay.set('visible', overlayWasVisible !== false);
-  if (watermark) watermark.set('visible', watermarkWasVisible !== false);
-  canvas.renderAll();
+  try {
+    const dataURL = canvas.toDataURL({ format: 'png', quality: 1, multiplier });
+    const link = document.createElement('a');
+    link.download = `${filename}.png`;
+    link.href = dataURL;
+    link.click();
+  } catch (err) {
+    // Tainted-canvas SecurityError: cross-origin background image
+    // (e.g. Laltex CDN without CORS headers) blocks pixel readback.
+    // Surface a user-readable error rather than a stack trace; v1 paths
+    // (PGifts Direct images served from same-origin Supabase Storage)
+    // never hit this.
+    console.error('[exportCanvasAsPNG] toDataURL failed:', err);
+    throw new Error(
+      'PNG export is temporarily unavailable for this product (image security). The team has been notified.',
+    );
+  } finally {
+    if (overlay) overlay.set('visible', overlayWasVisible !== false);
+    if (watermark) watermark.set('visible', watermarkWasVisible !== false);
+    canvas.renderAll();
+  }
 }
 
 /**
@@ -159,14 +171,22 @@ export function exportCanvasAsPDF(canvas, { filename, hideWatermark = true, mult
   if (watermark && hideWatermark) watermark.set('visible', false);
   canvas.renderAll();
 
-  const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-  const imgData = canvas.toDataURL({ format: 'png', quality: 1, multiplier });
-  pdf.addImage(imgData, 'PNG', 10, 10, 190, 190);
-  pdf.save(`${filename}.pdf`);
-
-  if (overlay) overlay.set('visible', overlayWasVisible !== false);
-  if (watermark) watermark.set('visible', watermarkWasVisible !== false);
-  canvas.renderAll();
+  try {
+    const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    const imgData = canvas.toDataURL({ format: 'png', quality: 1, multiplier });
+    pdf.addImage(imgData, 'PNG', 10, 10, 190, 190);
+    pdf.save(`${filename}.pdf`);
+  } catch (err) {
+    // Same tainted-canvas concern as exportCanvasAsPNG.
+    console.error('[exportCanvasAsPDF] toDataURL failed:', err);
+    throw new Error(
+      'PDF export is temporarily unavailable for this product (image security). The team has been notified.',
+    );
+  } finally {
+    if (overlay) overlay.set('visible', overlayWasVisible !== false);
+    if (watermark) watermark.set('visible', watermarkWasVisible !== false);
+    canvas.renderAll();
+  }
 }
 
 /**

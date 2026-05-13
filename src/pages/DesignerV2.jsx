@@ -261,10 +261,31 @@ const DesignerV2 = () => {
   useEffect(() => {
     if (!canvas || !canvasReadyRef.current || !product || !activePosition) return;
 
-    // Pick an image: prefer the selected colour's first item_image; fall
-    // back to a plain image; finally to the product hero. Never throw on
-    // a missing colour image — Laltex catalogues are uneven.
+    // Step 1 — pick the right COORDINATE entry first. For Laltex products
+    // the print_area_coordinates[].image_url is the photo Laltex MARKED
+    // UP to define the print area (coords are in this image's native
+    // pixel space). The items[].item_images[0] catalogue thumb is a
+    // DIFFERENT image at different dimensions/crop and would put the
+    // rectangle in the wrong place.
+    //
+    // Find the entry for the selected colour (case-tolerant); fall back
+    // to the first entry (single-coordinate products use one canonical
+    // image across all colours, e.g. MG0192's Wrap).
+    const allCoords = activePosition.coordinates || [];
+    const colourCoord =
+      allCoords.find((c) =>
+        c.colour && selectedColour?.name &&
+        c.colour.toLowerCase() === selectedColour.name.toLowerCase(),
+      ) ||
+      allCoords[0] ||
+      null;
+
+    // Step 2 — pick the BACKGROUND image. Primary source is the
+    // coordinate entry's image_url (correct dimensions for the coord
+    // math). Degraded fallback (no coordinates available at all) is the
+    // catalogue thumb — render but skip the print-area rectangle.
     const imageUrl =
+      colourCoord?.image_url ||
       selectedColour?.images?.[0] ||
       selectedColour?.plainImages?.[0] ||
       product.images?.[0]?.url ||
@@ -275,48 +296,45 @@ const DesignerV2 = () => {
       return;
     }
 
-    // Token guards against effect re-runs racing each other (Strict Mode,
-    // rapid colour clicks): if a new render starts before fabric.Image
-    // resolves, the older callback bails out instead of overwriting the
-    // canvas with stale state.
+    // Token guards against effect re-runs racing each other (Strict
+    // Mode, rapid colour clicks). A stale callback bails out without
+    // touching the canvas.
     imageLoadTokenRef.current += 1;
     const myToken = imageLoadTokenRef.current;
 
-    // Find coordinates matching the selected colour. Laltex returns an
-    // array of per-colour coordinate entries; if no exact match, fall
-    // back to the first entry. This handles single-coordinate products
-    // (e.g. MG0192's Wrap which uses one set across all colours) and
-    // multi-coordinate products (left/right-handed variants).
-    const allCoords = activePosition.coordinates || [];
-    const colourCoord =
-      allCoords.find((c) =>
-        c.colour && selectedColour?.name &&
-        c.colour.toLowerCase() === selectedColour.name.toLowerCase(),
-      ) ||
-      allCoords[0] ||
-      null;
-
+    // CORS note: Laltex's image server does not return
+    // Access-Control-Allow-Origin headers. We DON'T request CORS — that
+    // would make Chrome refuse the image entirely and leave the canvas
+    // blank. The canvas will be "tainted" for export purposes; PNG/PDF
+    // export of a tainted canvas throws SecurityError. exportCanvasAsPNG
+    // and exportCanvasAsPDF surface that as a friendly error rather
+    // than a stack trace; a proper image-proxy fix lands later.
     fabric.Image.fromURL(
       imageUrl,
       (img) => {
         if (myToken !== imageLoadTokenRef.current) return; // stale
         if (!canvasReadyRef.current) return;
+        if (!img || !img.width) {
+          console.warn('[DesignerV2] image failed to load:', imageUrl);
+          return;
+        }
 
         // Native dimensions of the source — translateLaltexCoord scales
         // print-area rect from this space onto canvas space.
-        const natW = img.width || CANVAS_SIZE;
-        const natH = img.height || CANVAS_SIZE;
-        const scaleX = CANVAS_SIZE / natW;
-        const scaleY = CANVAS_SIZE / natH;
-        const scale = Math.min(scaleX, scaleY);
+        const natW = img.width;
+        const natH = img.height;
+        const scale = Math.min(CANVAS_SIZE / natW, CANVAS_SIZE / natH);
 
-        // Clear existing chrome (template + print-area overlay) but
-        // preserve user objects so an in-progress design survives a
-        // position or colour swap.
-        const toRemove = canvas.getObjects().filter((o) =>
-          o.id === TEMPLATE_IMAGE_ID || o.id === PRINT_AREA_OVERLAY_ID,
-        );
-        toRemove.forEach((o) => canvas.remove(o));
+        // Capture user objects BEFORE clearing chrome so we can restore
+        // them on top of the new background. Position-aware behaviour
+        // requested in the spec: text/upload stay at their canvas
+        // positions across colour/position swaps.
+        const allObjects = canvas.getObjects();
+        const userObjects = allObjects.filter(isUserObject);
+        // Remove chrome (template + overlay). User objects stay put.
+        allObjects
+          .filter((o) => o.id === TEMPLATE_IMAGE_ID || o.id === PRINT_AREA_OVERLAY_ID)
+          .forEach((o) => canvas.remove(o));
 
         img.set({
           id: TEMPLATE_IMAGE_ID,
@@ -333,7 +351,10 @@ const DesignerV2 = () => {
         canvas.add(img);
         canvas.sendToBack(img);
 
-        // Print area overlay rectangle
+        // Print area overlay rectangle — only when we have a coordinate
+        // entry. Degraded fallback (catalogue thumb only, no
+        // print_area_coordinates rows) renders the image without an
+        // overlay since the math would be wrong against the wrong image.
         if (colourCoord) {
           const t = translateLaltexCoord(
             colourCoord, natW, natH, CANVAS_SIZE, CANVAS_SIZE,
@@ -357,10 +378,15 @@ const DesignerV2 = () => {
           canvas.add(rect);
         }
 
+        // Re-establish user-object z-order on top of the new chrome.
+        // canvas.add already pushes them, but explicit bringToFront
+        // hardens the case where Fabric reorders during loadFromJSON.
+        userObjects.forEach((obj) => canvas.bringToFront(obj));
+
         canvas.renderAll();
         setPrintAreasLoaded(true);
       },
-      { crossOrigin: 'anonymous' },
+      // NO crossOrigin — see CORS note above.
     );
   }, [canvas, product, activePosition, selectedColour]);
 
@@ -540,10 +566,18 @@ const DesignerV2 = () => {
   const runExport = (format) => {
     if (!canvas || !product) return;
     const filename = `${product.code.toLowerCase()}-design`;
-    if (format === 'png') {
-      exportCanvasAsPNG(canvas, { filename, hideWatermark: true });
-    } else if (format === 'pdf') {
-      exportCanvasAsPDF(canvas, { filename, hideWatermark: true });
+    try {
+      if (format === 'png') {
+        exportCanvasAsPNG(canvas, { filename, hideWatermark: true });
+      } else if (format === 'pdf') {
+        exportCanvasAsPDF(canvas, { filename, hideWatermark: true });
+      }
+    } catch (err) {
+      // Tainted-canvas error from cross-origin Laltex images. Surface
+      // a friendly inline message instead of letting it bubble.
+      console.error('[DesignerV2] export failed:', err);
+      setSaveStatus({ type: 'error', message: err?.message || 'Export failed' });
+      setTimeout(() => setSaveStatus(null), 4000);
     }
   };
 
