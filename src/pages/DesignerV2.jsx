@@ -284,17 +284,38 @@ const DesignerV2 = () => {
     // coordinate entry's image_url (correct dimensions for the coord
     // math). Degraded fallback (no coordinates available at all) is the
     // catalogue thumb — render but skip the print-area rectangle.
-    const imageUrl =
+    const rawImageUrl =
       colourCoord?.image_url ||
       selectedColour?.images?.[0] ||
       selectedColour?.plainImages?.[0] ||
       product.images?.[0]?.url ||
       null;
 
-    if (!imageUrl) {
+    if (!rawImageUrl) {
       console.warn('[DesignerV2] no image available for current product/colour');
       return;
     }
+
+    // URL-encode (preserves any pre-existing %XX, encodes raw spaces).
+    // Laltex's pac/ URLs contain literal spaces — Fabric 5.3's
+    // loadImage path has been reported to silently drop those without
+    // encoding. The browser's <img src> auto-encodes; Fabric's internal
+    // path is less forgiving.
+    const imageUrl = encodeURI(rawImageUrl);
+
+    // Diagnostic trace — surfaces the resolved image URL + coord entry.
+    // If the canvas stays blank, paste this from devtools.
+    console.log('[DesignerV2] effect run', {
+      position: activePosition.name,
+      colour: selectedColour?.name,
+      coordsLen: allCoords.length,
+      colourCoord: colourCoord ? {
+        colour: colourCoord.colour,
+        image_url: colourCoord.image_url,
+      } : null,
+      rawImageUrl,
+      imageUrl,
+    });
 
     // Token guards against effect re-runs racing each other (Strict
     // Mode, rapid colour clicks). A stale callback bails out without
@@ -312,12 +333,19 @@ const DesignerV2 = () => {
     fabric.Image.fromURL(
       imageUrl,
       (img) => {
-        if (myToken !== imageLoadTokenRef.current) return; // stale
-        if (!canvasReadyRef.current) return;
-        if (!img || !img.width) {
-          console.warn('[DesignerV2] image failed to load:', imageUrl);
+        if (myToken !== imageLoadTokenRef.current) {
+          console.log('[DesignerV2] image load callback stale, bailing', { imageUrl });
           return;
         }
+        if (!canvasReadyRef.current) {
+          console.log('[DesignerV2] canvas not ready in callback, bailing', { imageUrl });
+          return;
+        }
+        if (!img || !img.width) {
+          console.warn('[DesignerV2] image failed to load (img null or width=0):', { imageUrl, img });
+          return;
+        }
+        console.log('[DesignerV2] image loaded OK', { imageUrl, w: img.width, h: img.height });
 
         // Native dimensions of the source — translateLaltexCoord scales
         // print-area rect from this space onto canvas space.
