@@ -2888,3 +2888,100 @@ on the direct path with the `encodeURI` space-encoding workaround.
 - **Do NOT remove the export-failure toast in DesignerV2.** It is
   the safety net for any image source that isn't routed through
   the proxy (regressions, new sources added without thinking).
+
+---
+
+## 40. `user_designs` SCHEMA — v1 vs v2 PRODUCT REFERENCE COLUMNS
+
+`user_designs` supports both Designer-v1 (PGifts Direct catalogue
+products) and DesignerV2 (Laltex supplier products). The live schema
+has 17 columns; the product-reference columns split by designer
+version as follows:
+
+| Column | Type | Used by | Notes |
+|---|---|---|---|
+| `product_id` | uuid | v1 | FK to `catalog_products.id`. NULL for v2 rows |
+| `product_key` | text | v1 | Convenience slug ref. NULL for v2 rows |
+| `supplier_product_code` | text | v2 | Added 2026-05-12 ([migration](../supabase/migrations/20260512_user_designs_supplier_product_code.sql)). References `supplier_products.supplier_product_code` (e.g. `'MG0192'`). NULL for v1 rows |
+| `design_data` | jsonb | both | Fabric serialisation, user objects only (chrome stripped by `captureUserCanvasJSON`) |
+| `color_code`, `color_name` | text | both | American spelling — NOT `colour_code` / `colour_name` |
+| `print_area` | text | both | Position name (e.g. `"Wrap"`, `"Front"`, `"Back"`). DesignerV2 used to call this `view_name` in its save payload — that was a bug, fixed 2026-05-13 |
+| `user_id` / `session_id` | uuid / text | both | Auth + guest path. Exactly one of the two should be populated per row |
+| `version`, `parent_design_id`, `status` | int / uuid / text | both | Used by v1's revision tracking. v2 leaves them at default |
+| `thumbnail_url` | text | both | Canvas PNG snapshot for the My Designs gallery |
+| `id`, `created_at`, `updated_at` | uuid / timestamptz | both | Server-managed |
+
+**Confirmed live via `information_schema.columns` probe on 2026-05-13.**
+Run `node scripts/probe-user-designs-schema.js` to refresh if the
+schema is ever uncertain.
+
+### 40.1 Columns that DO NOT EXIST on `user_designs`
+
+Despite occasional references in stale comments, none of the
+following are columns on this table:
+
+- `product_template_id` — exists on OTHER tables (`product_template_variants`, `print_areas`, etc.) but NOT on `user_designs`
+- `variant_id` — same: exists on `product_template_variants` and similar, NOT on `user_designs`
+- `view_name` — exists on `product_template_variants` and `print_areas`, NOT on `user_designs`. The equivalent column on `user_designs` is `print_area`
+
+PostgREST validates writes against its schema cache; an INSERT or
+UPDATE that includes any of these column names returns
+`PGRST204 "Could not find the 'X' column of 'user_designs' in the schema cache"`
+and the entire write fails. Setting them to `null` does not help —
+the validation runs on the keys, not the values.
+
+The session 7 migration ([20260512](../supabase/migrations/20260512_user_designs_supplier_product_code.sql))
+contains comments that imply `product_template_id` is an existing
+v1 column on `user_designs`. **That is incorrect.** Refer to this
+section, not to those comments. v1 has always written `product_id`
++ `product_key` to `user_designs`, never `product_template_id` —
+verifiable in [`supabaseService.js` `saveUserDesign`](../src/services/supabaseService.js).
+
+### 40.2 Round-trip smoke test
+
+[`scripts/smoke-test-designer-v2-save.js`](../scripts/smoke-test-designer-v2-save.js)
+inserts a real `user_designs` row using the exact payload shape
+DesignerV2 sends, reads it back, deletes it, then runs a
+negative-control insert with the OLD (broken) payload to confirm
+the schema would still reject it. Run after any change to
+DesignerV2's save code:
+
+```
+node scripts/smoke-test-designer-v2-save.js
+```
+
+Uses `SUPABASE_SERVICE_ROLE_KEY` (bypasses RLS) and writes via
+PostgREST so it exercises the same code path the React client uses.
+
+### 40.3 Invariants — DO NOT BREAK
+
+- **Do NOT re-introduce `product_template_id`, `variant_id`, or
+  `view_name` to any `user_designs` write payload.** These are not
+  columns on this table; the write will fail with PGRST204.
+- **Do NOT mix v1 and v2 product references on the same row.** A
+  row should have EITHER `product_id` / `product_key` populated
+  (v1) OR `supplier_product_code` populated (v2), not both. The
+  schema doesn't enforce this; convention does.
+- **Do NOT add new columns to the save payload without verifying
+  they exist via the schema probe.** PostgREST's schema cache is
+  the source of truth; stale code comments are not.
+- **Do NOT remove the smoke test's negative-control.** It's the
+  only thing that proves the original bug couldn't silently come
+  back if someone re-edits the payload incorrectly.
+
+### 40.4 Process lesson (session 8 follow-up)
+
+This bug shipped because session 7's verification spec said
+"save round-trip works" but no one actually clicked Save during
+the visual verification rounds — the rendering bugs at the time
+were blocking everything else. The save error only surfaced once
+the rendering was fixed and a real user (Dave) could interact
+with the full flow.
+
+**Rule going forward:** any PR that includes user-input handlers
+(save, submit, upload, delete) must verify at least one
+round-trip per handler before claiming verified. CLI tests don't
+exercise UI buttons. CLAUDE.md §34 (browser-rendered features
+require human visual verification) extends naturally to
+write-path handlers: PR verification must execute each handler
+end-to-end, not just confirm the UI mounts and the build passes.

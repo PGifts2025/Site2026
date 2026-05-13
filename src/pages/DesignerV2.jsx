@@ -26,12 +26,13 @@
  *      defer canvas.loadFromJSON until print-area overlay is ready
  *      (race guard from CLAUDE.md §8.1)
  *
- * Save / load:
+ * Save / load (column reference — see CLAUDE.md §40 for the full schema):
  *   - user_designs.design_data: JSONB (Fabric serialisation, user
  *     objects only — chrome is excluded by captureUserCanvasJSON)
- *   - user_designs.supplier_product_code: text (new column added in
- *     migration 20260512). Replaces product_template_id for v2 rows.
- *   - user_designs.view_name: position name (e.g. "Wrap", "Front")
+ *   - user_designs.supplier_product_code: text (added migration 20260512).
+ *     v2's product reference. v1 designs leave this NULL and use
+ *     product_id / product_key instead.
+ *   - user_designs.print_area: text — position name (e.g. "Wrap", "Front")
  *   - user_designs.user_id OR session_id: existing v1 contract
  */
 
@@ -311,9 +312,9 @@ const DesignerV2 = () => {
         }
         setCurrentDesignId(design.id);
         setDesignName(design.design_name || '');
-        if (design.view_name) {
+        if (design.print_area) {
           const idx = (product.printDetails?.positions || [])
-            .findIndex((p) => p.name === design.view_name);
+            .findIndex((p) => p.name === design.print_area);
           if (idx >= 0) setActivePositionIdx(idx);
         }
         if (design.design_data) {
@@ -669,20 +670,21 @@ const DesignerV2 = () => {
     try {
       const designJSON = captureUserCanvasJSON(canvas);
       const thumbnail = captureCanvasThumbnail(canvas);
+      // Column names verified against the live user_designs schema
+      // (CLAUDE.md §40). v2 rows reference the product via
+      // supplier_product_code; product_id / product_key (v1 references)
+      // are left NULL. The legacy product_template_id / variant_id
+      // columns DO NOT exist on this table — do not re-add them.
       const row = {
         user_id: user.id,
         session_id: null,
         design_name: designName.trim(),
         supplier_product_code: product.code,
-        view_name: activePosition?.name || null,
+        print_area: activePosition?.name || null,
         color_code: selectedColour?.code || null,
         color_name: selectedColour?.name || null,
         design_data: designJSON,
         thumbnail_url: thumbnail,
-        product_key: product.code,
-        // Legacy v1 columns left null — v2 keys off supplier_product_code.
-        product_template_id: null,
-        variant_id: null,
       };
 
       let saved;
@@ -1154,7 +1156,7 @@ const DesignerV2 = () => {
                       </div>
                     )}
                     <div className="text-sm font-medium truncate">{d.design_name}</div>
-                    <div className="text-xs text-gray-500">{d.view_name || ''}</div>
+                    <div className="text-xs text-gray-500">{d.print_area || ''}</div>
                   </button>
                 ))}
               </div>
