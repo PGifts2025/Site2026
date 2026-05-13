@@ -41,7 +41,7 @@
 // eslint-disable-next-line no-console
 console.log('[DESIGNERV2-FILE-LOADED]', new Date().toISOString());
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { fabric } from 'fabric';
 import {
@@ -99,6 +99,7 @@ const DesignerV2 = () => {
 
   // -------- Refs --------
   const canvasRef = useRef(null);
+  const fabricCanvasRef = useRef(null); // holds the Fabric.Canvas wrapper
   const canvasReadyRef = useRef(false);
   const designLoadedRef = useRef(false);
   // Guards image loads against React Strict Mode double-mounts.
@@ -176,19 +177,42 @@ const DesignerV2 = () => {
   }, [productCode, navigate]);
 
   // ---------------------------------------------------------------------
-  // 2. Init Fabric canvas (one-shot per mount)
+  // 2. Init Fabric canvas — via a callback ref so init fires when the
+  //    <canvas> element actually attaches to the DOM, NOT on first
+  //    render-commit.
+  //
+  //    Why this matters: the early-return guards above (loading,
+  //    loadError) skip rendering the <canvas> element until product
+  //    data arrives. A useEffect with [] deps fires once on first
+  //    mount-commit, when canvasRef.current is still null — it then
+  //    bails and never runs again, even after the canvas element
+  //    later attaches. Callback refs don't have that timing trap.
   // ---------------------------------------------------------------------
-  useEffect(() => {
-    if (!canvasRef.current) return;
-    let fabricCanvas;
+  const handleCanvasRef = useCallback((canvasEl) => {
+    // Element detaching → dispose Fabric wrapper, reset readiness.
+    if (!canvasEl) {
+      canvasReadyRef.current = false;
+      if (fabricCanvasRef.current) {
+        try { fabricCanvasRef.current.dispose(); } catch {}
+        fabricCanvasRef.current = null;
+        setCanvas(null);
+      }
+      canvasRef.current = null;
+      return;
+    }
+
+    // Element attaching. Strict Mode may attach twice; guard.
+    canvasRef.current = canvasEl;
+    if (fabricCanvasRef.current) return;
+
     try {
-      fabricCanvas = new fabric.Canvas(canvasRef.current, {
+      const fabricCanvas = new fabric.Canvas(canvasEl, {
         width: CANVAS_SIZE,
         height: CANVAS_SIZE,
-        backgroundColor: '#f8f9fa',
+        backgroundColor: '#ffffff',
         selection: true,
       });
-      setCanvas(fabricCanvas);
+      fabricCanvasRef.current = fabricCanvas;
       canvasReadyRef.current = true;
       console.log('[DesignerV2] canvas ready');
 
@@ -198,14 +222,13 @@ const DesignerV2 = () => {
       fabricCanvas.on('selection:created', handleSelection);
       fabricCanvas.on('selection:updated', handleSelection);
       fabricCanvas.on('selection:cleared', () => setSelectedObject(null));
+
+      // Push into state LAST so downstream effects (image load,
+      // race-guard) see a fully-initialised canvas.
+      setCanvas(fabricCanvas);
     } catch (err) {
       console.error('[DesignerV2] canvas init failed:', err);
     }
-
-    return () => {
-      canvasReadyRef.current = false;
-      try { fabricCanvas?.dispose(); } catch {}
-    };
   }, []);
 
   // ---------------------------------------------------------------------
@@ -377,9 +400,16 @@ const DesignerV2 = () => {
           .filter((o) => o.id === TEMPLATE_IMAGE_ID || o.id === PRINT_AREA_OVERLAY_ID)
           .forEach((o) => canvas.remove(o));
 
+        // Explicit origin — Fabric 5.3 defaults to 'left'/'top' but be
+        // defensive: any inherited or future-default drift would shift
+        // the image relative to its left/top coords. Pinning these
+        // means natW*scale and natH*scale are the rendered dimensions
+        // starting from (left, top).
         img.set({
           id: TEMPLATE_IMAGE_ID,
           name: TEMPLATE_IMAGE_ID,
+          originX: 'left',
+          originY: 'top',
           left: (CANVAS_SIZE - natW * scale) / 2,
           top: (CANVAS_SIZE - natH * scale) / 2,
           scaleX: scale,
@@ -388,6 +418,15 @@ const DesignerV2 = () => {
           evented: false,
           hoverCursor: 'default',
           excludeFromExport: false,
+        });
+        // Extra diagnostic — log the actual placed geometry so any
+        // off-centre symptom is reproducible from the console.
+        console.log('[DesignerV2] image placed', {
+          natW, natH, scale,
+          left: (CANVAS_SIZE - natW * scale) / 2,
+          top: (CANVAS_SIZE - natH * scale) / 2,
+          renderedW: natW * scale,
+          renderedH: natH * scale,
         });
         canvas.add(img);
         canvas.sendToBack(img);
@@ -403,6 +442,8 @@ const DesignerV2 = () => {
           const rect = new fabric.Rect({
             id: PRINT_AREA_OVERLAY_ID,
             name: PRINT_AREA_OVERLAY_ID,
+            originX: 'left',
+            originY: 'top',
             left: t.x,
             top: t.y,
             width: t.width,
@@ -415,6 +456,9 @@ const DesignerV2 = () => {
             evented: false,
             hoverCursor: 'default',
             excludeFromExport: true,
+          });
+          console.log('[DesignerV2] print rect placed', {
+            left: t.x, top: t.y, width: t.width, height: t.height, scale: t.scale,
           });
           canvas.add(rect);
         }
@@ -788,17 +832,22 @@ const DesignerV2 = () => {
             )}
           </aside>
 
-          {/* MIDDLE: canvas */}
+          {/* MIDDLE: canvas. Card is capped at the 800px canvas size
+              and centred in its column via mx-auto — wider than that
+              would overlap the right-hand tools column at common
+              breakpoints. The canvas itself uses display:block +
+              maxWidth:100% + height:auto so the drawing buffer stays
+              800×800 while the rendered element scales down with the
+              card when the column is narrower than 800px (no grey
+              side-bars, no overflow). */}
           <main className="lg:col-span-6 w-full">
-            <div className="bg-white rounded-2xl shadow-lg border border-gray-200/50 p-4">
-              <div className="flex items-center justify-center bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl overflow-hidden">
-                <canvas
-                  ref={canvasRef}
-                  width={CANVAS_SIZE}
-                  height={CANVAS_SIZE}
-                  style={{ maxWidth: '100%', maxHeight: '80vh' }}
-                />
-              </div>
+            <div className="bg-white rounded-2xl shadow-lg border border-gray-200/50 p-3 max-w-[800px] mx-auto">
+              <canvas
+                ref={handleCanvasRef}
+                width={CANVAS_SIZE}
+                height={CANVAS_SIZE}
+                style={{ display: 'block', maxWidth: '100%', height: 'auto' }}
+              />
               {saveStatus && (
                 <div className={`mt-3 text-center text-sm font-medium ${
                   saveStatus === 'saved' ? 'text-green-600' :
