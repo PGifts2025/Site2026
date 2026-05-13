@@ -77,6 +77,29 @@ const CANVAS_SIZE = 800;
 const TEMPLATE_IMAGE_ID = 'template-image';
 const PRINT_AREA_OVERLAY_ID = 'printAreaOverlay';
 
+// Hosts whose images must be loaded via /api/proxy-image so the canvas
+// stays un-tainted on Fabric draw. The proxy adds CORS headers; without
+// that, canvas.toDataURL() throws SecurityError on PNG/PDF export.
+// Mirrors the server-side ALLOWED_HOSTS in api/proxy-image.js — CLAUDE.md §39.
+const PROXIED_IMAGE_HOSTS = new Set([
+  'laltex-extranet.co.uk',
+]);
+
+function resolveImageUrl(rawUrl) {
+  try {
+    const parsed = new URL(rawUrl, window.location.origin);
+    if (PROXIED_IMAGE_HOSTS.has(parsed.hostname.toLowerCase())) {
+      return {
+        url: `/api/proxy-image?url=${encodeURIComponent(rawUrl)}`,
+        crossOrigin: 'anonymous',
+      };
+    }
+  } catch {
+    // Fall through to raw passthrough.
+  }
+  return { url: encodeURI(rawUrl), crossOrigin: undefined };
+}
+
 const DesignerV2 = () => {
   const { productCode } = useParams();
   const [searchParams] = useSearchParams();
@@ -419,12 +442,10 @@ const DesignerV2 = () => {
       return;
     }
 
-    // URL-encode (preserves any pre-existing %XX, encodes raw spaces).
-    // Laltex's pac/ URLs contain literal spaces — Fabric 5.3's
-    // loadImage path has been reported to silently drop those without
-    // encoding. The browser's <img src> auto-encodes; Fabric's internal
-    // path is less forgiving.
-    const imageUrl = encodeURI(rawImageUrl);
+    // Route third-party supplier URLs through /api/proxy-image so the
+    // canvas stays un-tainted (CLAUDE.md §39). Non-proxied URLs fall
+    // back to encodeURI for the raw-space workaround (CLAUDE.md §35).
+    const { url: imageUrl, crossOrigin } = resolveImageUrl(rawImageUrl);
 
     // Token guards against effect re-runs racing each other (Strict
     // Mode, rapid colour clicks). A stale callback bails out without
@@ -432,13 +453,6 @@ const DesignerV2 = () => {
     imageLoadTokenRef.current += 1;
     const myToken = imageLoadTokenRef.current;
 
-    // CORS note: Laltex's image server does not return
-    // Access-Control-Allow-Origin headers. We DON'T request CORS — that
-    // would make Chrome refuse the image entirely and leave the canvas
-    // blank. The canvas will be "tainted" for export purposes; PNG/PDF
-    // export of a tainted canvas throws SecurityError. exportCanvasAsPNG
-    // and exportCanvasAsPDF surface that as a friendly error rather
-    // than a stack trace; a proper image-proxy fix lands later.
     fabric.Image.fromURL(
       imageUrl,
       (img) => {
@@ -564,7 +578,7 @@ const DesignerV2 = () => {
         canvas.renderAll();
         setPrintAreasLoaded(true);
       },
-      // NO crossOrigin — see CORS note above.
+      crossOrigin ? { crossOrigin } : undefined,
     );
   }, [canvas, product, renderPosition, selectedColour, activePosition, positionsHaveDistinctRects]);
 
@@ -751,8 +765,10 @@ const DesignerV2 = () => {
         exportCanvasAsPDF(canvas, { filename, hideWatermark: true });
       }
     } catch (err) {
-      // Tainted-canvas error from cross-origin Laltex images. Surface
-      // a friendly inline message instead of letting it bubble.
+      // Defense in depth: /api/proxy-image (CLAUDE.md §39) keeps the
+      // canvas un-tainted for Laltex images, so toDataURL should not
+      // throw SecurityError on the happy path. This catch covers any
+      // future image source that gets added without proxy routing.
       console.error('[DesignerV2] export failed:', err);
       setSaveStatus({ type: 'error', message: err?.message || 'Export failed' });
       setTimeout(() => setSaveStatus(null), 4000);
