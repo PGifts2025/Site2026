@@ -2985,3 +2985,102 @@ exercise UI buttons. CLAUDE.md §34 (browser-rendered features
 require human visual verification) extends naturally to
 write-path handlers: PR verification must execute each handler
 end-to-end, not just confirm the UI mounts and the build passes.
+
+---
+
+## 41. MY DESIGNS RENDERING — v1 vs v2 DISCRIMINATION
+
+The My Designs page ([`CustomerDesigns.jsx`](../src/pages/account/CustomerDesigns.jsx))
+and any UI that lists `user_designs` rows must discriminate between
+v1 (catalog / PGifts Direct) and v2 (Laltex / supplier) designs:
+
+```js
+const isLaltexDesign = (design) => !!design?.supplier_product_code;
+```
+
+Anchored on `supplier_product_code` because v2 rows always have it
+populated and v1 rows always have it NULL (CLAUDE.md §40). The
+inverse is true for `product_key` / `product_id`. Never both, by
+convention.
+
+### 41.1 Per-flavour behaviour
+
+| Concern | v1 (catalog) | v2 (Laltex / supplier) |
+|---|---|---|
+| Product lookup | `getCatalogProductBySlug(design.product_key)` | `getSupplierProductByCode(design.supplier_product_code)` + `normaliseProduct(row, slug)` |
+| Display name | Catalog product `.name`, fall back to title-cased slug | Normalised product `.name`, fall back to the supplier code |
+| Colour swatch | Hex circle: `style={{ backgroundColor: design.color_code }}` — v1 stores hex (`#000000`) in `color_code` | Image thumbnail: find `product.colours[].code === design.color_code` then render `colour.images[0]` — Laltex stores supplier colour codes (`MG0192AM`) in `color_code`, not hex |
+| Edit URL | `/designer?design=<id>` | `/design/<supplier_product_code>?design=<id>` |
+| Add to Quote | `createQuoteFromDesign({design, user})` — clothing redirect or `quotes` insert | `navigate('/products/<code>')` — LaltexProductView's own Add-to-Quote flow takes over from there |
+| Duplicate | INSERT with `product_id` / `product_key` preserved, `supplier_product_code` omitted | INSERT with `supplier_product_code` preserved, `product_id` / `product_key` omitted |
+
+Both designer routes (`/designer` for v1, `/design/<code>` for v2)
+accept `?design=<id>` and pre-load the saved Fabric JSON via their
+existing useEffect on `searchParams.get('design')`.
+
+### 41.2 Lookup batching
+
+`CustomerDesigns.jsx` batches product lookups: after the designs
+fetch resolves, it collects unique v1 slugs and v2 codes, fires
+two `Promise.all`s in parallel, and writes the resolved products
+into a `productCache` keyed by `'v1:<slug>'` / `'v2:<code>'`. Per
+card, the render reads from the cache (or shows a fallback label
+during the brief unresolved window).
+
+The cache is additive across refreshes — duplicating a design
+appends a row but doesn't re-fetch products. If a future session
+moves this to a shared hook, the cache key prefix is load-bearing
+(don't conflate v1 and v2 in a flat map keyed by raw slug/code,
+because slugs and codes don't share a namespace and you'd lose
+the source-of-truth signal).
+
+### 41.3 Why this matters
+
+Pre-fix, My Designs was implemented before session 7 introduced v2
+designs. After v2 saves started landing (session 8 save fix), the
+Laltex cards rendered as `"Unknown Product"` (lookup keyed on
+`product_key` which is NULL for v2), the colour swatch was missing
+(rendering supplier code `MG0192AM` as a CSS hex value silently
+fails), the Edit button routed to v1's `/designer` (loading the
+design into the wrong designer), and the Duplicate handler tried
+to write four invalid columns (same bug class as §40 —
+`product_template_id`, `variant_id`, `view_name`, `is_public`).
+
+### 41.4 Duplicate handler invariants
+
+The CustomerDesigns duplicate handler ([`smoke-test-mydesigns-duplicate.js`](../scripts/smoke-test-mydesigns-duplicate.js))
+inserts only columns that exist on `user_designs` (§40). For v1
+it preserves `product_id` + `product_key`; for v2 it preserves
+`supplier_product_code`. **Never both** in the same insert.
+
+Smoke test exercises both flavours plus a negative-control insert
+with the OLD broken payload to confirm the schema would still
+reject it. Run after any change to the duplicate insert:
+
+```
+node scripts/smoke-test-mydesigns-duplicate.js
+```
+
+### 41.5 Invariants — DO NOT BREAK
+
+- **Do NOT key the lookup cache on the raw slug/code.** The cache
+  must use a `'v1:'` / `'v2:'` prefix because slugs and codes
+  don't share a namespace and the source-of-truth signal would be
+  lost.
+- **Do NOT render `design.color_code` as a CSS hex for v2
+  designs.** Laltex's `color_code` is a supplier code like
+  `MG0192AM`, not `#XXXXXX`. The browser silently swallows the
+  invalid value and the swatch goes blank.
+- **Do NOT call `createQuoteFromDesign` for v2 designs.** The
+  service requires `design.product_key` (line 36 of
+  [`quoteService.js`](../src/services/quoteService.js)) and
+  returns `"Invalid design — missing product_key"` for v2 rows.
+  Route them to `/products/<code>` instead so the customer can
+  configure quantity via LaltexProductView's Add-to-Quote flow.
+- **Do NOT write `product_template_id`, `variant_id`,
+  `view_name`, or `is_public` to `user_designs` from any
+  handler.** None of these are columns on this table; PostgREST
+  rejects the whole INSERT with PGRST204 (CLAUDE.md §40.1).
+- **Do NOT remove the `?design=<id>` query-param consumer in
+  either Designer.** It's the only resume-saved-design path
+  used by both flavours of the Edit button.
