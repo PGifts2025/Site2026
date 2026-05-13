@@ -833,20 +833,21 @@ const DesignerV2 = () => {
           </aside>
 
           {/* MIDDLE: canvas. Card is capped at the 800px canvas size
-              and centred in its column via mx-auto — wider than that
-              would overlap the right-hand tools column at common
-              breakpoints. The canvas itself uses display:block +
-              maxWidth:100% + height:auto so the drawing buffer stays
-              800×800 while the rendered element scales down with the
-              card when the column is narrower than 800px (no grey
-              side-bars, no overflow). */}
+              and centred in its column via mx-auto. No padding on the
+              card: Fabric.Canvas wraps the <canvas> in its own
+              .canvas-container div and sets inline width/height on
+              both, which override any maxWidth:100% declared from
+              JSX. Padding here would push the Fabric-controlled
+              wrapper outside the card's rounded corners. The canvas
+              sits flush against the card border instead — overflow
+              is the wallpaper-clip rounded-2xl gives us. */}
           <main className="lg:col-span-6 w-full">
-            <div className="bg-white rounded-2xl shadow-lg border border-gray-200/50 p-3 max-w-[800px] mx-auto">
+            <div className="bg-white rounded-2xl shadow-lg border border-gray-200/50 max-w-[800px] mx-auto overflow-hidden">
               <canvas
                 ref={handleCanvasRef}
                 width={CANVAS_SIZE}
                 height={CANVAS_SIZE}
-                style={{ display: 'block', maxWidth: '100%', height: 'auto' }}
+                style={{ display: 'block' }}
               />
               {saveStatus && (
                 <div className={`mt-3 text-center text-sm font-medium ${
