@@ -114,6 +114,10 @@ const DesignerV2 = () => {
   const designLoadedRef = useRef(false);
   // Guards image loads against React Strict Mode double-mounts.
   const imageLoadTokenRef = useRef(0);
+  // Tracks the design id we've already fetched for restore so the
+  // pre-load effect doesn't issue a second getUserDesign call when
+  // `product` is re-derived (CLAUDE.md §40.5).
+  const designFetchedRef = useRef(null);
 
   // -------- Data state --------
   const [product, setProduct] = useState(null);
@@ -300,18 +304,30 @@ const DesignerV2 = () => {
     if (!canvas || !product) return;
     const designId = searchParams.get('design');
     if (!designId) return;
+    // Guard against double-fetch: the effect deps include `product`,
+    // which is re-derived as a new object reference on parent
+    // re-renders. Without this guard, getUserDesign fires twice for
+    // the same id on a single mount (observed in production logs).
+    if (designFetchedRef.current === designId) return;
+    designFetchedRef.current = designId;
     let cancelled = false;
     (async () => {
       try {
         const design = await getUserDesign(designId);
         if (cancelled || !design) return;
-        // Safety: only consume the saved design if it matches THIS product.
         if (design.supplier_product_code && design.supplier_product_code !== product.code) {
           console.warn('[DesignerV2] saved design is for a different product, skipping pre-load');
           return;
         }
         setCurrentDesignId(design.id);
         setDesignName(design.design_name || '');
+        // Restore colour from the saved supplier code (e.g. "MG0192CY")
+        // BEFORE the image-load effect fires, so it loads the cup in
+        // the correct colour rather than the default.
+        if (design.color_code) {
+          const match = (product.colours || []).find((c) => c.code === design.color_code);
+          if (match) setSelectedColourId(match.id);
+        }
         if (design.print_area) {
           const idx = (product.printDetails?.positions || [])
             .findIndex((p) => p.name === design.print_area);
@@ -321,6 +337,8 @@ const DesignerV2 = () => {
           setPendingDesignData(design.design_data);
         }
       } catch (err) {
+        // Allow a retry on real failure (network, etc).
+        designFetchedRef.current = null;
         console.error('[DesignerV2] saved-design pre-load failed:', err);
       }
     })();

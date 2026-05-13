@@ -2986,6 +2986,82 @@ require human visual verification) extends naturally to
 write-path handlers: PR verification must execute each handler
 end-to-end, not just confirm the UI mounts and the build passes.
 
+### 40.5 Design restore semantics for DesignerV2
+
+`design_data` (jsonb) stores ONLY user-added objects (text, uploaded
+images, shapes). The product background — Laltex's cup / apron /
+bottle photo — is NEVER persisted in `design_data`. It's regenerable
+from `(supplier_product_code, color_code, print_area)` at restore
+time and embedding it would balloon the JSONB column for every
+saved design.
+
+When restoring via `?design=<id>`, DesignerV2's pre-load effect MUST:
+
+1. **Set state from the saved row BEFORE the cup-image effect runs.**
+   - `selectedColourId` ← `(product.colours).find(c => c.code === design.color_code).id`
+   - `activePositionIdx` ← `(product.printDetails.positions).findIndex(p => p.name === design.print_area)`
+   - Skipping the colour set causes the cup to load in the default
+     (first) colour while the design overlay claims a different one.
+2. **Stash `design.design_data` in `pendingDesignData` state.** The
+   image-load effect signals readiness by setting `printAreasLoaded`.
+3. **Layer user objects on top via `fabric.util.enlivenObjects`,
+   NOT `canvas.loadFromJSON`.** `loadFromJSON` clears the entire
+   canvas (objects + background colour) before applying the JSON,
+   which wipes the cup-as-canvas-object that DesignerV2 places via
+   `canvas.add(img); canvas.sendToBack(img)`. Enliven deserialises
+   the saved objects in isolation; `canvas.add()` adds them above
+   existing chrome without touching the cup.
+
+The implementation lives in
+[`useDeferredDesignApply`](../src/utils/fabricCanvasManager.js) (one
+caller today: DesignerV2). The hook clears `pendingDesignData` before
+enlivening so re-runs are inert without a fresh `setPendingDesignData`
+call.
+
+#### 40.5.1 Double-fetch guard
+
+The pre-load effect's deps are `[canvas, product, searchParams]`.
+`product` is re-derived on parent re-renders and gets a fresh object
+reference even when the underlying data is unchanged, which fires
+the effect twice in quick succession. Without a guard, two
+`getUserDesign(designId)` calls land for the same id on a single
+mount (observed in production logs, 2026-05-13).
+
+DesignerV2 protects with a ref:
+
+```js
+const designFetchedRef = useRef(null);
+
+useEffect(() => {
+  if (!canvas || !product) return;
+  const designId = searchParams.get('design');
+  if (!designId) return;
+  if (designFetchedRef.current === designId) return;
+  designFetchedRef.current = designId;
+  // ...
+}, [canvas, product, searchParams]);
+```
+
+On caught error, reset to `null` so a refresh retries cleanly. The
+guard is by-id, so navigating to a different `?design=` value
+correctly fires a fresh fetch.
+
+#### 40.5.2 Invariants — DO NOT BREAK
+
+- **Do NOT call `canvas.loadFromJSON` from DesignerV2's restore
+  path.** It wipes the cup. Use `fabric.util.enlivenObjects` +
+  `canvas.add()` instead.
+- **Do NOT apply `design_data.background` to the canvas.** Chrome
+  owns the background; the saved JSON's background field is a
+  Fabric serialisation artefact and must be ignored on v2 restore.
+- **Do NOT persist the product background image to `design_data`.**
+  It's regenerable from `(supplier_product_code, color_code,
+  print_area)` and embedding it would bloat every saved row by
+  multiple hundred KB.
+- **Do NOT remove the `designFetchedRef` guard.** The effect's
+  dependency on `product` (a derived state value with a fresh
+  reference per re-render) fires it more than once otherwise.
+
 ---
 
 ## 41. MY DESIGNS RENDERING — v1 vs v2 DISCRIMINATION

@@ -12,6 +12,7 @@
  */
 
 import { useEffect } from 'react';
+import { fabric } from 'fabric';
 import jsPDF from 'jspdf';
 
 /**
@@ -204,11 +205,24 @@ export function exportCanvasAsPDF(canvas, { filename, hideWatermark = true, mult
  *   1. When a saved design arrives, write its `design_data` into the
  *      `pendingDesignData` STATE (not a ref — state guarantees a
  *      re-render).
- *   2. Defer canvas.loadFromJSON until ALL of: canvas ready, print
- *      areas loaded, print-areas array non-empty.
+ *   2. Defer the apply until ALL of: canvas ready, print areas loaded,
+ *      print-areas array non-empty.
  *   3. Once applied, set `designLoadedRef.current = true` so other
  *      effects (template reload, colour change) skip their reset paths
  *      and the restored objects survive.
+ *
+ * Why enlivenObjects, not canvas.loadFromJSON (CLAUDE.md §40.5):
+ *   `design_data` deliberately stores ONLY user-added objects (text,
+ *   uploaded images, etc.). The product background (cup, apron, etc.)
+ *   is regenerable from supplier_product_code + color_code + print_area
+ *   and is added to the canvas as a regular OBJECT by the image-load
+ *   effect — not as canvas.backgroundImage. `canvas.loadFromJSON`
+ *   clears the entire canvas (objects + background colour) then re-adds
+ *   only what's in the JSON, which wipes the product background. We
+ *   instead use `fabric.util.enlivenObjects` to deserialise user
+ *   objects in isolation, then `canvas.add()` them on top of the
+ *   existing chrome. Background colour from the JSON is intentionally
+ *   ignored — chrome owns it.
  *
  * Caller passes its existing state setters / refs in — this hook
  * doesn't own them, it just wires the deferred-apply effect.
@@ -241,20 +255,32 @@ export function useDeferredDesignApply({
     const designData = pendingDesignData;
     setPendingDesignData(null);
 
+    const parsed =
+      typeof designData === 'string' ? safeParse(designData) : designData;
+    const sourceObjects = Array.isArray(parsed?.objects) ? parsed.objects : [];
+    if (sourceObjects.length === 0) {
+      if (designLoadedRef) designLoadedRef.current = true;
+      onApplied?.('success');
+      return;
+    }
+
     try {
-      canvas.loadFromJSON(designData, () => {
+      fabric.util.enlivenObjects(sourceObjects, (enlivened) => {
+        enlivened.forEach((obj) => canvas.add(obj));
         canvas.renderAll();
         if (designLoadedRef) designLoadedRef.current = true;
         onApplied?.('success');
       });
     } catch (err) {
-      // Surface but don't propagate — the deferred apply should never
-      // crash the page. The design just stays unrestored.
-      console.error('[fabricCanvasManager] loadFromJSON failed:', err?.message);
+      console.error('[fabricCanvasManager] enlivenObjects failed:', err?.message);
       onApplied?.('error');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingDesignData, printAreasLoaded, printAreas, canvas]);
+}
+
+function safeParse(s) {
+  try { return JSON.parse(s); } catch { return null; }
 }
 
 /**
