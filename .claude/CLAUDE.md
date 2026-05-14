@@ -3464,3 +3464,183 @@ node scripts/smoke-test-position-picker-roundtrip.js
 - **Do NOT add `print_class` to a write payload without confirming
   it's in the normalised shape.** It's surfaced via
   `printDetails.positionGroups[].rows[].printClass`; nowhere else.
+
+---
+
+## 44. STRIPE PAYMENT — DUAL-PATH ORDER CREATION (session 9)
+
+Order rows are now created via **two independent paths**, both calling
+the same `confirm_payment_atomic` RPC with the same idempotency anchor.
+Either path on its own is sufficient to create the order; both running
+concurrently is safe.
+
+| Path | File | Trigger |
+|---|---|---|
+| Redirect (foreground) | `supabase/functions/confirm-payment/index.ts` | Browser hits `/order-confirmation?session_id=...` after Stripe's `success_url` |
+| Webhook (background) | `supabase/functions/stripe-webhook/index.ts` | Stripe sends `checkout.session.completed` server-to-server |
+
+### 44.1 Why two paths
+
+Pre-session-9, only the redirect existed. If the customer closed the
+tab between Stripe charging the card and hitting the redirect URL,
+the money was taken but no order row was created — money in, no
+fulfilment. The webhook backup closes this gap. See the Task 4
+investigation report for the race-condition analysis that drove the
+design (committed alongside this section).
+
+### 44.2 Order idempotency contract — `orders.stripe_session_id`
+
+Both paths call `confirm_payment_atomic(p_quote_id, p_stripe_session_id, ...)`
+(CLAUDE.md §17.7). The RPC's concurrency safety rests on three pieces:
+
+1. **`SELECT ... FOR UPDATE` on the quote row** — serialises concurrent
+   invocations. The second invocation blocks at this line until the
+   first commits, then proceeds and finds the order already created.
+2. **`SELECT id FROM orders WHERE stripe_session_id = $1`** —
+   short-circuit idempotency check. Returns the existing order id on
+   retries / concurrent runs without re-inserting.
+3. **`UNIQUE INDEX orders_stripe_session_id_uniq`** (added in
+   [20260514_confirmation_email_idempotency.sql](../supabase/migrations/20260514_confirmation_email_idempotency.sql)) —
+   DB-level enforcement of what the RPC maintains. Belt-and-braces:
+   if a future change ever drops the `FOR UPDATE` clause or the
+   idempotency SELECT, the index ensures double-insertion fails fast.
+
+### 44.3 Email idempotency contract — `orders.confirmation_email_sent_at`
+
+The RPC dedupes the order row but **not** the email send. The redirect
+and webhook paths both attempt to call `sendOrderConfirmation`
+([_shared/sendOrderConfirmation.ts](../supabase/functions/_shared/sendOrderConfirmation.ts)).
+That helper enforces single-delivery via two layers:
+
+1. **CAS UPDATE** on `orders.confirmation_email_sent_at`:
+   ```ts
+   await supabase
+     .from('orders')
+     .update({ confirmation_email_sent_at: new Date().toISOString() })
+     .eq('id', orderId)
+     .is('confirmation_email_sent_at', null)  // CAS predicate
+     .select('id');
+   ```
+   If the other path stamped the column between our SELECT and our
+   UPDATE, `.select()` returns zero rows and we log
+   `stamped_by_other_path` instead of double-claiming success.
+2. **Resend `Idempotency-Key: order-<orderId>-confirmation`** —
+   end-to-end dedup at SMTP layer. Both paths send the same key, so
+   even in the narrow window where both pass the SELECT before either
+   lands the UPDATE, Resend itself deduplicates the actual delivery.
+
+The column is timestamped only on Resend HTTP 2xx, so a transient
+Resend outage on path A still leaves path B (or a future manual retry)
+free to try again.
+
+### 44.4 "Both paths attempt" rationale
+
+Asymmetric strategies (only webhook sends, redirect skips email — or
+the reverse) leave a gap: if the chosen path's Resend call fails, no
+email goes out and there is no retry. With both paths attempting,
+either is a free retry of the other. The CAS + Idempotency-Key combo
+prevents duplicate delivery.
+
+### 44.5 Stripe event subscription
+
+The webhook subscribes to **`checkout.session.completed`** and that
+event only. Reasons:
+
+- `metadata.quote_id` is attached to the Checkout Session, not the
+  PaymentIntent. `payment_intent.succeeded` would lose the metadata
+  path.
+- The event payload shape matches `GET /v1/checkout/sessions/{id}`
+  line for line: `payment_status`, `amount_total`, `payment_intent`,
+  `metadata.quote_id`, `customer_email`. Webhook code can call the
+  RPC with the same parameter set the redirect path uses.
+
+The webhook is defensive against unsubscribed events: any other
+`event.type` is logged and acknowledged with 200, so broadening the
+Dashboard subscription later does not require a code change.
+
+### 44.6 Stripe response code contract
+
+The function's HTTP status is the only signal Stripe acts on:
+
+| Scenario | Status | Stripe behaviour |
+|---|---|---|
+| Signature verification fails | 400 | No retry — wrong signature is permanent |
+| Missing required env var | 500 | Retries — fixable by setting the secret |
+| Unhandled event type | 200 | No retry — acknowledged |
+| Session unpaid / no quote_id | 200 | No retry — not our concern |
+| RPC error | 500 | Retries with exponential backoff for ~3 days |
+| Success | 200 | No retry |
+| Email-send failure inside helper | 200 (parent returns 200) | No retry — email is best-effort, order already created |
+
+Email-send failure does NOT propagate to a 500 response. Triggering
+Stripe to retry the whole webhook (and thus the RPC) just to re-attempt
+the email would waste retries on a non-causal problem.
+
+### 44.7 Signature verification — Deno specifics
+
+`stripe.webhooks.constructEventAsync(rawBody, signature, secret)` is
+**required** in Deno. The synchronous `constructEvent` uses Node's
+`crypto` module which is absent in Deno; the async variant uses Web
+Crypto's HMAC primitive.
+
+The raw body must be read via `await req.text()` **before** any JSON
+parsing. Stripe's signature is computed over the exact bytes it sent;
+re-stringifying parsed JSON (different whitespace, key ordering) will
+break the HMAC.
+
+### 44.8 Deploy contract — `--no-verify-jwt`
+
+The webhook function MUST be deployed with `--no-verify-jwt`:
+```
+supabase functions deploy stripe-webhook --project-ref <ref> --no-verify-jwt
+```
+Stripe does not send a Supabase JWT. Signature verification (inside
+the function) is the security boundary instead. Forgetting the flag
+means Supabase rejects every event with 401 before the handler runs.
+
+### 44.9 Files
+
+| File | Purpose |
+|---|---|
+| `supabase/migrations/20260514_confirmation_email_idempotency.sql` | `confirmation_email_sent_at` column + `orders_stripe_session_id_uniq` index |
+| `supabase/functions/_shared/sendOrderConfirmation.ts` | Shared email helper — CAS + Idempotency-Key |
+| `supabase/functions/stripe-webhook/index.ts` | Webhook handler |
+| `supabase/functions/confirm-payment/index.ts` | Refactored — delegates email to the shared helper |
+
+### 44.10 Invariants — DO NOT BREAK
+
+- **Do NOT remove the `FOR UPDATE` clause in `confirm_payment_atomic`.**
+  It serialises concurrent redirect + webhook invocations. Without it
+  the SELECT-then-INSERT idempotency check is a TOCTOU.
+- **Do NOT drop the `orders_stripe_session_id_uniq` index.** It is the
+  DB-level guarantor if the RPC ever regresses.
+- **Do NOT call Resend without the `Idempotency-Key` header.** The
+  CAS column is the primary guard; the header covers the narrow race
+  window where both paths pass the SELECT before either lands the
+  UPDATE. Removing it makes that window observable to customers.
+- **Do NOT stamp `confirmation_email_sent_at` on Resend non-2xx.**
+  A failed send must remain retryable. The current helper only stamps
+  on success.
+- **Do NOT return 2xx from `stripe-webhook` on RPC failure.** Stripe's
+  retry is the recovery mechanism for transient DB failures. Swallowing
+  the error with 200 turns a recoverable hiccup into a paid-but-no-order
+  ghost (the exact bug the redirect-only flow had before this session).
+- **Do NOT return 5xx from `stripe-webhook` for non-recoverable cases**
+  (signature failure, malformed payload, unhandled event types). Stripe
+  would retry for 3 days on something that will never succeed. Use 400
+  or 200 as appropriate.
+- **Do NOT call `req.json()` before `req.text()` in `stripe-webhook`.**
+  The body stream is consumed on first read; signature verification
+  needs the raw bytes Stripe sent.
+- **Do NOT deploy `stripe-webhook` without `--no-verify-jwt`.** Stripe
+  is not a Supabase client; verifying a JWT it doesn't send means every
+  event 401s before the function code runs.
+- **Do NOT edit the email body, subject, or `renderEmail` inputs
+  inside `sendOrderConfirmation.ts` without a separate PR.** The
+  session-9 lift was deliberately byte-identical to the previous
+  inline implementation; any change to those strings is a content
+  change and belongs in its own review.
+- **Do NOT add new callers of `sendOrderConfirmation` without
+  understanding the CAS contract.** Two callers exist today (redirect
+  + webhook). Any third caller must also tolerate `stamped_by_other_path`
+  as a non-error outcome.

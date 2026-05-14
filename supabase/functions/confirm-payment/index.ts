@@ -1,5 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { renderEmail } from "../_shared/emailShell.ts";
+import { sendOrderConfirmation } from "../_shared/sendOrderConfirmation.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -99,180 +99,20 @@ Deno.serve(async (req: Request) => {
     }
 
     // Payment is confirmed and the order exists. Send a confirmation email
-    // via Resend. This step is best-effort — any failure here is logged but
-    // must NEVER cause a non-2xx response, because the transaction has
-    // already committed. The whole block is wrapped in its own try/catch.
+    // via the shared helper. This step is best-effort — any failure must
+    // NEVER cause a non-2xx response, because the RPC transaction has
+    // already committed. The helper itself never throws, but wrap defensively
+    // so any future change cannot break that contract for this caller.
     try {
-      const resendApiKey = Deno.env.get("RESEND_API_KEY");
-      if (!resendApiKey) {
-        console.warn("[confirm-payment] RESEND_API_KEY not set — skipping email send");
-      } else {
-        const { data: orderRow, error: orderFetchError } = await supabase
-          .from("orders")
-          .select("id, order_number, total_amount, customer_id")
-          .eq("id", orderId)
-          .single();
-
-        if (orderFetchError || !orderRow) {
-          console.warn(
-            "[confirm-payment] Could not load order for email:",
-            orderFetchError,
-          );
-        } else {
-          // Resolve recipient: Stripe session first (already in scope, no DB
-          // round-trip), fallback to auth.users via admin API.
-          let customerEmail: string | null = stripeSession.customer_email || null;
-          if (!customerEmail && orderRow.customer_id) {
-            const { data: userData } = await supabase.auth.admin.getUserById(
-              orderRow.customer_id,
-            );
-            customerEmail = userData?.user?.email || null;
-          }
-
-          if (!customerEmail) {
-            console.warn(
-              "[confirm-payment] No customer email available — skipping email send for order",
-              orderRow.order_number,
-            );
-          } else {
-            const { data: itemsData } = await supabase
-              .from("order_items")
-              .select("product_name, color, quantity, line_total, print_areas")
-              .eq("order_id", orderId);
-            const items = itemsData || [];
-
-            const totalAmount = Number(orderRow.total_amount) || 0;
-
-            // Format the v2 jsonb print_areas shape for the email body.
-            // Falls back to plain string for legacy entries (CLAUDE.md §43).
-            const formatPrintSelections = (pa: any): string[] => {
-              if (!pa) return [];
-              if (typeof pa === "string") return [pa];
-              if (pa && Array.isArray(pa.selections)) {
-                return pa.selections.map((s: any) => {
-                  const parts: string[] = [];
-                  if (s.position) parts.push(s.position);
-                  const detail: string[] = [];
-                  if (s.type) detail.push(s.type);
-                  if (s.area) detail.push(s.area);
-                  if (s.num_colours) detail.push(`${s.num_colours} colour${s.num_colours > 1 ? "s" : ""}`);
-                  return detail.length > 0
-                    ? `${parts.join("")} — ${detail.join(", ")}`
-                    : parts.join("");
-                });
-              }
-              return [];
-            };
-
-            const itemsHtml = items.map((item: any) => {
-              const selections = formatPrintSelections(item.print_areas);
-              const selectionsHtml = selections.length > 0
-                ? `<div style="margin-top:4px; font-size:12px; color:#6b7280; line-height:1.5;">${selections
-                    .map((s) => `<div>${s}</div>`)
-                    .join("")}</div>`
-                : "";
-              return `
-      <tr>
-        <td style="padding: 8px 0; border-bottom: 1px solid #f0f0f0;">
-          ${item.product_name}${item.color ? ` (${item.color})` : ""}${selectionsHtml}
-        </td>
-        <td style="text-align: right; padding: 8px 0; border-bottom: 1px solid #f0f0f0; vertical-align: top;">${item.quantity}</td>
-        <td style="text-align: right; padding: 8px 0; border-bottom: 1px solid #f0f0f0; vertical-align: top;">£${Number(item.line_total).toFixed(2)}</td>
-      </tr>`;
-            }).join("");
-
-            const itemsText = items
-              .map((item: any) => {
-                const selections = formatPrintSelections(item.print_areas);
-                const head = `- ${item.product_name}${item.color ? ` (${item.color})` : ""} × ${item.quantity} — £${Number(item.line_total).toFixed(2)}`;
-                if (selections.length === 0) return head;
-                return [head, ...selections.map((s) => `    ${s}`)].join("\n");
-              })
-              .join("\n");
-
-            // Body content only — the shared shell in _shared/emailShell.ts
-            // wraps this with the PG header, CTA button, and footer. Indented
-            // to match the 14-space column inside the shell's content <td>.
-            const bodyHtml = `              <p style="margin:0 0 16px 0; font-size:15px; line-height:1.6; color:#1a1a1a;">We've received your payment for order <strong>${orderRow.order_number}</strong>. Here's a quick summary:</p>
-              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; border-collapse:collapse; margin:16px 0 20px 0;">
-                <thead>
-                  <tr style="border-bottom:2px solid #e5e5e5;">
-                    <th align="left" style="text-align:left; padding:8px 0; font-size:14px;">Item</th>
-                    <th align="right" style="text-align:right; padding:8px 0; font-size:14px;">Qty</th>
-                    <th align="right" style="text-align:right; padding:8px 0; font-size:14px;">Total</th>
-                  </tr>
-                </thead>
-                <tbody>${itemsHtml}
-                </tbody>
-                <tfoot>
-                  <tr style="font-weight:bold;">
-                    <td colspan="2" style="padding:12px 0 8px 0; font-size:14px;">Total paid</td>
-                    <td align="right" style="text-align:right; padding:12px 0 8px 0; font-size:14px;">£${totalAmount.toFixed(2)}</td>
-                  </tr>
-                </tfoot>
-              </table>
-              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:20px 0 8px 0;">
-                <tr>
-                  <td style="background:#f5f5f5; border-radius:8px; padding:20px;">
-                    <h2 style="margin:0 0 10px 0; font-size:18px; font-weight:700; color:#1a1a1a;">Next step — upload your artwork</h2>
-                    <p style="margin:0; font-size:14px; line-height:1.6; color:#1a1a1a;">To move your order into production we need your artwork files — logo, design, or any print-ready artwork.</p>
-                  </td>
-                </tr>
-              </table>`;
-
-            const bodyText = `We've received your payment for order ${orderRow.order_number}. Here's a quick summary:
-
-${itemsText}
-
-Total paid: £${totalAmount.toFixed(2)}
-
-Next step — upload your artwork
-To move your order into production we need your artwork files — logo, design, or any print-ready artwork.`;
-
-            const { html, text } = renderEmail({
-              preheader: `Order ${orderRow.order_number} confirmed — £${totalAmount.toFixed(2)} paid. Upload your artwork next.`,
-              heading: "Thanks for your order",
-              bodyHtml,
-              bodyText,
-              ctaLabel: "Upload artwork",
-              ctaUrl: "https://promo-gifts-co.uk/account/orders",
-              supportEmail: "orders@promo-gifts.co",
-            });
-
-            const resendRes = await fetch("https://api.resend.com/emails", {
-              method: "POST",
-              headers: {
-                Authorization: `Bearer ${resendApiKey}`,
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify({
-                from: "PGifts <orders@promo-gifts.co>",
-                to: [customerEmail],
-                reply_to: "orders@promo-gifts.co",
-                subject: `Order confirmation — ${orderRow.order_number}`,
-                html,
-                text,
-              }),
-            });
-
-            if (!resendRes.ok) {
-              const detail = await resendRes.text();
-              console.error(
-                "[confirm-payment] Resend send failed:",
-                resendRes.status,
-                detail,
-              );
-            } else {
-              console.log(
-                "[confirm-payment] Confirmation email sent to",
-                customerEmail,
-                "for order",
-                orderRow.order_number,
-              );
-            }
-          }
-        }
-      }
+      const emailResult = await sendOrderConfirmation(
+        supabase,
+        orderId,
+        stripeSession,
+      );
+      console.log(
+        "[confirm-payment] sendOrderConfirmation result:",
+        emailResult,
+      );
     } catch (emailErr) {
       console.error("[confirm-payment] Email step failed (non-fatal):", emailErr);
     }

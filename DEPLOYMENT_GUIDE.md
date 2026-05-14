@@ -112,15 +112,27 @@ After your first deployment, update the `VITE_API_URL` environment variable:
 
 ## Step 7: Configure Stripe Webhook (Production)
 
-1. Go to https://dashboard.stripe.com/webhooks
+The webhook is a Supabase Edge Function, NOT a Vercel route. Earlier
+versions of this guide pointed at `your-app.vercel.app/api/webhook` —
+that route does not exist; ignore any historic references.
+
+1. Go to https://dashboard.stripe.com/webhooks (or `/test/webhooks` for test mode)
 2. Click "Add endpoint"
-3. Enter your webhook URL: `https://your-app.vercel.app/api/webhook`
+3. Enter your webhook URL: `https://cbcevjhvgmxrxeeyldza.supabase.co/functions/v1/stripe-webhook`
 4. Select events to listen to:
    - `checkout.session.completed`
-   - `payment_intent.succeeded`
-   - `payment_intent.payment_failed`
-5. Copy the webhook signing secret
-6. Add it to Vercel environment variables as `STRIPE_WEBHOOK_SECRET`
+5. Copy the webhook signing secret (starts with `whsec_`)
+6. Add it to Supabase secrets (NOT Vercel — the function runs on Supabase):
+   ```
+   supabase secrets set STRIPE_WEBHOOK_SECRET=whsec_... --project-ref cbcevjhvgmxrxeeyldza
+   ```
+7. Re-deploy the webhook function so the new secret takes effect:
+   ```
+   supabase functions deploy stripe-webhook --project-ref cbcevjhvgmxrxeeyldza --no-verify-jwt
+   ```
+   The `--no-verify-jwt` flag is required: Stripe does not send a Supabase
+   JWT, so signature verification (inside the function) is the security
+   boundary instead.
 
 ## Serverless Function Endpoints
 
