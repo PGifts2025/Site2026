@@ -168,11 +168,14 @@ Stripe provides test cards that simulate different scenarios:
 - Handles payment success/error callbacks
 
 **stripe-server.js:**
-- Express API server
+- Express API server (legacy — local dev only)
 - `/api/create-payment-intent` - Creates PaymentIntent
 - `/api/payment-intent/:id` - Retrieves payment status
-- `/api/webhook` - Webhook endpoint (for production)
 - Runs on port 3001
+- NOTE: The webhook handler in this file is dead code. Production Stripe
+  webhooks are served by the Supabase Edge Function at
+  `https://cbcevjhvgmxrxeeyldza.supabase.co/functions/v1/stripe-webhook`
+  (see CLAUDE.md §44).
 
 ## Security Best Practices
 
@@ -255,10 +258,16 @@ npm run preview
    - Get live keys from https://dashboard.stripe.com/apikeys
    - Update `.env` with live keys (pk_live_ and sk_live_)
 
-2. **Set Up Webhooks:**
-   - Configure webhook endpoint in Stripe Dashboard
-   - Add STRIPE_WEBHOOK_SECRET to `.env`
-   - Update webhook handler in `stripe-server.js`
+2. **Set Up Webhooks (Supabase Edge Function):**
+   - Register endpoint in Stripe Dashboard at
+     `https://cbcevjhvgmxrxeeyldza.supabase.co/functions/v1/stripe-webhook`
+   - Subscribe to `checkout.session.completed`
+   - Copy the signing secret (`whsec_...`) into Supabase secrets:
+     `supabase secrets set STRIPE_WEBHOOK_SECRET=whsec_... --project-ref cbcevjhvgmxrxeeyldza`
+   - Re-deploy the webhook function so the secret is picked up:
+     `supabase functions deploy stripe-webhook --project-ref cbcevjhvgmxrxeeyldza --no-verify-jwt`
+   - Webhook function source: `supabase/functions/stripe-webhook/index.ts`
+   - The legacy `/api/webhook` handler in `server/stripe-server.cjs` is dead code; do not configure Stripe to point at it.
 
 3. **Update CORS:**
    - Configure production domain in `stripe-server.js`
