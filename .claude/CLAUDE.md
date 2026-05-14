@@ -3275,3 +3275,192 @@ need playwright-driven canvas probes there, mirroring this pattern.
   see Designer.jsx:1111 and 2662 for the early-returns. Do not
   fold them into the apparel/2D path "for consistency" — they have
   their own correctness model.
+
+---
+
+## 43. LALTEX MULTI-ROW POSITION MODEL (session 9)
+
+Laltex's `print_details` is a flat array where **each row is a
+(print_position × print_area × print_type) tuple** with its own
+`print_price` tier table, `print_area_coordinates`, and `print_class`.
+A single product can carry multiple rows under the same
+`print_position` — AF0001 has 8 rows under `Front Chest` (5 sizes ×
+multiple methods, prices £1.65–£7.70 per unit).
+
+813 of 1182 Laltex products (~69%) have at least one multi-row position.
+
+### 43.1 Normalised shape — `printDetails.positionGroups[]`
+
+`productCatalogService.normaliseProduct` groups raw rows by unique
+`print_position` and surfaces a `printDetails.positionGroups[]` array
+to consumers:
+
+```js
+printDetails: {
+  positionGroups: [
+    {
+      name: 'Front Chest',
+      defaultRowIndex: 0,
+      rows: [
+        {
+          area: '90x50mm',
+          printType: 'Embroidery Small (90x50)',
+          printClass: 'FEMB040',          // stable Laltex method code
+          defaultOption: true,
+          tiers: [...],
+          coordinates: [...],
+          setupCharge, extraColourSetupCharge, leadTime, maxColours, notes,
+        },
+        /* more rows for Front Chest */
+      ],
+    },
+    /* more unique positions */
+  ],
+},
+```
+
+The old `printDetails.positions[]` flat array was dropped atomically;
+only `positionGroups` exists post-session-9.
+
+`buildPositionGroups()` is internal to `productCatalogService.js`.
+Don't expose it; consumers should always read from
+`product.printDetails.positionGroups`.
+
+### 43.2 LaltexProductView — per-position pick + size/method dropdown
+
+State is keyed by **unique position name**:
+
+```js
+positionPicks = {
+  'Front Chest':  { enabled: true,  selectedRowIndex: 0, colours: 1 },
+  'Back':         { enabled: false, selectedRowIndex: 0, colours: 1 },
+};
+```
+
+UI: one tick box per position; size/method dropdown rendered **inline
+under the row** when the position has more than one row. Switching the
+dropdown calls `setSelectedRowIndex(name, idx)`, which resets
+`colours` to the new row's first available colour count (different
+methods support different colour counts).
+
+`positionContributions` iterates groups, picks the active row inside
+each, and computes the unit contribution using `tier.allInUnitPrice`
+(setup baked at sync time) with a manual baking fallback.
+
+### 43.3 DesignerV2 — grouped tabs + separate Size & Method panel
+
+State:
+
+```js
+const [activePositionName, setActivePositionName] = useState(null);
+const [activeRowByPosition, setActiveRowByPosition] = useState({});
+```
+
+Position tabs render one button per unique position. The active tab
+shows a sub-label with the **currently selected row's size + method**
+(e.g. `90x50mm — Embroidery Small (90x50)`). The size/method dropdown
+lives in a **separate panel below the position tabs** (not inline)
+so the canvas print rect updates visibly when the row changes.
+
+The dropdown is hidden when the active position has only one row.
+
+### 43.4 Persistence — composite `print_area` text
+
+DesignerV2's save writes a pipe-delimited composite:
+
+```
+${position}|${area}|${printClass}    e.g.  "Front Chest|200x300mm|FTRAN05"
+```
+
+Pipe was chosen because no Laltex `print_position` or `print_area`
+value contains a pipe character in the 1182-row corpus (verified
+2026-05-14). If a future row breaks this assumption, the helpers
+fail safely (extra segments are ignored on restore).
+
+Restore (DesignerV2 pre-load effect) parses on `|`:
+
+| Input | Behaviour |
+|---|---|
+| `"Position|Size|Class"` | Match position → match (area, class) tuple → fall back to (class only) → fall back to default row |
+| `"Position"` (legacy plain text) | Match position → use defaultRowIndex; log `console.warn` flagged as "pre-multi-row v2 design" |
+| `"Position|Size|Class|extra|stuff"` | First three segments parsed; extras ignored. Tolerant by design |
+| `null` / unset | Use default position + default row |
+
+Helper module: [`src/utils/printAreaFormat.js`](../src/utils/printAreaFormat.js)
+exports `prettyPrintArea(value)` for display and `parsePrintArea(value)`
+for structured access. Used by DesignerV2's My Designs sidebar and
+CustomerDesigns' card subtitle.
+
+### 43.5 Quote / order persistence — structured jsonb
+
+`quote_items.print_areas` (jsonb column) carries a structured payload
+in place of the old free-form summary string:
+
+```jsonc
+{
+  "selections": [
+    {
+      "position": "Front Chest",
+      "area": "200x300mm",
+      "type": "Transfer Print (300x200)",
+      "class": "FTRAN05",
+      "num_colours": 2,
+      "unit_price": 2.20
+    }
+  ]
+}
+```
+
+Envelope-wrapped so future top-level fields (`total_setup_charge`,
+`version`, etc.) can be added without re-shaping consumers.
+`confirm_payment_atomic` copies jsonb-to-jsonb to `order_items.print_areas`
+unchanged.
+
+The confirm-payment Edge Function reads `print_areas` and renders one
+sub-line per selection beneath each item in the order-confirmation
+email. Preview at
+[`supabase/email-templates/previews/confirm-payment-after.html`](../supabase/email-templates/previews/confirm-payment-after.html).
+
+CustomerQuotes' chip-rendering [`formatPrintAreas()`](../src/pages/account/CustomerQuotes.jsx)
+handles three shapes: the new jsonb envelope, the legacy free-form
+string, and null. Forward-compatible across the rollout window.
+
+### 43.6 Persistence smoke test
+
+[`scripts/smoke-test-position-picker-roundtrip.js`](../scripts/smoke-test-position-picker-roundtrip.js)
+inserts via PostgREST (service-role bypasses RLS, mirrors session 8
+pattern) and verifies:
+
+1. `user_designs.print_area` composite text round-trips byte-identical
+2. `quote_items.print_areas` jsonb round-trips field-by-field
+3. Malformed composite (extra pipes) still lands cleanly
+
+Run after any change to the picker, persistence, or `normaliseProduct`:
+
+```
+node scripts/smoke-test-position-picker-roundtrip.js
+```
+
+### 43.7 Invariants — DO NOT BREAK
+
+- **Do NOT re-introduce `printDetails.positions[]`.** It was
+  removed atomically; consumers read `positionGroups[]` only. A
+  dual-shape window is a footgun.
+- **Do NOT key `positionPicks` (LaltexProductView) by row index.**
+  Position-name keys are the new contract. Row index would couple
+  state to source array ordering, which is fragile to feed
+  reshuffling.
+- **Do NOT write a string into `quote_items.print_areas` from the
+  Laltex / DesignerV2 path.** Use the `{selections: [...]}`
+  envelope. Legacy strings still render via the backward-compat
+  branch in `formatPrintAreas`, but new writes must be structured.
+- **Do NOT change the pipe delimiter** in `print_area` composite
+  without auditing the corpus. Pipe was chosen because no Laltex
+  field contains it; another delimiter could collide.
+- **Do NOT skip the legacy plain-text fallback in DesignerV2's
+  restore.** Designs saved between session 7 (single-row save) and
+  session 9 (multi-row save) carry plain position names. Those
+  must still restore — they're real customer work-in-progress.
+- **Do NOT add `print_class` to a write payload without confirming
+  it's in the normalised shape.** It's surfaced via
+  `printDetails.positionGroups[].rows[].printClass`; nowhere else.

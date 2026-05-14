@@ -1107,11 +1107,12 @@ export const normaliseProduct = (row, supplier) => {
         isPopular: !!t.is_popular,
       })),
       pricingModel: row.pricing_model || 'flat',
-      // PGifts Direct doesn't surface positions[] today — Configure & Quote
-      // reads catalog_print_pricing directly via the existing rendering
-      // path. Leaving this empty makes the data shape consistent but the
-      // page only consumes it for the 'laltex' branch.
-      printDetails: { positions: [] },
+      // PGifts Direct doesn't surface positionGroups today — Configure
+      // & Quote reads catalog_print_pricing directly via the existing
+      // rendering path. Leaving this empty keeps the data shape
+      // consistent across suppliers; only the 'laltex' branch consumes
+      // positionGroups.
+      printDetails: { positionGroups: [] },
       features: (row.features || []).map((f) => f.feature_text),
       specifications: row.specifications?.specifications || {},
       designerProduct: row.designer_product || null,
@@ -1183,30 +1184,13 @@ export const normaliseProduct = (row, supplier) => {
       note: t.note || null,
     })),
     pricingModel,
+    // Grouped by unique print_position. Each `print_details[i]` row is
+    // a (position × size × print_type) tuple with its own price tiers
+    // and coordinates; LaltexProductView + DesignerV2 use the grouped
+    // shape to render one tick box per position with a size/method
+    // dropdown inside. Session 9 — CLAUDE.md §43.
     printDetails: {
-      positions: printDetailsArr.map((pd) => ({
-        name: pd.print_position || pd.PrintPosition || 'Print',
-        area: pd.print_area || pd.PrintArea || null,
-        leadTime: pd.lead_time || pd.LeadTime || null,
-        maxColours: pd.max_colours || pd.MaxColours || null,
-        printType: pd.print_type || pd.PrintType || null,
-        setupCharge: pd.setup_charge ?? null,
-        setupChargeRaw: pd.setup_charge_raw || pd.SetupCharge || null,
-        extraColourSetupCharge: pd.extra_colour_setup_charge ?? null,
-        defaultOption: !!(pd.default_print_option ?? pd.DefaultPrintOption),
-        notes: pd.notes || pd.Notes || null,
-        tiers: (pd.print_price || pd.PrintPrice || []).map((t) => ({
-          numColours: t.num_colours ?? t.NumColours,
-          numPosition: t.num_position ?? t.NumPosition,
-          minQty: t.min_qty ?? t.MinQuantity,
-          maxQty: t.max_qty ?? t.MaxQuantity,
-          price: t.price ?? t.Price,
-          isPoa: !!(t.is_poa ?? false),
-          colourVariant: t.colour_variant ?? t.ColourVariant ?? null,
-          allInUnitPrice: t.all_in_unit_price ?? null,
-        })),
-        coordinates: pd.print_area_coordinates || pd.PrintAreaCoordinates || [],
-      })),
+      positionGroups: buildPositionGroups(printDetailsArr),
     },
     features: [],
     specifications: {},
@@ -1214,6 +1198,63 @@ export const normaliseProduct = (row, supplier) => {
     raw: row,
   };
 };
+
+/**
+ * Group flat `print_details[]` rows by unique `print_position` so the
+ * UI can render one tick box per position with a size/method dropdown
+ * for the sibling rows that share that position.
+ *
+ * Each group exposes:
+ *   - name: unique position name
+ *   - rows: parallel array of (size × method × price-tier × coords)
+ *           variants; preserves source order
+ *   - defaultRowIndex: index into `rows` of the row flagged
+ *           `default_print_option: true`, else 0
+ *
+ * `printClass` is carried through here for the first time — it's the
+ * stable Laltex SKU code (FEMB040, FTRAN05, etc.) used to identify
+ * which row a saved design refers to. CLAUDE.md §43.
+ */
+function buildPositionGroups(printDetailsArr) {
+  const arr = Array.isArray(printDetailsArr) ? printDetailsArr : [];
+  const byName = new Map();
+  const order = [];
+  for (const pd of arr) {
+    const name = pd.print_position || pd.PrintPosition || 'Print';
+    if (!byName.has(name)) {
+      byName.set(name, []);
+      order.push(name);
+    }
+    byName.get(name).push({
+      area: pd.print_area || pd.PrintArea || null,
+      printType: pd.print_type || pd.PrintType || null,
+      printClass: pd.print_class || pd.PrintClass || null,
+      leadTime: pd.lead_time || pd.LeadTime || null,
+      maxColours: pd.max_colours || pd.MaxColours || null,
+      setupCharge: pd.setup_charge ?? null,
+      setupChargeRaw: pd.setup_charge_raw || pd.SetupCharge || null,
+      extraColourSetupCharge: pd.extra_colour_setup_charge ?? null,
+      defaultOption: !!(pd.default_print_option ?? pd.DefaultPrintOption),
+      notes: pd.notes || pd.Notes || null,
+      tiers: (pd.print_price || pd.PrintPrice || []).map((t) => ({
+        numColours: t.num_colours ?? t.NumColours,
+        numPosition: t.num_position ?? t.NumPosition,
+        minQty: t.min_qty ?? t.MinQuantity,
+        maxQty: t.max_qty ?? t.MaxQuantity,
+        price: t.price ?? t.Price,
+        isPoa: !!(t.is_poa ?? false),
+        colourVariant: t.colour_variant ?? t.ColourVariant ?? null,
+        allInUnitPrice: t.all_in_unit_price ?? null,
+      })),
+      coordinates: pd.print_area_coordinates || pd.PrintAreaCoordinates || [],
+    });
+  }
+  return order.map((name) => {
+    const rows = byName.get(name);
+    const defaultRowIndex = Math.max(0, rows.findIndex((r) => r.defaultOption));
+    return { name, rows, defaultRowIndex };
+  });
+}
 
 /**
  * Get print pricing data for a product

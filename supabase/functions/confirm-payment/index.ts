@@ -137,23 +137,57 @@ Deno.serve(async (req: Request) => {
           } else {
             const { data: itemsData } = await supabase
               .from("order_items")
-              .select("product_name, color, quantity, line_total")
+              .select("product_name, color, quantity, line_total, print_areas")
               .eq("order_id", orderId);
             const items = itemsData || [];
 
             const totalAmount = Number(orderRow.total_amount) || 0;
 
-            const itemsHtml = items.map((item: any) => `
+            // Format the v2 jsonb print_areas shape for the email body.
+            // Falls back to plain string for legacy entries (CLAUDE.md §43).
+            const formatPrintSelections = (pa: any): string[] => {
+              if (!pa) return [];
+              if (typeof pa === "string") return [pa];
+              if (pa && Array.isArray(pa.selections)) {
+                return pa.selections.map((s: any) => {
+                  const parts: string[] = [];
+                  if (s.position) parts.push(s.position);
+                  const detail: string[] = [];
+                  if (s.type) detail.push(s.type);
+                  if (s.area) detail.push(s.area);
+                  if (s.num_colours) detail.push(`${s.num_colours} colour${s.num_colours > 1 ? "s" : ""}`);
+                  return detail.length > 0
+                    ? `${parts.join("")} — ${detail.join(", ")}`
+                    : parts.join("");
+                });
+              }
+              return [];
+            };
+
+            const itemsHtml = items.map((item: any) => {
+              const selections = formatPrintSelections(item.print_areas);
+              const selectionsHtml = selections.length > 0
+                ? `<div style="margin-top:4px; font-size:12px; color:#6b7280; line-height:1.5;">${selections
+                    .map((s) => `<div>${s}</div>`)
+                    .join("")}</div>`
+                : "";
+              return `
       <tr>
-        <td style="padding: 8px 0; border-bottom: 1px solid #f0f0f0;">${item.product_name}${item.color ? ` (${item.color})` : ""}</td>
-        <td style="text-align: right; padding: 8px 0; border-bottom: 1px solid #f0f0f0;">${item.quantity}</td>
-        <td style="text-align: right; padding: 8px 0; border-bottom: 1px solid #f0f0f0;">£${Number(item.line_total).toFixed(2)}</td>
-      </tr>`).join("");
+        <td style="padding: 8px 0; border-bottom: 1px solid #f0f0f0;">
+          ${item.product_name}${item.color ? ` (${item.color})` : ""}${selectionsHtml}
+        </td>
+        <td style="text-align: right; padding: 8px 0; border-bottom: 1px solid #f0f0f0; vertical-align: top;">${item.quantity}</td>
+        <td style="text-align: right; padding: 8px 0; border-bottom: 1px solid #f0f0f0; vertical-align: top;">£${Number(item.line_total).toFixed(2)}</td>
+      </tr>`;
+            }).join("");
 
             const itemsText = items
-              .map((item: any) =>
-                `- ${item.product_name}${item.color ? ` (${item.color})` : ""} × ${item.quantity} — £${Number(item.line_total).toFixed(2)}`
-              )
+              .map((item: any) => {
+                const selections = formatPrintSelections(item.print_areas);
+                const head = `- ${item.product_name}${item.color ? ` (${item.color})` : ""} × ${item.quantity} — £${Number(item.line_total).toFixed(2)}`;
+                if (selections.length === 0) return head;
+                return [head, ...selections.map((s) => `    ${s}`)].join("\n");
+              })
               .join("\n");
 
             // Body content only — the shared shell in _shared/emailShell.ts
