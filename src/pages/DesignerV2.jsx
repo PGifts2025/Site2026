@@ -70,6 +70,7 @@ import {
   useDeferredDesignApply,
   isUserObject,
 } from '../utils/fabricCanvasManager';
+import { prettyPrintArea } from '../utils/printAreaFormat';
 
 const CANVAS_SIZE = 800;
 
@@ -130,7 +131,12 @@ const DesignerV2 = () => {
   const [printAreasLoaded, setPrintAreasLoaded] = useState(false);
 
   // -------- Selection state --------
-  const [activePositionIdx, setActivePositionIdx] = useState(0);
+  // Position picks are keyed by unique position name (post-§43 model).
+  // `activePositionName` is which tab is currently shown on the canvas;
+  // `activeRowByPosition` records which sibling row inside each
+  // position is the customer's choice (size/method).
+  const [activePositionName, setActivePositionName] = useState(null);
+  const [activeRowByPosition, setActiveRowByPosition] = useState({});
   const [selectedColourId, setSelectedColourId] = useState(null);
 
   // -------- Preview-quality state --------
@@ -288,9 +294,19 @@ const DesignerV2 = () => {
   // ---------------------------------------------------------------------
   useEffect(() => {
     if (!product) return;
-    const positions = product.printDetails?.positions || [];
-    const defaultIdx = Math.max(0, positions.findIndex((p) => p.defaultOption));
-    setActivePositionIdx(defaultIdx);
+    const groups = product.printDetails?.positionGroups || [];
+    // Default position = group containing the default-flagged row;
+    // fallback to the first group. Default row inside each group =
+    // group.defaultRowIndex.
+    const defaultGroupIdx = Math.max(
+      0,
+      groups.findIndex((g) => (g.rows || []).some((r) => r.defaultOption)),
+    );
+    const defaultGroup = groups[defaultGroupIdx];
+    setActivePositionName(defaultGroup?.name || null);
+    const initialRowByPosition = {};
+    groups.forEach((g) => { initialRowByPosition[g.name] = g.defaultRowIndex; });
+    setActiveRowByPosition(initialRowByPosition);
     const firstColour = product.colours?.[0]?.id || null;
     setSelectedColourId(firstColour);
   }, [product]);
@@ -329,9 +345,41 @@ const DesignerV2 = () => {
           if (match) setSelectedColourId(match.id);
         }
         if (design.print_area) {
-          const idx = (product.printDetails?.positions || [])
-            .findIndex((p) => p.name === design.print_area);
-          if (idx >= 0) setActivePositionIdx(idx);
+          // Composite format from session 9: "Position|Size|PrintClass".
+          // Legacy v2 saves stored just the position name — match on
+          // name only and warn so we can monitor leftover rows post-merge.
+          const parts = String(design.print_area).split('|');
+          const [savedName, savedArea, savedClass] = parts;
+          const groups = product.printDetails?.positionGroups || [];
+          const group = groups.find((g) => g.name === savedName);
+          if (group) {
+            setActivePositionName(group.name);
+            if (parts.length === 1) {
+              console.warn(
+                `[DesignerV2] Restoring pre-multi-row v2 design — defaulting to first row for position "${savedName}"`,
+              );
+              setActiveRowByPosition((prev) => ({
+                ...prev,
+                [group.name]: group.defaultRowIndex,
+              }));
+            } else {
+              // Exact-tuple match first (area + class), then loose match
+              // by class alone, then fall back to default row.
+              let rowIdx = group.rows.findIndex(
+                (r) => r.area === savedArea && r.printClass === savedClass,
+              );
+              if (rowIdx < 0 && savedClass) {
+                rowIdx = group.rows.findIndex((r) => r.printClass === savedClass);
+              }
+              if (rowIdx < 0) {
+                console.warn(
+                  `[DesignerV2] Saved design row (${savedArea}, ${savedClass}) not found for "${savedName}"; falling back to default`,
+                );
+                rowIdx = group.defaultRowIndex;
+              }
+              setActiveRowByPosition((prev) => ({ ...prev, [group.name]: rowIdx }));
+            }
+          }
         }
         if (design.design_data) {
           setPendingDesignData(design.design_data);
@@ -347,26 +395,39 @@ const DesignerV2 = () => {
 
   // ---------------------------------------------------------------------
   // 5. Render template image + print-area overlay whenever
-  //    (position, colour, canvas) changes.
+  //    (position, row, colour, canvas) changes.
   // ---------------------------------------------------------------------
-  const activePosition = useMemo(() => {
-    if (!product) return null;
-    const positions = product.printDetails?.positions || [];
-    return positions[activePositionIdx] || null;
-  }, [product, activePositionIdx]);
+  // Position group currently shown on the canvas.
+  const activeGroup = useMemo(() => {
+    if (!product || !activePositionName) return null;
+    const groups = product.printDetails?.positionGroups || [];
+    return groups.find((g) => g.name === activePositionName) || null;
+  }, [product, activePositionName]);
+
+  // Selected ROW inside the active group (the (size × method) variant).
+  // This is what drives the canvas — coordinates, image, print rect.
+  const activeRow = useMemo(() => {
+    if (!activeGroup) return null;
+    const rowIdx = activeRowByPosition[activeGroup.name] ?? activeGroup.defaultRowIndex;
+    return activeGroup.rows[rowIdx] || activeGroup.rows[0] || null;
+  }, [activeGroup, activeRowByPosition]);
 
   // Fix #2 (Bug B): detect the "single rect copied across every position"
   // pattern (CLAUDE.md §37, MG0192 et al). True means the data is honest
-  // - every position carries its own distinct (x,y,w,h). False means
-  // only one of the listed positions has a faithful image+rect pairing
-  // and the rest would render the rect floating off the product.
-  // Single-position products are trivially "honest" (length<=1 → true).
+  // - rows across positions carry distinct (x,y,w,h). False means only
+  // one position has a faithful image+rect pairing and the rest would
+  // render the rect floating off the product.
   const positionsHaveDistinctRects = useMemo(() => {
-    const positions = product?.printDetails?.positions || [];
-    if (positions.length <= 1) return true;
+    const groups = product?.printDetails?.positionGroups || [];
+    if (groups.length <= 1) return true;
     const tuples = new Set();
-    for (const pos of positions) {
-      for (const coord of (pos.coordinates || [])) {
+    for (const g of groups) {
+      // Use the default row's coordinates as the position's signature —
+      // sibling rows within a group have different rects (one per size)
+      // but that's expected; the distinct-rect check is about position
+      // diversity, not size diversity.
+      const r = g.rows[g.defaultRowIndex] || g.rows[0];
+      for (const coord of (r?.coordinates || [])) {
         tuples.add(`${coord.x}|${coord.y}|${coord.width}|${coord.height}`);
       }
     }
@@ -374,39 +435,40 @@ const DesignerV2 = () => {
   }, [product]);
 
   // When positionsHaveDistinctRects is false we lock the canvas to one
-  // canonical position regardless of the user's selection. Heuristic:
+  // canonical position group regardless of the user's selection.
+  // Heuristic:
   // - Drinkware ships with a head-on "Wrap" image whose rect coords align
   //   with the visible cup body — prefer Wrap if present.
-  // - Otherwise pick the position with the most colour entries (most
-  //   field-tested / most likely to be the canonical framing).
-  const canonicalPositionIdx = useMemo(() => {
-    const positions = product?.printDetails?.positions || [];
-    if (positions.length === 0) return 0;
-    const wrapIdx = positions.findIndex((p) => p.name === 'Wrap');
-    if (wrapIdx !== -1) return wrapIdx;
-    let bestIdx = 0;
+  // - Otherwise pick the position whose default row has the most colour
+  //   coord entries (most field-tested framing).
+  const canonicalGroupName = useMemo(() => {
+    const groups = product?.printDetails?.positionGroups || [];
+    if (groups.length === 0) return null;
+    const wrap = groups.find((g) => g.name === 'Wrap');
+    if (wrap) return wrap.name;
+    let best = groups[0];
     let bestCount = -1;
-    positions.forEach((p, i) => {
-      const cnt = (p.coordinates || []).length;
-      if (cnt > bestCount) { bestCount = cnt; bestIdx = i; }
+    groups.forEach((g) => {
+      const r = g.rows[g.defaultRowIndex] || g.rows[0];
+      const cnt = (r?.coordinates || []).length;
+      if (cnt > bestCount) { bestCount = cnt; best = g; }
     });
-    return bestIdx;
+    return best?.name || null;
   }, [product]);
 
-  // The position whose image+rect actually drives the canvas. Equals
-  // activePosition for normal products; locked to canonical for the
-  // 12.6% single-rect-multi-position bucket.
+  // The row whose image+rect actually drives the canvas. Equals
+  // activeRow for normal products; locked to the canonical group's
+  // default row for the 12.6% single-rect-multi-position bucket.
   const renderPosition = useMemo(() => {
     if (!product) return null;
-    const positions = product.printDetails?.positions || [];
-    const idx = positionsHaveDistinctRects ? activePositionIdx : canonicalPositionIdx;
-    return positions[idx] || null;
-  }, [product, activePositionIdx, canonicalPositionIdx, positionsHaveDistinctRects]);
+    if (positionsHaveDistinctRects) return activeRow;
+    const groups = product.printDetails?.positionGroups || [];
+    const canonicalGroup = groups.find((g) => g.name === canonicalGroupName);
+    if (!canonicalGroup) return null;
+    return canonicalGroup.rows[canonicalGroup.defaultRowIndex] || canonicalGroup.rows[0] || null;
+  }, [product, activeRow, canonicalGroupName, positionsHaveDistinctRects]);
 
-  const canonicalPositionName = useMemo(() => {
-    const positions = product?.printDetails?.positions || [];
-    return positions[canonicalPositionIdx]?.name || null;
-  }, [product, canonicalPositionIdx]);
+  const canonicalPositionName = canonicalGroupName;
 
   const selectedColour = useMemo(() => {
     if (!product) return null;
@@ -599,7 +661,7 @@ const DesignerV2 = () => {
       },
       crossOrigin ? { crossOrigin } : undefined,
     );
-  }, [canvas, product, renderPosition, selectedColour, activePosition, positionsHaveDistinctRects]);
+  }, [canvas, product, renderPosition, selectedColour, activeRow, positionsHaveDistinctRects]);
 
   // ---------------------------------------------------------------------
   // 6. Race-condition guarded deferred-apply of saved design
@@ -693,12 +755,19 @@ const DesignerV2 = () => {
       // supplier_product_code; product_id / product_key (v1 references)
       // are left NULL. The legacy product_template_id / variant_id
       // columns DO NOT exist on this table — do not re-add them.
+      // Composite print_area: "Position|Size|PrintClass" — preserves
+      // the customer's (size × method) selection across reload.
+      // CLAUDE.md §43. Legacy plain-text format ("Front Chest") still
+      // restores via the fallback branch in the pre-load effect.
+      const printAreaComposite = activeGroup && activeRow
+        ? [activeGroup.name, activeRow.area || '', activeRow.printClass || ''].join('|')
+        : null;
       const row = {
         user_id: user.id,
         session_id: null,
         design_name: designName.trim(),
         supplier_product_code: product.code,
-        print_area: activePosition?.name || null,
+        print_area: printAreaComposite,
         color_code: selectedColour?.code || null,
         color_name: selectedColour?.name || null,
         design_data: designJSON,
@@ -857,7 +926,7 @@ const DesignerV2 = () => {
     );
   }
 
-  const positions = product.printDetails?.positions || [];
+  const positionGroups = product.printDetails?.positionGroups || [];
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-gray-100">
@@ -902,19 +971,24 @@ const DesignerV2 = () => {
         <div className="flex flex-col lg:grid lg:grid-cols-12 gap-4 lg:gap-6">
           {/* LEFT: tools + colours + positions */}
           <aside className="lg:col-span-3 w-full space-y-4">
-            {/* Position tabs */}
+            {/* Position tabs — one row per UNIQUE position. Size/method
+                dropdown for the active position is rendered in the
+                separate panel below (session 9 / §43). */}
             <div className="bg-white rounded-2xl shadow-md border border-gray-200/50 p-4">
               <h3 className="font-bold text-sm text-gray-700 mb-3">Print Position</h3>
               <div className="space-y-1.5">
-                {positions.length === 0 && (
+                {positionGroups.length === 0 && (
                   <p className="text-xs text-gray-500">
                     No print positions configured for this product.
                   </p>
                 )}
-                {positions.map((p, idx) => {
-                  const method = p.printType || 'Print';
-                  const isActive = idx === activePositionIdx;
-                  const isCanonical = idx === canonicalPositionIdx;
+                {positionGroups.map((g) => {
+                  const rowIdx = activeRowByPosition[g.name] ?? g.defaultRowIndex;
+                  const currentRow = g.rows[rowIdx] || g.rows[0];
+                  const sizeHint = currentRow?.area || null;
+                  const methodHint = currentRow?.printType || 'Print';
+                  const isActive = g.name === activePositionName;
+                  const isCanonical = g.name === canonicalGroupName;
                   // Fix #2: non-canonical tabs of a single-rect product
                   // stay clickable (the customer still records their
                   // intended print position for the quote) but are
@@ -924,20 +998,22 @@ const DesignerV2 = () => {
                     !positionsHaveDistinctRects && !isCanonical;
                   return (
                     <button
-                      key={idx}
-                      onClick={() => setActivePositionIdx(idx)}
+                      key={g.name}
+                      onClick={() => setActivePositionName(g.name)}
                       title={isMutedForPreview
-                        ? `Preview shown is the ${canonicalPositionName} view. Print on ${p.name} is still orderable.`
-                        : p.name}
+                        ? `Preview shown is the ${canonicalGroupName} view. Print on ${g.name} is still orderable.`
+                        : g.name}
                       className={`w-full text-left px-3 py-2 rounded-lg border transition-colors ${
                         isActive
                           ? 'border-blue-500 bg-blue-50/60'
                           : 'border-gray-200 hover:border-gray-300'
                       } ${isMutedForPreview ? 'opacity-60' : ''}`}
                     >
-                      <div className="text-sm font-medium text-gray-800">{p.name}</div>
+                      <div className="text-sm font-medium text-gray-800">{g.name}</div>
                       <div className="text-xs text-slate-500 truncate">
-                        {isMutedForPreview ? 'preview unavailable' : method}
+                        {isMutedForPreview
+                          ? 'preview unavailable'
+                          : (sizeHint ? `${sizeHint} — ${methodHint}` : methodHint)}
                       </div>
                     </button>
                   );
@@ -946,10 +1022,10 @@ const DesignerV2 = () => {
               {/* Fix #2 notice: surfaces when the product is in the
                   single-rect-multi-position bucket (~12.6% of Laltex
                   catalogue, mainly mugs + power banks). */}
-              {!positionsHaveDistinctRects && positions.length > 1 && (
+              {!positionsHaveDistinctRects && positionGroups.length > 1 && (
                 <div className="mt-3 p-2.5 rounded-lg bg-amber-50 border border-amber-200">
                   <p className="text-[11px] text-amber-900 leading-snug">
-                    Live preview available on <strong>{canonicalPositionName}</strong> only.
+                    Live preview available on <strong>{canonicalGroupName}</strong> only.
                     Other positions are still orderable and your design will print
                     correctly; the printer uses your chosen position when producing
                     the order.
@@ -969,6 +1045,44 @@ const DesignerV2 = () => {
                 </div>
               )}
             </div>
+
+            {/* Size / print-method dropdown for the active position.
+                Hidden when the active position has only one row.
+                Separate panel (not inline in the tab) so the canvas
+                rect updates visibly as the customer changes the size. */}
+            {activeGroup && activeGroup.rows.length > 1 && (
+              <div className="bg-white rounded-2xl shadow-md border border-gray-200/50 p-4">
+                <h3 className="font-bold text-sm text-gray-700 mb-2">
+                  Size &amp; Method
+                  <span className="text-xs text-gray-500 font-normal"> — {activeGroup.name}</span>
+                </h3>
+                <select
+                  value={activeRowByPosition[activeGroup.name] ?? activeGroup.defaultRowIndex}
+                  onChange={(e) =>
+                    setActiveRowByPosition((prev) => ({
+                      ...prev,
+                      [activeGroup.name]: parseInt(e.target.value, 10),
+                    }))
+                  }
+                  className="w-full border border-gray-300 rounded text-sm py-1.5 px-2"
+                >
+                  {activeGroup.rows.map((r, ri) => {
+                    const label = [r.printType || 'Print', r.area]
+                      .filter(Boolean)
+                      .join(' – ');
+                    return (
+                      <option key={ri} value={ri}>
+                        {label}{r.defaultOption ? ' (default)' : ''}
+                      </option>
+                    );
+                  })}
+                </select>
+                <p className="text-[11px] text-gray-500 mt-2 leading-snug">
+                  The print rectangle on the canvas updates to match
+                  your selection. Drag and resize your artwork to fit.
+                </p>
+              </div>
+            )}
 
             {/* Colour swatches (image-based — Laltex has PMS, no hex) */}
             {product.colours.length > 0 && (
@@ -1174,7 +1288,7 @@ const DesignerV2 = () => {
                       </div>
                     )}
                     <div className="text-sm font-medium truncate">{d.design_name}</div>
-                    <div className="text-xs text-gray-500">{d.print_area || ''}</div>
+                    <div className="text-xs text-gray-500">{prettyPrintArea(d.print_area)}</div>
                   </button>
                 ))}
               </div>

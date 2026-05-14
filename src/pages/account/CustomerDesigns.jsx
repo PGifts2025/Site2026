@@ -9,6 +9,7 @@ import {
   getSupplierProductByCode,
   normaliseProduct,
 } from '../../services/productCatalogService';
+import { prettyPrintArea } from '../../utils/printAreaFormat';
 
 // v1 (catalog) designs have product_key populated; v2 (Laltex /
 // supplier) designs have supplier_product_code populated. Never both,
@@ -383,7 +384,7 @@ const CustomerDesigns = ({ user }) => {
 
                   {/* Print area */}
                   {design.print_area && (
-                    <p className="text-xs text-gray-500 mb-3">{design.print_area}</p>
+                    <p className="text-xs text-gray-500 mb-3">{prettyPrintArea(design.print_area)}</p>
                   )}
 
                   {/* Last Modified */}

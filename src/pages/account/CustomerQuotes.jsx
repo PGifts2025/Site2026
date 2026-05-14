@@ -5,6 +5,32 @@ import CustomerLayout from '../../components/customer/CustomerLayout';
 import { supabase } from '../../services/supabaseService';
 import { supabaseConfig } from '../../config/supabase';
 
+/**
+ * Render `quote_items.print_areas` (jsonb) as a short descriptor for
+ * the line-item chip. Handles three shapes:
+ *   - {selections: [{position, area, num_colours, ...}]}  (v2 picker, session 9)
+ *   - "Front Chest: 1 col"                                (legacy string)
+ *   - null / undefined                                    -> ""
+ */
+function formatPrintAreas(value) {
+  if (!value) return '';
+  // Legacy string format
+  if (typeof value === 'string') return value;
+  // Structured v2 jsonb shape
+  if (value && Array.isArray(value.selections)) {
+    return value.selections
+      .map((s) => {
+        const parts = [s.position];
+        if (s.area) parts.push(s.area);
+        if (s.num_colours) parts.push(`${s.num_colours} col${s.num_colours > 1 ? 's' : ''}`);
+        return parts.filter(Boolean).join(', ');
+      })
+      .join(' / ');
+  }
+  // Defensive fallback for anything else
+  try { return JSON.stringify(value); } catch { return ''; }
+}
+
 const CustomerQuotes = ({ user }) => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -507,7 +533,9 @@ const CustomerQuotes = ({ user }) => {
                           <p className="font-medium text-gray-900">{item.product_name}</p>
                           {item.color && <span className="text-sm text-gray-500">{item.color}</span>}
                           {item.print_areas && (
-                            <span className="text-xs bg-gray-100 px-2 py-0.5 rounded ml-2">{item.print_areas}</span>
+                            <span className="text-xs bg-gray-100 px-2 py-0.5 rounded ml-2">
+                              {formatPrintAreas(item.print_areas)}
+                            </span>
                           )}
                           <div className="flex items-center gap-2 mt-1">
                             <label className="text-sm text-gray-500">Qty:</label>

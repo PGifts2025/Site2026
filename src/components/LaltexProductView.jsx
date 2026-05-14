@@ -152,20 +152,28 @@ const LaltexProductView = ({ product }) => {
   const [quantity, setQuantity] = useState(minQty);
   const [quantityInput, setQuantityInput] = useState(String(minQty));
 
-  // Per-PrintDetails picks: keyed by stable INDEX into the positions
-  // array, not by position name. Laltex returns multiple PrintDetails
-  // entries per print_position (one per print method — Embroidery,
-  // Screen Print, Transfer, etc.); keying by name collapsed them all
-  // onto one shared state. Index keying gives each entry its own
-  // independent toggle / colour-count selection.
+  // Picks keyed by unique position name (session 9 — CLAUDE.md §43).
+  // Each pick has { enabled, selectedRowIndex, colours }. The dropdown
+  // selects which row inside the position group is active; the tick
+  // box enables / disables the whole position. The "default" position
+  // is the one carrying the row flagged default_print_option=true.
   const initialPositions = useMemo(() => {
-    const positions = product?.printDetails?.positions || [];
-    if (positions.length === 0) return {};
-    const defaultIdx = Math.max(0, positions.findIndex((p) => p.defaultOption));
+    const groups = product?.printDetails?.positionGroups || [];
+    if (groups.length === 0) return {};
+    // Default position = whichever group contains the default-flagged row.
+    const defaultGroupIdx = Math.max(
+      0,
+      groups.findIndex((g) => (g.rows || []).some((r) => r.defaultOption)),
+    );
     const out = {};
-    positions.forEach((p, i) => {
-      const firstColour = availableColourCounts(p)[0] || 1;
-      out[i] = { enabled: i === defaultIdx, colours: firstColour };
+    groups.forEach((g, i) => {
+      const row = g.rows[g.defaultRowIndex] || g.rows[0] || null;
+      const firstColour = availableColourCounts(row)[0] || 1;
+      out[g.name] = {
+        enabled: i === defaultGroupIdx,
+        selectedRowIndex: g.defaultRowIndex,
+        colours: firstColour,
+      };
     });
     return out;
   }, [product?.code]);
@@ -214,12 +222,14 @@ const LaltexProductView = ({ product }) => {
   }, [colourGalleryUrl, selectedColour, product?.images]);
 
   // Designable products are those with at least one print-area
-  // coordinate entry across any position. DesignerV2 needs those to
+  // coordinate entry across any row. DesignerV2 needs those to
   // render the print rect; products with zero coords have no preview
   // to offer and the button is hidden.
   const isDesignable = useMemo(() => {
-    const positions = product?.printDetails?.positions || [];
-    return positions.some((pos) => (pos.coordinates?.length || 0) > 0);
+    const groups = product?.printDetails?.positionGroups || [];
+    return groups.some((g) =>
+      (g.rows || []).some((r) => (r.coordinates?.length || 0) > 0),
+    );
   }, [product?.printDetails]);
 
   const baseTier = useMemo(
@@ -227,35 +237,41 @@ const LaltexProductView = ({ product }) => {
     [product?.pricingTiers, quantity],
   );
 
-  // Per-PrintDetails cost contribution at current qty. Each enabled
-  // entry adds (all_in_unit_price for its (qty tier × colour count)).
-  // Keyed by stable index — see initialPositions for the rationale.
+  // Per-position cost contribution at current qty. Each enabled
+  // position adds (all_in_unit_price for its selected row's (qty tier
+  // × colour count)). Returns enough info to also build the quote
+  // jsonb payload (position, area, type, class, num_colours, unit).
   const positionContributions = useMemo(() => {
-    const positions = product?.printDetails?.positions || [];
+    const groups = product?.printDetails?.positionGroups || [];
     const out = [];
-    positions.forEach((pos, idx) => {
-      const pick = positionPicks[idx];
+    groups.forEach((g) => {
+      const pick = positionPicks[g.name];
       if (!pick?.enabled) return;
-      const tier = pickPrintTier(pos.tiers, quantity, pick.colours);
-      const label = `${pos.name} (${printMethodLabel(pos)})`;
+      const row = g.rows[pick.selectedRowIndex] || g.rows[g.defaultRowIndex] || g.rows[0];
+      if (!row) return;
+      const tier = pickPrintTier(row.tiers, quantity, pick.colours);
+      const label = `${g.name} (${printMethodLabel(row)})`;
       if (!tier) {
-        out.push({ idx, name: pos.name, label, colours: pick.colours, unit: null, isPoa: true });
+        out.push({
+          name: g.name, label, row, colours: pick.colours,
+          unit: null, isPoa: true,
+        });
         return;
       }
       // Prefer all_in_unit_price (setup-baked at sync time). Fall back
       // to raw print price + on-the-fly setup baking if missing.
       let unit = tier.allInUnitPrice;
       if (unit == null && tier.price != null) {
-        const setup = pos.setupCharge || 0;
-        const extra = pos.extraColourSetupCharge || 0;
+        const setup = row.setupCharge || 0;
+        const extra = row.extraColourSetupCharge || 0;
         const extraCols = Math.max(0, (pick.colours || 1) - 1);
         const minQ = tier.minQty || quantity || 1;
         unit = tier.price + setup / minQ + (extraCols * extra) / minQ;
       }
       out.push({
-        idx,
-        name: pos.name,
+        name: g.name,
         label,
+        row,
         colours: pick.colours,
         unit,
         rawUnit: tier.price,
@@ -300,16 +316,39 @@ const LaltexProductView = ({ product }) => {
     }
   };
 
-  const togglePosition = (idx) =>
+  const togglePosition = (name) =>
     setPositionPicks((p) => ({
       ...p,
-      [idx]: { ...(p[idx] || { colours: 1 }), enabled: !p[idx]?.enabled },
+      [name]: {
+        ...(p[name] || { selectedRowIndex: 0, colours: 1 }),
+        enabled: !p[name]?.enabled,
+      },
     }));
-  const setPositionColours = (idx, colours) =>
+  const setPositionColours = (name, colours) =>
     setPositionPicks((p) => ({
       ...p,
-      [idx]: { ...(p[idx] || { enabled: true }), colours },
+      [name]: {
+        ...(p[name] || { enabled: true, selectedRowIndex: 0 }),
+        colours,
+      },
     }));
+  // When the customer changes the size/method dropdown for an enabled
+  // position, reset colour count to the first available count of the
+  // new row (different print methods support different colour counts).
+  const setSelectedRowIndex = (name, selectedRowIndex) =>
+    setPositionPicks((p) => {
+      const group = (product?.printDetails?.positionGroups || []).find((g) => g.name === name);
+      const newRow = group?.rows?.[selectedRowIndex];
+      const firstColour = availableColourCounts(newRow)[0] || 1;
+      return {
+        ...p,
+        [name]: {
+          ...(p[name] || { enabled: true }),
+          selectedRowIndex,
+          colours: firstColour,
+        },
+      };
+    });
 
   const handleAddToQuote = async () => {
     if (!user) {
@@ -323,9 +362,21 @@ const LaltexProductView = ({ product }) => {
     setAddingToQuote(true);
     try {
       const quoteNumber = `QT-${Date.now().toString(36).toUpperCase()}`;
-      const printAreasSummary = positionContributions
-        .map((p) => `${p.name}: ${p.colours} col`)
-        .join(', ') || null;
+      // Structured payload for quote_items.print_areas (jsonb column).
+      // Envelope-wrapped so future fields (total_setup_charge, version,
+      // etc.) can be added without re-shaping consumers. CLAUDE.md §43.
+      const printAreasPayload = positionContributions.length > 0
+        ? {
+            selections: positionContributions.map((p) => ({
+              position: p.name,
+              area: p.row?.area || null,
+              type: p.row?.printType || null,
+              class: p.row?.printClass || null,
+              num_colours: p.colours,
+              unit_price: p.unit != null ? +p.unit.toFixed(4) : null,
+            })),
+          }
+        : null;
 
       const { data: quote, error: quoteError } = await supabase
         .from('quotes')
@@ -348,7 +399,7 @@ const LaltexProductView = ({ product }) => {
           quantity,
           unit_price: +unitPrice.toFixed(4),
           color: selectedColour?.name || null,
-          print_areas: printAreasSummary,
+          print_areas: printAreasPayload,
           notes: `Supplier: ${product.supplier} | Code: ${product.code}`,
         })
         .select()
@@ -621,19 +672,25 @@ const LaltexProductView = ({ product }) => {
                       embroidery sizes have distinct method labels and
                       survive dedup. */}
                   {(() => {
-                    const positions = product.printDetails?.positions || [];
+                    // Flatten positionGroups → rows for the "methods available"
+                    // summary block. Same dedup semantics as the legacy code:
+                    // collapse rows that share (position, method, lead time)
+                    // so we don't list the same row twice.
+                    const groups = product.printDetails?.positionGroups || [];
                     const seen = new Set();
                     const rows = [];
-                    positions.forEach((p, idx) => {
-                      const method = printMethodLabel(p);
-                      const lead = p.leadTime || 'See product details';
-                      const dedupKey = `${p.name}|${method}|${lead}`;
-                      if (seen.has(dedupKey)) return;
-                      seen.add(dedupKey);
-                      rows.push({ idx, name: p.name, method, lead });
+                    groups.forEach((g) => {
+                      (g.rows || []).forEach((r, ri) => {
+                        const method = printMethodLabel(r);
+                        const lead = r.leadTime || 'See product details';
+                        const dedupKey = `${g.name}|${method}|${lead}`;
+                        if (seen.has(dedupKey)) return;
+                        seen.add(dedupKey);
+                        rows.push({ key: `${g.name}-${ri}`, name: g.name, method, lead });
+                      });
                     });
                     return rows.map((r) => (
-                      <p key={r.idx} className="text-xs text-gray-500">
+                      <p key={r.key} className="text-xs text-gray-500">
                         <span className="font-medium text-gray-700">
                           {r.name}
                           {r.method && r.method !== r.name && (
@@ -690,23 +747,26 @@ const LaltexProductView = ({ product }) => {
                     </p>
                   </div>
 
-                  {/* Print positions */}
-                  {(product.printDetails?.positions || []).length > 0 && (
+                  {/* Print positions — one row per UNIQUE position, with
+                      a size/method dropdown to choose among sibling rows
+                      that share the position. Each position is independently
+                      tickable; same-position duplication is impossible by
+                      design (one dropdown per position). Session 9 / §43. */}
+                  {(product.printDetails?.positionGroups || []).length > 0 && (
                     <div>
                       <h4 className="text-sm font-medium text-gray-700 mb-2">Print Positions</h4>
                       <div className="space-y-2">
-                        {product.printDetails.positions.map((pos, idx) => {
-                          const pick = positionPicks[idx] || { enabled: false, colours: 1 };
-                          // Drive the colour-count dropdown from the
-                          // actual data, not maxColours metadata. For
-                          // products like MG0192 where Laltex sends only
-                          // NumColours=1, this renders as a static label
-                          // instead of a single-option dropdown.
-                          const colourOptions = availableColourCounts(pos);
-                          const methodLabel = printMethodLabel(pos);
+                        {product.printDetails.positionGroups.map((group) => {
+                          const pick = positionPicks[group.name] || {
+                            enabled: false, selectedRowIndex: group.defaultRowIndex, colours: 1,
+                          };
+                          const selectedRow = group.rows[pick.selectedRowIndex] || group.rows[0];
+                          const colourOptions = availableColourCounts(selectedRow);
+                          const methodLabel = printMethodLabel(selectedRow);
+                          const sizeLabel = selectedRow?.area || null;
                           return (
                             <div
-                              key={idx}
+                              key={group.name}
                               className={`border rounded-lg p-2 transition-colors ${
                                 pick.enabled
                                   ? 'border-blue-400 bg-blue-50/50'
@@ -718,24 +778,23 @@ const LaltexProductView = ({ product }) => {
                                   <input
                                     type="checkbox"
                                     checked={pick.enabled}
-                                    onChange={() => togglePosition(idx)}
+                                    onChange={() => togglePosition(group.name)}
                                     className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 flex-shrink-0 mt-0.5"
                                   />
-                                  {/* Two-line label: position on top, print
-                                      method below in smaller muted text. Stacks
-                                      vertically so long method names like
-                                      "Transfer Print (300x200)" don't truncate
-                                      under the checkbox + dropdown squeeze. */}
+                                  {/* Two-line label: position name on top,
+                                      currently-selected size + method below
+                                      in smaller muted text. The dropdown
+                                      below the row controls which sibling
+                                      row is active. */}
                                   <span className="flex flex-col min-w-0 leading-tight">
                                     <span className="text-sm font-medium text-gray-800 truncate">
-                                      {pos.name}
-                                      {pos.area && (
-                                        <span className="text-xs text-gray-400 font-normal"> ({pos.area})</span>
-                                      )}
+                                      {group.name}
                                     </span>
-                                    {methodLabel && methodLabel !== pos.name && (
+                                    {(sizeLabel || methodLabel) && (
                                       <span className="text-xs text-slate-500 truncate">
-                                        {methodLabel}
+                                        {sizeLabel}
+                                        {sizeLabel && methodLabel ? ' — ' : ''}
+                                        {methodLabel !== group.name ? methodLabel : ''}
                                       </span>
                                     )}
                                   </span>
@@ -744,7 +803,7 @@ const LaltexProductView = ({ product }) => {
                                   <select
                                     value={pick.colours}
                                     onChange={(e) =>
-                                      setPositionColours(idx, parseInt(e.target.value, 10))
+                                      setPositionColours(group.name, parseInt(e.target.value, 10))
                                     }
                                     className="border border-gray-300 rounded text-xs py-0.5 px-1 flex-shrink-0 self-center"
                                   >
@@ -759,7 +818,38 @@ const LaltexProductView = ({ product }) => {
                                   </span>
                                 )}
                               </div>
-                              {pick.enabled && pos.setupCharge != null && (
+                              {/* Size/method dropdown — only when this
+                                  position has multiple rows AND is enabled.
+                                  Hidden for single-row positions to keep the
+                                  UI tidy. */}
+                              {pick.enabled && group.rows.length > 1 && (
+                                <div className="mt-2 pl-6">
+                                  <select
+                                    value={pick.selectedRowIndex}
+                                    onChange={(e) =>
+                                      setSelectedRowIndex(group.name, parseInt(e.target.value, 10))
+                                    }
+                                    className="w-full border border-gray-300 rounded text-xs py-1 px-1.5"
+                                  >
+                                    {group.rows.map((r, ri) => {
+                                      const tier = pickPrintTier(r.tiers, quantity, availableColourCounts(r)[0] || 1);
+                                      const priceLabel = tier?.allInUnitPrice != null
+                                        ? formatGBP(tier.allInUnitPrice)
+                                        : tier?.price != null
+                                          ? formatGBP(tier.price)
+                                          : 'POA';
+                                      return (
+                                        <option key={ri} value={ri}>
+                                          {printMethodLabel(r)}
+                                          {r.area ? ` – ${r.area}` : ''}
+                                          {' – '}{priceLabel}/unit
+                                        </option>
+                                      );
+                                    })}
+                                  </select>
+                                </div>
+                              )}
+                              {pick.enabled && selectedRow?.setupCharge != null && (
                                 <p className="text-xs text-gray-500 mt-1 pl-6">
                                   Price includes set up
                                 </p>
@@ -804,7 +894,7 @@ const LaltexProductView = ({ product }) => {
                                 </div>
                               )}
                               {positionContributions.map((p) => (
-                                <div key={p.idx} className="flex justify-between">
+                                <div key={p.name} className="flex justify-between">
                                   <span className="truncate pr-2">
                                     {p.label} ({p.colours} col)
                                   </span>
