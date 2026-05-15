@@ -3956,3 +3956,144 @@ is consumed by `LaltexProductView` and SUMMED into `unitPrice`, which
 then rounds to 2dp at the boundary. So the print precision is
 preserved through the math and collapsed only at the persistence /
 display boundary, exactly as intended.
+
+---
+
+## 49. HOMEPAGE AVA AI ASSISTANT CARD (session 9 / task 14)
+
+The homepage hosts a full-width Ava AI assistant card directly below
+the hero banners. Click anywhere on the card to open the floating AI
+chat widget with the active typewriter phrase pre-filled.
+
+### 49.1 Architecture — `pgifts:open-chat` custom event
+
+The card and the chat widget communicate via a window-level
+[CustomEvent](https://developer.mozilla.org/docs/Web/API/CustomEvent):
+
+```js
+window.dispatchEvent(new CustomEvent('pgifts:open-chat', {
+  detail: {
+    prefill: 'Find a product, 250 units, under £10 each',
+    welcomeMessage: "Your assistant is ready to help! Type your question below…",
+  },
+}));
+```
+
+[`AIChatWidget`](../src/components/AIChatWidget/AIChatWidget.jsx)
+subscribes via `useEffect` on mount and reacts:
+1. `setOpen(true)` — expands the panel.
+2. `setInput(prefill)` — pre-populates the textarea.
+3. Prepends `welcomeMessage` as an assistant message **if not already
+   at index 0** — idempotent on repeat clicks.
+4. Auto-focuses the textarea after a 50ms delay (panel mount race).
+
+The pre-loaded welcome message does **not** call the LLM and does
+**not** count against quota — it's a UI-only message rendered with
+the same styling as real assistant responses.
+
+### 49.2 AvaTypewriter
+
+[`src/components/AvaTypewriter.jsx`](../src/components/AvaTypewriter.jsx)
+— pure React, no deps. State machine:
+- `typing` (60ms / char) → `holding` (2500ms) → `erasing` (30ms / char)
+  → `pausing` (300ms) → next phrase, loop.
+- `onActivePhraseChange(phrase)` fires when a NEW phrase starts typing,
+  letting the parent (Home.jsx) snapshot the active intent for the
+  click handler's pre-fill.
+- Cleanup: `clearTimeout` on unmount.
+
+Blinking cursor + thinking-dots pulse are CSS-only
+(`.ava-cursor`, `.ava-thinking-dots` in `src/index.css`).
+
+### 49.3 Sections temporarily hidden
+
+The Helpful Tools section ([`src/pages/Home.jsx`](../src/pages/Home.jsx)
+~L500-700) and the Latest From Our Blog section (~L700-790) are
+**wrapped in `{false && (…)}` blocks**, NOT deleted. Future restore =
+remove the conditional wrappers.
+
+Why `{false && (…)}` instead of `{/* … */}` block comments: each
+section contains 10+ nested JSX `{/* … */}` comments. An outer block
+comment would terminate at the first inner `*/` and leave subsequent
+JSX rendering.
+
+### 49.4 Feature-flag rollout
+
+The chat widget is gated by `VITE_AI_CHAT_PUBLIC_ENABLED` (anon) and
+`profiles.ai_chat_enabled` (signed-in) — see CLAUDE.md §32.3. Public
+Ava rollout **requires** flipping `VITE_AI_CHAT_PUBLIC_ENABLED=true` in
+Vercel Production + Preview env. Without that, the widget is not
+mounted for anonymous visitors and Ava-card clicks dispatch into
+nothing.
+
+### 49.5 Rate-limit contract (current state, session 9)
+
+The anonymous quota lives in
+[`scripts/lib/ai-quota.js`](../scripts/lib/ai-quota.js):
+**5 `searchProducts` calls per rolling 24h per `visitor_id_hash`**.
+See CLAUDE.md §32.6 for the full design.
+
+Enforced server-side in [`api/ai/chat.js`](../api/ai/chat.js); the
+widget surfaces the remaining count but does not enforce. Signed-in
+users skip the quota entirely (always allowed).
+
+**Identification:** FingerprintJS visitor ID → SHA-256 (with optional
+`VISITOR_HASH_SALT`). IP-hash fallback when FingerprintJS fails.
+
+### 49.6 Known rate-limit gaps — tech debt (open follow-ups)
+
+Three known limitations were deliberately deferred to focused
+follow-up PRs rather than scoped into the Ava launch. Dave's Anthropic
+Console spend cap is the line of last defence for all three:
+
+1. **Anonymous bypass via `visitor_id` rotation.** An adversary
+   POSTing directly to `/api/ai/chat` with a fresh random `visitor_id`
+   per request gets fresh quota each time. **Fix:** count against both
+   the fingerprint-hash bucket AND the IP-hash bucket in parallel; if
+   either exceeds, refuse. ~15 LOC change to `checkSearchQuota` +
+   `incrementQuota`.
+
+2. **Per-account rate limit for signed-in users.** Currently
+   unlimited. A compromised / abusive signed-in account could rack up
+   thousands of LLM calls per day. **Fix:** introduce a parallel
+   `ai_quotas_users` table (or extend the existing one with a
+   nullable `user_id`) and a `SIGNED_IN_DAILY_LIMIT` constant.
+   Suggested initial value: **50/day**. ~80 LOC.
+
+3. **Counter for `findAlternatives` + general chat turns.** Today
+   only `searchProducts` increments the quota. A visitor could send
+   1,000 small-talk turns / day at ~$0.01 each. **Fix:** add a
+   separate (lower-priority, lower-frequency) turn-counter quota.
+   Suggested initial value: **30 turns/day** for anon, **higher cap
+   for signed-in**. ~40 LOC.
+
+Each is a focused PR; do not bundle with feature work that has its own
+review risk surface.
+
+### 49.7 `ava.png` optimisation (tech debt)
+
+`public/images/ava.png` is **749×750 px, 444 KB**. Above-the-fold
+homepage image. An optimised ~150 KB version would help LCP by
+roughly 300ms on typical broadband. Out of scope for the Ava launch
+PR; flagged here as a follow-up. Tooling: any image optimiser
+(squoosh.app, sharp CLI). Replace in place; no code changes needed.
+
+### 49.8 Invariants — DO NOT BREAK
+
+- **Do NOT dispatch `pgifts:open-chat` without setting `prefill`** when
+  the source is a "click-to-chat" surface. Empty `prefill` is allowed
+  (clears input) but undefined leaves the previous input intact —
+  surprising UX.
+- **Do NOT skip the idempotent welcome-message check.** Re-clicking
+  Ava during an in-progress chat must not double-inject the welcome.
+- **Do NOT count the welcome message as a quota tick.** It does not
+  call the LLM; it is a UI-only message.
+- **Do NOT remove `VITE_AI_CHAT_PUBLIC_ENABLED` from the gating logic
+  in `AIChatWidget`** without also rethinking whether Ava should be
+  publicly accessible. The flag is the single source of truth for the
+  widget's anonymous visibility.
+- **Do NOT delete the commented-out Helpful Tools or Blog sections.**
+  Wrapped in `{false && (…)}` for future restore, not stashed
+  elsewhere. JSX must survive in the file.
+- **Do NOT scope rate-limit hardening (§49.6) into unrelated PRs.**
+  Each of the three follow-ups is its own scope and review.
