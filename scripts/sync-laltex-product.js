@@ -30,6 +30,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import dotenv from 'dotenv';
 
+import { applyMarginsInPlace, DEFAULT_SCHEDULE_VERSION } from './lib/laltex-margin.js';
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, '..', '.env') });
 
@@ -256,9 +258,25 @@ function sqlJsonb(obj) {
 // ---------------------------------------------------------------------------
 
 async function main() {
-  const code = process.argv[2];
+  // Parse positional + flag args. Positional: PRODUCT_CODE. Flag: --override <pct>
+  // (decimal, e.g. 0.18). The flag, if present, OVERRIDES whatever margin
+  // override is currently persisted for this product — for one sync only.
+  const argv = process.argv.slice(2);
+  const overrideFlagIdx = argv.indexOf('--override');
+  let overridePctFromFlag = null;
+  if (overrideFlagIdx !== -1) {
+    const raw = argv[overrideFlagIdx + 1];
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n < 0 || n >= 1) {
+      console.error(`[sync] --override expects a decimal in [0, 1); got "${raw}"`);
+      process.exit(1);
+    }
+    overridePctFromFlag = n;
+    argv.splice(overrideFlagIdx, 2);
+  }
+  const code = argv[0];
   if (!code) {
-    console.error('Usage: node scripts/sync-laltex-product.js <PRODUCT_CODE>');
+    console.error('Usage: node scripts/sync-laltex-product.js <PRODUCT_CODE> [--override <pct>]');
     process.exit(1);
   }
 
@@ -295,6 +313,33 @@ async function main() {
   const shippingCharges = Array.isArray(product.ShippingCharge) ? product.ShippingCharge : [];
   const priorityService = Array.isArray(product.PriorityService) ? product.PriorityService : [];
 
+  // Resolve the override to apply. CLI flag wins over the persisted value;
+  // otherwise fall back to whatever's already in the DB (so a debug re-sync
+  // honours admin overrides set elsewhere). NULL means "use the schedule".
+  let effectiveOverride = overridePctFromFlag;
+  if (effectiveOverride == null) {
+    const overrideRows = await execSQL(
+      `SELECT margin_pct_override FROM supplier_products WHERE supplier_id = '${supplierId}' AND supplier_product_code = '${product.ProductCode.replace(/'/g, "''")}'`,
+      token,
+    );
+    const row0 = Array.isArray(overrideRows) ? overrideRows[0] : null;
+    effectiveOverride = row0?.margin_pct_override ?? null;
+    if (effectiveOverride != null) effectiveOverride = Number(effectiveOverride);
+  }
+
+  // Apply margins in place. Mutates productPricing + printDetails to inject
+  // sell_price + margin_applied_pct per tier. CLAUDE.md §46.
+  applyMarginsInPlace({
+    productPricing,
+    printDetails,
+    overridePct: effectiveOverride,
+  });
+  if (overridePctFromFlag != null) {
+    console.log(`[sync] applying CLI override ${overridePctFromFlag} (NOT persisted)`);
+  } else {
+    console.log(`[sync] applying margin (override=${effectiveOverride ?? 'schedule'})`);
+  }
+
   // Count coord entries for log summary
   const coordCount = printDetails.reduce(
     (acc, pd) => acc + (pd.print_area_coordinates?.length || 0),
@@ -302,6 +347,9 @@ async function main() {
   );
 
   // UPSERT
+  // NOTE: margin_pct_override is intentionally NOT in this list. It's
+  // admin-owned state and must survive sync. The CLI's --override flag
+  // affects sell_price values WITHOUT persisting the override itself.
   const columns = [
     'supplier_id',
     'supplier_product_code',
@@ -334,6 +382,8 @@ async function main() {
     'priority_service',
     'raw_payload',
     'last_synced_at',
+    'margin_default_schedule_version',
+    'margin_last_applied_at',
   ];
 
   const values = [
@@ -367,7 +417,9 @@ async function main() {
     sqlJsonb(shippingCharges),
     sqlJsonb(priorityService),
     sqlJsonb(product),        // raw payload
-    'NOW()',
+    'NOW()',                  // last_synced_at
+    String(DEFAULT_SCHEDULE_VERSION),  // margin_default_schedule_version
+    'NOW()',                  // margin_last_applied_at
   ];
 
   const updateSet = columns

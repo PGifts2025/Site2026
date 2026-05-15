@@ -36,6 +36,8 @@ import OpenAI from 'openai';
 
 import { EMBEDDING_MODEL, generateEmbedding, vectorLiteral } from '../scripts/lib/embedding.js';
 import { checkAuthAndEnv, callRpc, findTierForQuantity } from '../scripts/lib/search-auth.js';
+import { deliveryPerUnit } from '../scripts/lib/laltex-delivery.js';
+import { scheduleMarginForTier } from '../scripts/lib/laltex-margin.js';
 
 export const config = {
   maxDuration: 30, // seconds — query embed + RPC; typical is <2s.
@@ -225,11 +227,34 @@ export default async function handler(req, res) {
   const tTotal = Date.now() - t0;
 
   // 3. Attach unit_price_at_quantity if a quantity was supplied.
+  //
+  // Customer-facing price: tier.sell_price (margin-applied at sync, NO
+  // delivery) + UK STANDARD delivery share at the customer's actual qty,
+  // with margin applied to the delivery share at the tier's rate.
+  //
+  // Transitional behaviour: rows that haven't been recomputed yet (no
+  // sell_price field) fall back to raw tier.price so search results stay
+  // populated during the deploy window. Once recompute-laltex-margins.js
+  // has run, sell_price is always present.
   if (Array.isArray(rows) && filters.quantity != null) {
+    const qty = filters.quantity;
     for (const r of rows) {
-      const tier = findTierForQuantity(r.product_pricing, filters.quantity);
-      r.unit_price_at_quantity = tier && !tier.is_poa ? tier.price : null;
-      r.unit_price_at_quantity_is_poa = tier?.is_poa ?? false;
+      const tier = findTierForQuantity(r.product_pricing, qty);
+      if (!tier || tier.is_poa) {
+        r.unit_price_at_quantity = null;
+        r.unit_price_at_quantity_is_poa = !!tier?.is_poa;
+        continue;
+      }
+      const sellNoDelivery = tier.sell_price != null
+        ? Number(tier.sell_price)
+        : Number(tier.price);
+      const marginPct = Number.isFinite(Number(tier.margin_applied_pct))
+        ? Number(tier.margin_applied_pct)
+        : scheduleMarginForTier(qty, null);
+      const dpu = deliveryPerUnit(r.shipping_charges, r.carton_qty, qty, 'ukstandard');
+      const inclusive = sellNoDelivery + dpu * (1 + marginPct);
+      r.unit_price_at_quantity = Number(inclusive.toFixed(4));
+      r.unit_price_at_quantity_is_poa = false;
     }
   }
 

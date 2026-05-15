@@ -48,6 +48,7 @@
  */
 
 import { normaliseProduct, unwrapFeedResponse } from './laltex-parser.js';
+import { applyMarginsInPlace, DEFAULT_SCHEDULE_VERSION } from './laltex-margin.js';
 
 const LALTEX_BASE = 'https://auto.laltex.com/trade/api';
 const LALTEX_LIST_PATH = '/v1/products/list';
@@ -207,6 +208,41 @@ async function getExistingCodes({ supabaseUrl, serviceRoleKey, supplierId }) {
   return set;
 }
 
+// Per-product margin overrides, keyed on supplier_product_code. NULL value
+// means "use the schedule" (we keep the entry so the loop can still call
+// .get() without `has` first). Same paginated pattern as getExistingCodes
+// per CLAUDE.md §28.1.
+//
+// CRITICAL: the UPSERT body written by syncFullCatalogue must NEVER include
+// margin_pct_override — that would clobber admin overrides on every nightly
+// run. normaliseProduct doesn't include it either. This Map exists so the
+// sync can READ the override and feed it to applyMarginsInPlace, not so it
+// can write the override back.
+async function getExistingOverrides({ supabaseUrl, serviceRoleKey, supplierId }) {
+  const map = new Map();
+  let offset = 0;
+  /* eslint-disable no-await-in-loop */
+  for (;;) {
+    const url = `${supabaseUrl}/rest/v1/supplier_products` +
+      `?supplier_id=eq.${supplierId}` +
+      `&select=supplier_product_code,margin_pct_override` +
+      `&order=supplier_product_code.asc` +
+      `&limit=${EXISTING_CODES_PAGE_SIZE}` +
+      `&offset=${offset}`;
+    const page = await pgRest('GET', url, serviceRoleKey);
+    if (!Array.isArray(page) || page.length === 0) break;
+    for (const r of page) {
+      if (r.supplier_product_code) {
+        map.set(r.supplier_product_code, r.margin_pct_override ?? null);
+      }
+    }
+    if (page.length < EXISTING_CODES_PAGE_SIZE) break;
+    offset += EXISTING_CODES_PAGE_SIZE;
+  }
+  /* eslint-enable no-await-in-loop */
+  return map;
+}
+
 // ---------------------------------------------------------------------------
 // Laltex fetch
 // ---------------------------------------------------------------------------
@@ -359,8 +395,14 @@ export async function syncFullCatalogue({
       return { runId, fetched, inserted, updated, failed, durationMs: Date.now() - runStart, status };
     }
 
-    // 4. Snapshot existing codes for inserted/updated counters
+    // 4. Snapshot existing codes for inserted/updated counters AND
+    //    existing margin overrides so applyMarginsInPlace can honour them
+    //    in the same loop. The override map is read-only here — the UPSERT
+    //    payload never includes margin_pct_override, so admin-set overrides
+    //    survive every nightly sync untouched.
     const existingCodes = await getExistingCodes({ supabaseUrl, serviceRoleKey, supplierId });
+    const existingOverrides = await getExistingOverrides({ supabaseUrl, serviceRoleKey, supplierId });
+    const nowIso = new Date().toISOString();
 
     // 5. Normalise + bucket
     const rows = [];
@@ -384,6 +426,19 @@ export async function syncFullCatalogue({
         failed += 1;
         continue;
       }
+
+      // Apply margins per Task 10 / CLAUDE.md §46. The row's product_pricing
+      // and print_details JSONB structures get sell_price + margin_applied_pct
+      // injected per tier. Delivery is NOT baked in — that's read-time.
+      const overridePct = existingOverrides.get(row.supplier_product_code) ?? null;
+      applyMarginsInPlace({
+        productPricing: row.product_pricing,
+        printDetails: row.print_details,
+        overridePct,
+      });
+      row.margin_default_schedule_version = DEFAULT_SCHEDULE_VERSION;
+      row.margin_last_applied_at = nowIso;
+
       rows.push(row);
     }
     log(`[sync] normalised ${rows.length} rows, ${failures.length} parse errors`);

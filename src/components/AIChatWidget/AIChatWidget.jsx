@@ -274,9 +274,18 @@ export default function AIChatWidget() {
 
 function ProductCard({ product }) {
   const href = `/products/${encodeURIComponent(product.supplier_product_code)}`;
-  const tier = Array.isArray(product.pricing) && product.pricing.length > 0
-    ? product.pricing[0]
-    : null;
+  // MOQ-aware "From" tier: prefer the lowest tier whose min_qty meets the
+  // product's commercial MOQ. Falls back to pricing[0] for products
+  // without a declared MOQ. Fixes the previous "From £x.xx (1+)" surface
+  // that quoted a per-unit price the customer couldn't actually order
+  // at — bundled fix per CLAUDE.md §46 / Task 8 §5.2.
+  const moq = Number(product.minimum_order_qty);
+  const pricingArr = Array.isArray(product.pricing) ? product.pricing : [];
+  const tier = pricingArr.length === 0
+    ? null
+    : (Number.isFinite(moq) && moq > 0
+        ? (pricingArr.find((t) => Number(t.min) >= moq) ?? pricingArr[0])
+        : pricingArr[0]);
   const priceLabel = product.unit_price_at_quantity != null && !product.unit_price_at_quantity_is_poa
     ? `£${Number(product.unit_price_at_quantity).toFixed(2)}/unit`
     : tier

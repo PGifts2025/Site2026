@@ -45,6 +45,8 @@ import { createHash } from 'node:crypto';
 
 import { SYSTEM_PROMPT } from '../../scripts/lib/ai-system-prompt.js';
 import { ALL_TOOLS, ANTHROPIC_CONFIG } from '../../scripts/lib/ai-tools.js';
+import { deliveryPerUnit } from '../../scripts/lib/laltex-delivery.js';
+import { scheduleMarginForTier } from '../../scripts/lib/laltex-margin.js';
 import {
   checkSearchQuota,
   hashVisitorId,
@@ -597,12 +599,34 @@ function truncateForModel(payload) {
 
 function slimProduct(p) {
   if (!p || typeof p !== 'object') return p;
-  // Summarise pricing as a compact array; drop print_details + items raw.
+  // Customer-facing INCLUSIVE price summary: tier.sell_price (margin-applied
+  // at sync, NO delivery) + UK STANDARD delivery share at the tier's
+  // representative quantity (tier.min_qty), with margin applied to the
+  // delivery share. Falls back to raw tier.price for transitional rows
+  // that haven't been recomputed yet.
+  //
+  // The model NEVER sees cost basis — only the inclusive customer price.
+  const shippingCharges = p.shipping_charges;
+  const piecesPerCarton = p.carton_qty;
   const pricingSummary = Array.isArray(p.product_pricing)
     ? p.product_pricing
-        .filter((t) => t && !t.is_poa && t.price != null)
+        .filter((t) => t && !t.is_poa && (t.sell_price != null || t.price != null))
         .slice(0, 6)
-        .map((t) => ({ min: t.min_qty, max: t.max_qty, price: t.price }))
+        .map((t) => {
+          const sellNoDelivery = t.sell_price != null ? Number(t.sell_price) : Number(t.price);
+          const minQty = Number(t.min_qty);
+          const reprQty = Number.isFinite(minQty) && minQty > 0 ? minQty : 1;
+          const marginPct = Number.isFinite(Number(t.margin_applied_pct))
+            ? Number(t.margin_applied_pct)
+            : scheduleMarginForTier(reprQty, null);
+          const dpu = deliveryPerUnit(shippingCharges, piecesPerCarton, reprQty, 'ukstandard');
+          const inclusive = sellNoDelivery + dpu * (1 + marginPct);
+          return {
+            min: t.min_qty,
+            max: t.max_qty,
+            price: Number(inclusive.toFixed(2)),
+          };
+        })
     : [];
   const firstImage = Array.isArray(p.images) && p.images.length > 0
     ? (typeof p.images[0] === 'string' ? p.images[0] : p.images[0]?.url ?? null)
