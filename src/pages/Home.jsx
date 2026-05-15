@@ -2,6 +2,20 @@ import React, { useState, useEffect } from 'react';
 import { Search, ShoppingCart, User, Phone, Mail, ChevronLeft, ChevronRight, Star, Loader } from 'lucide-react';
 import { Link } from "react-router-dom";
 import { getSupabaseClient } from '../services/productCatalogService';
+import AvaTypewriter from '../components/AvaTypewriter';
+
+// Ava's cycling intent phrases. The first one is the default the click
+// handler pre-fills if Ava hasn't notified us of a phrase yet (rare —
+// only when the user clicks within the first ~60ms of page load).
+// CLAUDE.md §49.
+const AVA_PHRASES = [
+  'Find a product, 250 units, under £10 each',
+  'Show me eco-friendly product for under £15',
+  "What's the best gift for a client under £20?",
+  'I need something fast, for 50 staff',
+];
+const AVA_WELCOME_MESSAGE =
+  "Your assistant is ready to help! Type your question below — or send the one I've drafted for you.";
 
 const PromoGiftsApp = () => {
   const [bestSellersSlide, setBestSellersSlide] = useState(0);
@@ -9,6 +23,19 @@ const PromoGiftsApp = () => {
   const [isSliderPaused, setIsSliderPaused] = useState(false);
   const [heroSlide, setHeroSlide] = useState(0);
   const [productsPerSlide, setProductsPerSlide] = useState(4);
+  // Tracks the phrase Ava is currently TYPING (advanced by
+  // AvaTypewriter's onActivePhraseChange). Click handler reads this
+  // synchronously to pre-fill the chat input. CLAUDE.md §49.
+  const [activeAvaPhrase, setActiveAvaPhrase] = useState(AVA_PHRASES[0]);
+
+  const handleAvaClick = () => {
+    window.dispatchEvent(new CustomEvent('pgifts:open-chat', {
+      detail: {
+        prefill: activeAvaPhrase,
+        welcomeMessage: AVA_WELCOME_MESSAGE,
+      },
+    }));
+  };
 
   // State for fetched products from database
   const [featuredProducts, setFeaturedProducts] = useState([]);
@@ -52,38 +79,6 @@ const PromoGiftsApp = () => {
     imageUrl: "https://cbcevjhvgmxrxeeyldza.supabase.co/storage/v1/object/public/product-templates/hero-banners/right-bags.png",
     link: "/bags"
   };
-
-  const smallBlocks = [
-    {
-      id: 3,
-      title: "CAMPAIGN TIMELINE BUILDER",
-      bgColor: "bg-green-600",
-      textColor: "text-white",
-      image: "⏰"
-    },
-    {
-      id: 4,
-      title: "LIVE LOGO PLACEMENT",
-      bgColor: "bg-purple-600",
-      textColor: "text-white",
-      image: "🎨"
-    },
-    {
-      id: 5,
-      title: "PRODUCT PROPOSAL GENERATOR",
-      bgColor: "bg-blue-600",
-      textColor: "text-white",
-      image: "📊"
-    },
-    {
-      id: 6,
-      title: "ROI CALCULATOR",
-      badge: "NEW",
-      bgColor: "bg-orange-600",
-      textColor: "text-white",
-      image: "💰"
-    }
-  ];
 
   // Product categories
   const categories = [
@@ -326,27 +321,59 @@ const PromoGiftsApp = () => {
           </div>
         </div>
 
-        {/* Bottom row - 4 tool blocks - 2x2 on mobile, 4x1 on desktop */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 h-auto md:h-32">
-          {smallBlocks.map((block) => (
-            <div
-              key={block.id}
-              className={`${block.bgColor} ${block.textColor} rounded-lg p-3 sm:p-4 min-h-[120px] md:min-h-0 flex flex-col items-center justify-center text-center relative overflow-hidden hover:scale-105 transition-transform cursor-pointer group`}
-              onClick={() => {
-                document.querySelector('[data-tools-section]')?.scrollIntoView({ behavior: 'smooth' });
-              }}
-            >
-              {block.badge && (
-                <div className="absolute top-2 right-2 bg-white text-orange-600 px-2 py-1 rounded-full text-xs font-bold transform rotate-12">
-                  {block.badge}
-                </div>
-              )}
-              <div className="text-2xl sm:text-3xl mb-2 opacity-20 group-hover:opacity-100 group-hover:scale-110 transition-all duration-300">{block.image}</div>
-              <h4 className="font-bold text-[10px] sm:text-xs leading-tight group-hover:font-extrabold transition-all duration-300">{block.title}</h4>
+      </section>
 
-              <div className="absolute inset-0 bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+      {/* Ava AI assistant card — replaces the previous 4-tool grid that
+          sat in this position (Campaign Timeline / Live Logo /
+          Product Proposal / ROI Calculator). Full-width row matching
+          the hero banners above. Click anywhere on the card to open
+          the AI chat widget with the active phrase pre-filled.
+          See CLAUDE.md §49. */}
+      <section className="pt-6 pb-2">
+        <div className="max-w-7xl mx-auto px-4">
+          <button
+            type="button"
+            onClick={handleAvaClick}
+            aria-label="Open Ava AI assistant chat"
+            className="w-full rounded-2xl bg-gradient-to-r from-indigo-50 via-white to-purple-50 border border-indigo-100 shadow-md hover:shadow-lg transition-shadow p-5 sm:p-7 group cursor-pointer text-left"
+          >
+            <div className="flex flex-col sm:flex-row items-center sm:items-stretch gap-4 sm:gap-6">
+              {/* Avatar */}
+              <div className="flex-shrink-0">
+                <div className="w-20 h-20 sm:w-32 sm:h-32 rounded-full overflow-hidden ring-4 ring-indigo-100 shadow-md bg-white">
+                  <img
+                    src="/images/ava.png"
+                    alt="Ava — PGifts AI assistant"
+                    className="w-full h-full object-cover"
+                    width="128"
+                    height="128"
+                  />
+                </div>
+              </div>
+
+              {/* Bubble */}
+              <div className="flex-1 flex flex-col justify-center min-w-0">
+                <span className="text-xs sm:text-sm font-semibold text-indigo-700 mb-2 uppercase tracking-wide">
+                  Ava — your PGifts assistant
+                </span>
+                <div className="bg-white rounded-xl rounded-tl-sm px-4 py-3 sm:px-5 sm:py-4 border border-indigo-100 shadow-sm">
+                  <p className="text-base sm:text-lg text-gray-800 font-medium min-h-[1.75em]">
+                    <AvaTypewriter
+                      phrases={AVA_PHRASES}
+                      onActivePhraseChange={setActiveAvaPhrase}
+                    />
+                    <span className="ava-cursor" aria-hidden="true" />
+                  </p>
+                  <div className="ava-thinking-dots mt-2" aria-hidden="true">
+                    <span /><span /><span />
+                  </div>
+                </div>
+                <span className="text-xs text-gray-500 mt-2 group-hover:text-indigo-600 transition-colors">
+                  Click to chat →
+                </span>
+              </div>
             </div>
-          ))}
+          </button>
         </div>
       </section>
 
@@ -533,7 +560,11 @@ const PromoGiftsApp = () => {
         </div>
       </section>
 
-      {/* Helpful Tools Section - 3D Enhanced */}
+      {/* Helpful Tools section — temporarily hidden for Ava AI assistant
+          rollout (session 9 / task 14). JSX preserved in place; future
+          restore = remove the surrounding `{/* ... *\/}` wrapper. See
+          CLAUDE.md §49. */}
+      {false && (
       <section className="py-8 sm:py-12 lg:py-16 bg-gradient-to-br from-blue-50 via-purple-50/50 to-pink-50/30 relative overflow-hidden" data-tools-section>
         <div className="absolute inset-0 overflow-hidden pointer-events-none">
           <div className="absolute -top-40 -right-40 w-80 h-80 bg-gradient-to-br from-blue-300/20 via-purple-300/20 to-pink-300/20 rounded-full blur-3xl"></div>
@@ -730,8 +761,16 @@ const PromoGiftsApp = () => {
           </div>
         </div>
       </section>
+      )}
+      {/* end Helpful Tools — temporarily hidden, see CLAUDE.md §49 */}
 
-      {/* Blog Section */}
+      {/* Blog section — temporarily hidden for Ava AI assistant rollout
+          (session 9 / task 14). Same {false && (…)} wrapping pattern as
+          Helpful Tools above; using a conditional rather than a {/­* *­/}
+          block comment because the section contains nested {/­* *­/}
+          comments which would terminate an outer block comment early.
+          Future restore = remove the surrounding {false && (…)}. */}
+      {false && (
       <section className="py-6 sm:py-8 lg:py-12 bg-white">
         <div className="max-w-7xl mx-auto px-4">
           <div className="text-center mb-8 sm:mb-10">
@@ -818,6 +857,8 @@ const PromoGiftsApp = () => {
           </div>
         </div>
       </section>
+      )}
+      {/* end Blog section — temporarily hidden, see CLAUDE.md §49 */}
 
       {/* Footer */}
       <footer className="bg-gray-800 text-white py-6 sm:py-8 lg:py-12">

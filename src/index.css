@@ -8,3 +8,42 @@ body {
   max-width: 100vw;
   position: relative;
 }
+
+/* Ava AI assistant card — homepage. CLAUDE.md §49.
+   Cursor: solid bar that blinks at 1Hz. Sits inline after the
+   typewriter text via <span class="ava-cursor" />. */
+.ava-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: #6366f1; /* indigo-500 */
+  animation: ava-cursor-blink 1s steps(2, start) infinite;
+}
+@keyframes ava-cursor-blink {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0; }
+}
+
+/* Three small dots that pulse out of phase to suggest Ava is "thinking".
+   Rendered inside <div class="ava-thinking-dots"><span/><span/><span/></div>. */
+.ava-thinking-dots {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+.ava-thinking-dots span {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background: #a5b4fc; /* indigo-300 */
+  animation: ava-thinking-pulse 1.4s ease-in-out infinite;
+}
+.ava-thinking-dots span:nth-child(2) { animation-delay: 0.2s; }
+.ava-thinking-dots span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes ava-thinking-pulse {
+  0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+  40%           { transform: scale(1);   opacity: 1; }
+}

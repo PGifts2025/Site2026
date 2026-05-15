@@ -75,6 +75,41 @@ export default function AIChatWidget() {
   const [quotaStatus, setQuotaStatus] = useState(null);
   const [error, setError] = useState(null);
   const scrollRef = useRef(null);
+  const textareaRef = useRef(null);
+
+  // Listen for `pgifts:open-chat` from the homepage Ava card (and any
+  // future programmatic opener). Detail shape:
+  //   { prefill?: string, welcomeMessage?: string }
+  // Behaviour:
+  //   - setOpen(true)
+  //   - setInput(prefill) when provided (allows empty string to clear)
+  //   - prepend welcomeMessage as an assistant message IF not already
+  //     at the top of messages (idempotent — re-clicks don't double
+  //     the welcome). Does NOT touch quota or hit the API.
+  //   - auto-focus the textarea after the panel mounts.
+  // CLAUDE.md §49.
+  useEffect(() => {
+    const handler = (e) => {
+      setOpen(true);
+      if (typeof e?.detail?.prefill === 'string') {
+        setInput(e.detail.prefill);
+      }
+      const welcome = e?.detail?.welcomeMessage;
+      if (typeof welcome === 'string' && welcome.length > 0) {
+        setMessages((m) => {
+          if (m[0]?.role === 'assistant' && m[0]?.content === welcome) return m;
+          return [{ role: 'assistant', content: welcome, tool_calls: [], products: [] }, ...m];
+        });
+      }
+      // Wait for the panel to mount (the {open && (...)} branch
+      // renders the textarea conditionally).
+      setTimeout(() => {
+        try { textareaRef.current?.focus(); } catch { /* ignore */ }
+      }, 50);
+    };
+    window.addEventListener('pgifts:open-chat', handler);
+    return () => window.removeEventListener('pgifts:open-chat', handler);
+  }, []);
 
   // Auth flag lookup whenever user changes.
   useEffect(() => {
@@ -233,6 +268,7 @@ export default function AIChatWidget() {
             )}
             <div style={inputRowStyle}>
               <textarea
+                ref={textareaRef}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKey}
