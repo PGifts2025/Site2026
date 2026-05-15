@@ -3811,3 +3811,55 @@ Checklist before touching any per-position pricing code:
 | `api/ai/chat.js` | `slimProduct` sends inclusive price (sell_price + delivery share at tier.min_qty) |
 | `api/search-products.js` | `unit_price_at_quantity` = sell_price + delivery share at filter qty |
 | `scripts/lib/ai-system-prompt.js` | One-paragraph addition: prices include UK delivery; non-UK firms at quote time |
+
+---
+
+## 47. AI TOOL sub_category + supplierSlug — CROSS-SUPPLIER FILTER BIAS
+
+The `searchProducts` tool's `sub_category` parameter is **exact-match,
+case-sensitive** against `supplier_products.sub_category`. Different
+suppliers use different naming conventions:
+
+| Sub-category concept | Laltex value | PGifts Direct value |
+|---|---|---|
+| Cotton T-shirts | `T-shirts` (lowercase s) | `T-shirts` (normalised in [20260516](../supabase/migrations/20260516_normalise_subcategory_casing.sql); was `T-Shirts` pre-Task 11) |
+| Polos / Hoodies / Sweatshirts | identical | identical |
+| Coffee Cups (PGifts) ≈ travel mugs (Laltex) | `Plastic Travel Mugs`, `Ceramic Mug`, `Metal Travel Mugs` | `Coffee Cups` |
+| Tote bags | `Shoppers`, `Cooler Bags`, `Gift Bags` | `Cotton Bags`, `Canvas Bags`, `Recycled Canvas Bags` |
+| Notebooks | `Notebooks` (one bucket) | `A5 Notebooks`, `A6 Pocket Notebooks` |
+
+**Setting `sub_category` typically restricts results to one supplier.**
+This is a data-layer constraint, not a ranking bias — it filters at
+candidate selection inside `rpc_search_supplier_products`, before any
+scoring. The tool description in `scripts/lib/ai-tools.js` warns Claude
+off cross-supplier sub_category filtering; the natural-language query
+is the right primary signal for cross-supplier searches.
+
+The `supplierSlug` parameter should only be set when the customer
+**explicitly names** a supplier preference (e.g. "show me PGifts Direct
+cables") or asks for live-design-preview / Designer-compatible products
+(which are PGifts-Direct-only at present). Subjective qualifiers like
+"premium" or "highest quality" do NOT justify a supplierSlug filter.
+
+### 47.1 Invariants — DO NOT BREAK
+
+- **Do NOT add `sub_category` example values to the tool description
+  that match only one supplier's vocabulary.** Task 6 found the
+  pre-Task-11 examples (`"T-Shirts", "Charging Cables", "Power Banks",
+  "Coffee Cups", "Travel Mugs"`) were all PGifts Direct casing — that
+  taught Claude to pass values that silently excluded the entire
+  Laltex pool.
+- **Do NOT re-introduce the `T-Shirts` (capital S) casing.** Future
+  PGifts Direct curation should use the normalised `T-shirts` form.
+  Run [20260516_normalise_subcategory_casing.sql](../supabase/migrations/20260516_normalise_subcategory_casing.sql)
+  as a one-shot only — it's idempotent (UPDATE WHERE = 'T-Shirts'
+  matches zero rows after first apply).
+- **Do NOT propose `supplierSlug='pgifts-direct'` as the answer to
+  "show me your most premium options"** — there's no objective
+  definition of premium in the catalogue, and locking the search to
+  25 products on subjective grounds defeats the cross-supplier
+  retrieval the system is designed for.
+- **Do NOT touch HOUSE_MULTIPLIER (1.05) or CORE_MULTIPLIER (1.30 in
+  search, 1.15 in find-alternatives).** Dave's decision: the small
+  house multiplier stays as a tiebreaker; the core multiplier
+  legitimately surfaces Designer-integrated SKUs for design queries.

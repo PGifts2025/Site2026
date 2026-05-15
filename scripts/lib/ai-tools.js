@@ -40,7 +40,7 @@ export const SEARCH_PRODUCTS_TOOL = {
       sub_category: {
         type: 'string',
         description:
-          'Restrict to a specific sub-category (exact match), e.g. "T-Shirts", "Charging Cables", "Power Banks", "Coffee Cups", "Travel Mugs". Only useful when you already know the right bucket.',
+          'Restrict to a specific sub-category (EXACT match — case sensitive). Use ONLY when the customer named the exact sub-category, or after a prior search showed you the exact string. Different suppliers use different sub-category names (e.g. Laltex uses "T-shirts", "Plastic Travel Mugs", "Ceramic Mug", "Shoppers"; PGifts Direct uses "Coffee Cups", "Cotton Bags"). Setting this filter typically restricts results to a single supplier — prefer leaving it unset and relying on the natural-language query unless you have a specific reason.',
       },
       minOrderQuantity: {
         type: 'integer',
@@ -74,7 +74,7 @@ export const SEARCH_PRODUCTS_TOOL = {
         type: 'string',
         enum: ['laltex', 'pgifts-direct'],
         description:
-          'Restrict to one supplier. "pgifts-direct" is our 25-product curated range with Designer integration. Use when the customer asks for designer-customisable products or your most premium options.',
+          'Restrict to one supplier. Use ONLY when the customer explicitly names a supplier preference (e.g. "show me PGifts Direct cables", "Laltex tote bags only"), or when the customer asks for live-design-preview-compatible products (which are PGifts-Direct-only at present). Do NOT filter to one supplier on subjective grounds like "premium" or "highest quality".',
       },
       product_indicator: {
         type: 'string',
