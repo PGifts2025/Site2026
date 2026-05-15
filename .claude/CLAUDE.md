@@ -3863,3 +3863,96 @@ cables") or asks for live-design-preview / Designer-compatible products
   search, 1.15 in find-alternatives).** Dave's decision: the small
   house multiplier stays as a tiebreaker; the core multiplier
   legitimately surfaces Designer-integrated SKUs for design queries.
+
+---
+
+## 48. PRICING PRECISION — 2dp AT THE BOUNDARY
+
+All Laltex price computations in
+[`LaltexProductView.jsx`](../src/components/LaltexProductView.jsx) round
+to **2dp at the final `unitPrice` step** (not 4dp internally then 2dp
+at display).
+
+The reason is structural: every price column in the schema is
+`numeric(10,2)` and Postgres silently truncates anything finer on
+INSERT. Confirmed live via `information_schema.columns`:
+
+| Column | Type |
+|---|---|
+| `quote_items.unit_price` | `numeric(10,2)` |
+| `order_items.unit_price` | `numeric(10,2)` |
+| `order_items.line_total` | `numeric(10,2)` |
+| `quotes.total_amount` | `numeric(10,2)` |
+| `orders.total_amount` | `numeric(10,2)` |
+
+The `recompute_quote_total` trigger
+([20260422_quote_total_sync_trigger.sql](../supabase/migrations/20260422_quote_total_sync_trigger.sql))
+recomputes `quotes.total_amount = SUM(quantity * unit_price)` after
+every INSERT/UPDATE on `quote_items`. If `unit_price` lands at 2dp
+truncation while the app inserted a precise 4dp-derived `total_amount`,
+the trigger silently overrides with the SUM of the truncated rows —
+producing a "displayed £X.XX, charged £Y.YY" mismatch where the
+customer paid MORE than the screen showed.
+
+### Worked example (the bug this section was written for)
+
+AF0001 at qty 25, Front Chest Embroidery Small (1 colour), 22% margin:
+
+```
+Pre-fix:
+  unitPrice (4dp)   = 6.72 + 3.8186 + 0.5783 = 11.1169
+  totalPrice (2dp)  = round(25 × 11.1169, 2) = £277.92      ← displayed
+  quote_items.unit_price stored = TRUNC(11.1169, 2) = 11.12
+  recompute_quote_total fires:
+    quotes.total_amount = SUM(25 × 11.12) = £278.00          ← overrides
+  Stripe reads quotes.total_amount and charges £278.00       ← actual charge
+  → 8p mismatch, customer sees £277.92 and pays £278.00
+
+Post-fix:
+  unitPrice (2dp)   = round(11.1169, 2)        = 11.12
+  totalPrice (2dp)  = round(25 × 11.12, 2)     = £278.00     ← displayed
+  quote_items.unit_price stored                = 11.12
+  recompute_quote_total: quotes.total_amount   = £278.00
+  Stripe charges £278.00                                     ← matches display
+```
+
+### DO NOT
+
+- Round to >2dp anywhere on the chain from `unitPrice` →
+  `quote_items.unit_price` → `confirm_payment_atomic` →
+  `orders.total_amount` → Stripe. The 4dp `.toFixed(4)` that used to
+  sit at LaltexProductView's unitPrice was the proximate cause; do
+  not reintroduce it.
+- Reintroduce 4dp precision on any of the five price columns above
+  without auditing every consumer (admin views, email templates,
+  exports, the recompute trigger) and the math chain end-to-end.
+- "Helpfully" precompute a high-precision `unit_price` at insert time
+  thinking the trigger won't fire — the trigger fires AFTER INSERT
+  and overrides whatever `total_amount` was just stored.
+
+### DO
+
+- Display the rounded value the customer will be charged. The
+  breakdown panel components (product / print / delivery) are each
+  rounded independently via `formatGBP()` and may not sum to the
+  displayed unit price by 1p in edge cases — this is acceptable
+  transparency. The unit price line is the authoritative customer-
+  facing number.
+- For new pricing logic, round at the boundary where the result is
+  customer-visible OR persisted, whichever comes first.
+
+### Where 4dp precision is STILL acceptable
+
+The `print_areas` JSONB selections on `quote_items` (LaltexProductView
+line ~396: `unit_price: +p.unit.toFixed(4)`) is an audit trail field,
+NOT a price column. Postgres does not truncate JSONB numeric values,
+and no trigger sums them. The 4dp precision there records the
+per-position cost basis at quote time for back-office reference.
+
+Sync-time `applyMarginsInPlace` ([scripts/lib/laltex-margin.js](../scripts/lib/laltex-margin.js))
+writes `print_details[i].print_price[j].sell_price` at 4dp inside the
+JSONB — also acceptable for the same reason. The 4dp print sell_price
+is consumed by `LaltexProductView` and SUMMED into `unitPrice`, which
+then rounds to 2dp at the boundary. So the print precision is
+preserved through the math and collapsed only at the persistence /
+display boundary, exactly as intended.
