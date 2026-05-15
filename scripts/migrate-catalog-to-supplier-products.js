@@ -167,13 +167,26 @@ function shapeProductPricing(tiers) {
   return tiers
     .slice()
     .sort((a, b) => a.min_quantity - b.min_quantity)
-    .map((t) => ({
-      min_qty: t.min_quantity,
-      max_qty: t.max_quantity, // already nullable; null = open-ended top tier
-      price: t.price_per_unit != null ? Number(t.price_per_unit) : null,
-      is_poa: false,
-      note: t.is_popular ? 'popular' : null,
-    }));
+    .map((t) => {
+      const price = t.price_per_unit != null ? Number(t.price_per_unit) : null;
+      // PGifts Direct prices in catalog_pricing_tiers.price_per_unit are
+      // ALREADY margin-baked at the catalog layer (manually entered with
+      // the 22/20/18% rule applied). For uniform cross-supplier reads
+      // (CLAUDE.md §46), mirror them as both `price` AND `sell_price`,
+      // and stamp margin_applied_pct=0 to signal "no further margin to
+      // apply at read time". shipping_charges stays empty so the
+      // read-time delivery helper returns 0 — delivery is assumed to be
+      // baked into the PGifts Direct margin already.
+      return {
+        min_qty: t.min_quantity,
+        max_qty: t.max_quantity, // already nullable; null = open-ended top tier
+        price,
+        sell_price: price,
+        margin_applied_pct: 0,
+        is_poa: false,
+        note: t.is_popular ? 'popular' : null,
+      };
+    });
 }
 
 /**
@@ -196,14 +209,22 @@ function shapePrintDetails(printRows) {
       if (a.colour_count !== b.colour_count) return a.colour_count - b.colour_count;
       return a.min_quantity - b.min_quantity;
     })
-    .map((r) => ({
-      NumColours: r.colour_count,
-      NumPosition: 1,
-      MinQuantity: r.min_quantity,
-      MaxQuantity: r.max_quantity, // nullable
-      Price: r.price_per_unit != null ? Number(r.price_per_unit) : null,
-      ColourVariant: r.colour_variant, // 'white' | 'coloured'
-    }));
+    .map((r) => {
+      const price = r.price_per_unit != null ? Number(r.price_per_unit) : null;
+      // Same rationale as shapeProductPricing above: PGifts Direct print
+      // prices are already margin-baked. Mirror sell_price = price,
+      // margin_applied_pct = 0. CLAUDE.md §46.
+      return {
+        NumColours: r.colour_count,
+        NumPosition: 1,
+        MinQuantity: r.min_quantity,
+        MaxQuantity: r.max_quantity, // nullable
+        Price: price,
+        sell_price: price,
+        margin_applied_pct: 0,
+        ColourVariant: r.colour_variant, // 'white' | 'coloured'
+      };
+    });
   return [{
     PrintClass: 'CURATED',
     PrintType: 'Spot Print',
@@ -349,6 +370,12 @@ async function shapeOne(ctx, product, supplierId, warnings) {
     // present in the body, so omitting them is the right pattern.
     lead_time_days: null,        // catalog_products has no lead-time column today
     express_available: false,    // no PGifts-Direct products are express
+    // Task 10 / CLAUDE.md §46: mirror rows already have margin baked at
+    // the catalog layer, so margin_applied_pct=0 is set per-tier above
+    // and the schedule version stamp goes here. margin_pct_override is
+    // omitted (admin-owned column; never touched by sync or mirror).
+    margin_default_schedule_version: 1,
+    margin_last_applied_at: new Date().toISOString(),
     raw_payload: {
       source: 'catalog_products',
       migrated_at: new Date().toISOString(),

@@ -48,6 +48,8 @@ import {
 
 import { supabase } from '../services/supabaseService';
 import { useAuth } from '../context/AuthContext';
+import { deliveryPerUnit } from '../../scripts/lib/laltex-delivery.js';
+import { scheduleMarginForTier } from '../../scripts/lib/laltex-margin.js';
 
 // ---------------------------------------------------------------------------
 // Pricing helpers
@@ -237,10 +239,14 @@ const LaltexProductView = ({ product }) => {
     [product?.pricingTiers, quantity],
   );
 
-  // Per-position cost contribution at current qty. Each enabled
-  // position adds (all_in_unit_price for its selected row's (qty tier
-  // × colour count)). Returns enough info to also build the quote
-  // jsonb payload (position, area, type, class, num_colours, unit).
+  // Per-position cost contribution at current qty. Each enabled position
+  // adds the tier's customer-facing all-in margined unit price (setup
+  // amortisation + margin baked at sync time per CLAUDE.md §46).
+  //
+  // CRITICAL (CLAUDE.md §46 R6): tier.allInUnitPrice now contains
+  // setup_amortised AND margin. Do NOT re-add setup_charge / setupPerUnit
+  // here — that would double-bill setup. The legacy fallback path that
+  // added setup separately has been removed in Stage 1.
   const positionContributions = useMemo(() => {
     const groups = product?.printDetails?.positionGroups || [];
     const out = [];
@@ -258,23 +264,14 @@ const LaltexProductView = ({ product }) => {
         });
         return;
       }
-      // Prefer all_in_unit_price (setup-baked at sync time). Fall back
-      // to raw print price + on-the-fly setup baking if missing.
-      let unit = tier.allInUnitPrice;
-      if (unit == null && tier.price != null) {
-        const setup = row.setupCharge || 0;
-        const extra = row.extraColourSetupCharge || 0;
-        const extraCols = Math.max(0, (pick.colours || 1) - 1);
-        const minQ = tier.minQty || quantity || 1;
-        unit = tier.price + setup / minQ + (extraCols * extra) / minQ;
-      }
+      const unit = tier.allInUnitPrice != null ? Number(tier.allInUnitPrice) : null;
       out.push({
         name: g.name,
         label,
         row,
         colours: pick.colours,
         unit,
-        rawUnit: tier.price,
+        rawUnit: tier.rawPrice ?? tier.price,
         tier,
         isPoa: !!tier.isPoa,
       });
@@ -288,10 +285,33 @@ const LaltexProductView = ({ product }) => {
     0,
   );
   const isAnyPoa = baseTier?.isPoa || positionContributions.some((p) => p.isPoa);
+
+  // UK STANDARD delivery share at the customer's actual quantity, with
+  // margin applied to the delivery share at the customer's qty rate.
+  // Per Dave's decision B1-A: delivery is a READ-TIME concern; sync-stored
+  // sell_price does NOT include delivery. CLAUDE.md §46.
+  //
+  // Delivery is 0 when shipping_charges is empty (PGifts Direct mirror
+  // rows) or quantity is invalid — the customer-facing unit price then
+  // collapses cleanly to (product + print) with no delivery line.
+  const deliveryUnitWithMargin = useMemo(() => {
+    if (isAnyPoa || basePrice == null) return 0;
+    if (!Number.isFinite(quantity) || quantity <= 0) return 0;
+    const total = deliveryPerUnit(
+      product?.shippingCharges,
+      product?.piecesPerCarton,
+      quantity,
+      'ukstandard',
+    );
+    if (!Number.isFinite(total) || total <= 0) return 0;
+    const marginPct = scheduleMarginForTier(quantity, product?.marginPctOverride ?? null);
+    return Number((total * (1 + marginPct)).toFixed(4));
+  }, [product?.shippingCharges, product?.piecesPerCarton, product?.marginPctOverride, quantity, isAnyPoa, basePrice]);
+
   const unitPrice = basePrice == null || isAnyPoa
     ? null
-    : basePrice + printPerUnitTotal;
-  const totalPrice = unitPrice == null ? null : unitPrice * quantity;
+    : Number((basePrice + printPerUnitTotal + deliveryUnitWithMargin).toFixed(4));
+  const totalPrice = unitPrice == null ? null : Number((unitPrice * quantity).toFixed(2));
 
   const isOrderValid = () => {
     if (quantity < minQty) return false;
@@ -885,11 +905,11 @@ const LaltexProductView = ({ product }) => {
                               {formatGBP(totalPrice || 0)}
                             </span>
                           </div>
-                          {positionContributions.length > 0 && (
+                          {(positionContributions.length > 0 || deliveryUnitWithMargin > 0) && (
                             <div className="mt-2 text-xs text-gray-500 space-y-0.5">
                               {basePrice != null && (
                                 <div className="flex justify-between">
-                                  <span>Base</span>
+                                  <span>Product</span>
                                   <span>{formatGBP(basePrice)}</span>
                                 </div>
                               )}
@@ -903,6 +923,12 @@ const LaltexProductView = ({ product }) => {
                                   </span>
                                 </div>
                               ))}
+                              {deliveryUnitWithMargin > 0 && (
+                                <div className="flex justify-between">
+                                  <span>UK delivery</span>
+                                  <span>{formatGBP(deliveryUnitWithMargin)}</span>
+                                </div>
+                              )}
                             </div>
                           )}
                         </div>

@@ -3644,3 +3644,170 @@ means Supabase rejects every event with 401 before the handler runs.
   understanding the CAS contract.** Two callers exist today (redirect
   + webhook). Any third caller must also tolerate `stamped_by_other_path`
   as a non-error outcome.
+
+---
+
+## 45. SUPPLIER PRODUCT CODE CASING — ALREADY DOCUMENTED §33
+
+(Section number reserved to keep numbering aligned with prior commits;
+see §33 for the canonical guidance on `getSupplierProductByCode`.)
+
+---
+
+## 46. LALTEX MARGIN + DELIVERY LAYER (session 9 / Stage 1)
+
+Customer-facing Laltex prices are derived at TWO layers:
+
+1. **Sync-time** — `supplier_products.product_pricing[i].sell_price` and
+   `print_details[i].print_price[j].sell_price` are computed by
+   [`scripts/lib/laltex-margin.js`](../scripts/lib/laltex-margin.js)
+   and written by the nightly sync + on-demand recompute. They contain
+   product cost + setup amortisation (print only) + margin.
+2. **Read-time** — UK STANDARD delivery share at the customer's actual
+   order quantity, with margin applied, computed by
+   [`scripts/lib/laltex-delivery.js`](../scripts/lib/laltex-delivery.js).
+   Added to the sync-stored `sell_price` at every consumer site:
+   `LaltexProductView` (Configure & Quote), `api/search-products.js`
+   (`unit_price_at_quantity`), `api/ai/chat.js` (`slimProduct`),
+   `AIChatWidget` ProductCard ("From £x.xx (MOQ+)").
+
+### 46.1 The all-in cost equation
+
+```
+At SYNC time (applyMarginsInPlace, per tier in product_pricing[]):
+  cost_basis      = tier.price                            (NO delivery — read-time)
+  tier.sell_price = round(cost_basis × (1 + margin), 2)
+
+At SYNC time (applyMarginsInPlace, per tier in print_details[i].print_price[j]):
+  setup_amortised = setup_charge / tier.min_qty
+  extra_setup_am  = max(num_colours-1, 0) × extra_setup / tier.min_qty
+  cost_basis      = tier.price + setup_amortised + extra_setup_am
+  tier.sell_price = round(cost_basis × (1 + margin), 4)
+
+At READ time (LaltexProductView, customer's actual qty Q):
+  productSell        = product_pricing_tier_for_Q.sell_price        (synced)
+  printSell          = sum over enabled positions of position.sell_price (synced)
+  marginPctForQ      = scheduleMarginForTier(Q, override)
+  deliveryTotal      = computeDeliveryForQuantity(shippingCharges, piecesPerCarton, Q)
+  deliveryPerUnit    = deliveryTotal / Q
+  deliveryWithMargin = deliveryPerUnit × (1 + marginPctForQ)
+  unitPrice          = productSell + printSell + deliveryWithMargin
+  totalPrice         = unitPrice × Q
+```
+
+### 46.2 Default margin schedule (mirrors PGifts Direct §6.2)
+
+| Tier min_qty | Margin |
+|---|---|
+| 1 – 99   | 22% |
+| 100 – 249 | 20% |
+| 250 +    | 18% |
+
+Per-product override via `supplier_products.margin_pct_override`
+(decimal [0, 1)). NULL means use the schedule.
+
+### 46.3 Known limitation — setup amortisation uses tier.min_qty (not actual qty)
+
+Print-tier setup amortisation divides the supplier setup charge by
+`tier.min_qty`, NOT by the customer's actual order quantity. So at
+qty 26 the setup is amortised as if qty 25; at qty 30 still as if 25;
+only at qty 50 (the next tier band) does the setup share drop.
+
+This produces a small **step at every tier boundary** in the print-cost
+line. It is consistent with how PGifts Direct prices were originally
+baked, and was an explicit Stage 1 simplification. Do NOT attempt to
+re-amortise setup at sync time using the actual customer qty — that
+would require recomputing sell_price for every product on every quote
+view and break the "synced sell_price is the single source of truth"
+contract (§46.5).
+
+### 46.4 ⚠️ DO NOT — SETUP DOUBLE-COUNTING (R6, top-level warning)
+
+Setup amortisation is **baked into `print_details[i].print_price[j].sell_price`**.
+This is a *very* common foot-gun.
+
+**Any future code that adds `setup_charge` separately when computing a
+per-position unit cost will double-bill the customer.**
+
+The legacy fallback path in `LaltexProductView` that added setup
+on-the-fly was REMOVED in Stage 1 precisely because it would
+double-count now that sell_price already includes setup. Do not
+re-introduce that path. Do not look at `setup_charge` from a consumer.
+
+Checklist before touching any per-position pricing code:
+
+- [ ] Am I reading `tier.sell_price` (or `tier.allInUnitPrice` which is
+      now its alias)? ✅ OK.
+- [ ] Am I reading `tier.price` (raw) and adding `setup_charge`? ❌
+      You have just doubled the setup bill. STOP.
+
+### 46.5 Invariants — DO NOT BREAK
+
+- **Do NOT bake delivery into sync-stored `sell_price`.** Decision B1-A.
+  `sell_price` is product + setup (print tier only) + margin, no
+  delivery. Delivery is added at every read site via
+  `computeDeliveryForQuantity`. Baking delivery at sync would either
+  require a fixed "representative" quantity (inaccurate at actual qty)
+  or a double-source between sync and read (fragile arithmetic).
+- **Do NOT include `margin_pct_override` in any UPSERT body written by
+  sync, the single-product debug script, or the mirror script.** It is
+  admin-owned state. The CLI `--override` flag in
+  `sync-laltex-product.js` applies the override to the computed
+  sell_price values WITHOUT persisting the override itself.
+- **Do NOT add setup_charge separately at a print-price consumer site.**
+  See §46.4 above.
+- **Do NOT change `DEFAULT_SCHEDULE_VERSION` without running
+  `recompute-laltex-margins.js --stale-only` to align every row.** The
+  schedule version stamp is the drift-detection anchor — bumping it
+  without recomputing leaves rows on the old schedule indefinitely.
+- **Do NOT send raw cost prices to the AI model.** `slimProduct` does
+  a silent swap: the `price` key on each pricing summary entry carries
+  the inclusive customer price (sell_price + UK STANDARD delivery
+  share at the tier's representative qty + margin on the delivery
+  share). The model never sees cost basis or margin percentages.
+- **Do NOT touch `catalog_products`, `catalog_pricing_tiers`, or
+  `catalog_print_pricing`** in this work. PGifts Direct prices are
+  already margin-baked at the catalog layer; the mirror script
+  ([`migrate-catalog-to-supplier-products.js`](../scripts/migrate-catalog-to-supplier-products.js))
+  reflects them into `supplier_products` with `sell_price = price` and
+  `margin_applied_pct = 0` so the read path is uniform across
+  suppliers. A future retrofit (split cost vs sell on the catalog
+  side) is post-launch admin-dashboard work; do NOT preempt.
+- **Do NOT remove `tier.allInUnitPrice` from the normalised Laltex
+  product shape.** It is the back-compat alias for `tier.sell_price`
+  used by `LaltexProductView`. Removing it requires touching the
+  component.
+- **Do NOT change the carton-tier lookup math** in
+  `computeDeliveryForQuantity` without re-verifying against the live
+  Laltex `ShippingCharge` shape (see CLAUDE.md §27 / Task 9 audit).
+  The "11+" open-band uses `PerCartonCharge × cartons`; the dense
+  1..10 rows use the flat `ShippingCharge` total. Mixing them up
+  silently produces wrong delivery totals.
+
+### 46.6 Recompute flow
+
+| Event | Action |
+|---|---|
+| Default schedule changes (laltex-margin.js edit + version bump) | Run `node scripts/recompute-laltex-margins.js --stale-only` |
+| Admin updates a single product's `margin_pct_override` | Run `node scripts/recompute-laltex-margins.js <CODE>` |
+| Full refresh after a deploy | Run `node scripts/recompute-laltex-margins.js` |
+| Laltex feed price changes | Naturally picked up by next nightly sync; recompute is automatic in `syncFullCatalogue` |
+
+### 46.7 Files
+
+| File | Role |
+|---|---|
+| `supabase/migrations/20260515_supplier_margin_and_delivery_layer.sql` | New columns: `margin_pct_override`, `margin_default_schedule_version`, `margin_last_applied_at` |
+| `supabase/migrations/20260515_search_maxprice_uses_sell_price.sql` | `rpc_search_supplier_products` replacement — filter on sell_price, return shipping_charges + carton_qty |
+| `scripts/lib/laltex-margin.js` | Schedule + `applyMarginsInPlace` (sync-time + recompute-time) |
+| `scripts/lib/laltex-delivery.js` | `computeDeliveryForQuantity`, `deliveryPerUnit` (read-time at every consumer) |
+| `scripts/lib/laltex-sync.js` | Wires `applyMarginsInPlace` into the nightly sync loop |
+| `scripts/sync-laltex-product.js` | Single-product debug; supports `--override <pct>` for ad-hoc tests |
+| `scripts/recompute-laltex-margins.js` | All / by-code / `--stale-only` recompute modes |
+| `scripts/migrate-catalog-to-supplier-products.js` | PGifts Direct mirror — writes `sell_price = price`, `margin_applied_pct = 0` |
+| `src/services/productCatalogService.js` | Reads `sell_price` from tier JSONB; exposes `shippingCharges`, `piecesPerCarton`, `marginPctOverride` on the normalised product |
+| `src/components/LaltexProductView.jsx` | Wires `deliveryPerUnit` into `unitPrice`; breakdown panel adds "UK delivery" line |
+| `src/components/AIChatWidget/AIChatWidget.jsx` | ProductCard "From £x.xx (MOQ+)" — picks the MOQ-or-greater tier |
+| `api/ai/chat.js` | `slimProduct` sends inclusive price (sell_price + delivery share at tier.min_qty) |
+| `api/search-products.js` | `unit_price_at_quantity` = sell_price + delivery share at filter qty |
+| `scripts/lib/ai-system-prompt.js` | One-paragraph addition: prices include UK delivery; non-UK firms at quote time |

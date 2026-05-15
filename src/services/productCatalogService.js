@@ -1176,13 +1176,26 @@ export const normaliseProduct = (row, supplier) => {
       imageType: 'main',
       sortOrder: i,
     })),
+    // sell_price (sync-time margined, NO delivery — added at read time via
+    // laltex-delivery.js helper) is the customer-facing per-unit number.
+    // Falls back to raw price during the deploy window before
+    // recompute-laltex-margins.js has run on a given row. CLAUDE.md §46.
     pricingTiers: productPricing.map((t) => ({
       minQty: t.min_qty,
       maxQty: t.max_qty,
-      pricePerUnit: t.price,
+      pricePerUnit: t.sell_price != null ? Number(t.sell_price) : Number(t.price),
+      marginAppliedPct: t.margin_applied_pct ?? null,
+      rawPrice: t.price != null ? Number(t.price) : null,
       isPoa: !!t.is_poa,
       note: t.note || null,
     })),
+    // Read-time delivery + margin scaffolding for LaltexProductView.
+    // shippingCharges = jsonb from supplier_products.shipping_charges
+    // piecesPerCarton = supplier_products.carton_qty (Laltex's CartonQty)
+    // marginPctOverride = supplier_products.margin_pct_override or null
+    shippingCharges: Array.isArray(row.shipping_charges) ? row.shipping_charges : [],
+    piecesPerCarton: Number.isFinite(Number(row.carton_qty)) ? Number(row.carton_qty) : null,
+    marginPctOverride: row.margin_pct_override != null ? Number(row.margin_pct_override) : null,
     pricingModel,
     // Grouped by unique print_position. Each `print_details[i]` row is
     // a (position × size × print_type) tuple with its own price tiers
@@ -1236,16 +1249,35 @@ function buildPositionGroups(printDetailsArr) {
       extraColourSetupCharge: pd.extra_colour_setup_charge ?? null,
       defaultOption: !!(pd.default_print_option ?? pd.DefaultPrintOption),
       notes: pd.notes || pd.Notes || null,
-      tiers: (pd.print_price || pd.PrintPrice || []).map((t) => ({
-        numColours: t.num_colours ?? t.NumColours,
-        numPosition: t.num_position ?? t.NumPosition,
-        minQty: t.min_qty ?? t.MinQuantity,
-        maxQty: t.max_qty ?? t.MaxQuantity,
-        price: t.price ?? t.Price,
-        isPoa: !!(t.is_poa ?? false),
-        colourVariant: t.colour_variant ?? t.ColourVariant ?? null,
-        allInUnitPrice: t.all_in_unit_price ?? null,
-      })),
+      tiers: (pd.print_price || pd.PrintPrice || []).map((t) => {
+        // sell_price has setup amortisation baked in AND margin applied
+        // (CLAUDE.md §46 — Dave's D1 decision). Consumers MUST NOT add
+        // setup_charge separately when computing per-position unit cost.
+        //
+        // Fallbacks for transitional rows that haven't been recomputed yet:
+        //   - allInUnitPrice (raw, setup-amortised, NO margin)
+        //   - all_in_unit_price snake-case from JSONB
+        //   - tier.price (raw print, no setup, no margin)
+        const rawPrice = t.price ?? t.Price ?? null;
+        const allInRaw = t.all_in_unit_price ?? null;
+        const sellMargined = t.sell_price ?? null;
+        // pricePerUnit: customer-facing all-in margined per-unit print cost.
+        const pricePerUnit = sellMargined != null
+          ? Number(sellMargined)
+          : (allInRaw != null ? Number(allInRaw) : (rawPrice != null ? Number(rawPrice) : null));
+        return {
+          numColours: t.num_colours ?? t.NumColours,
+          numPosition: t.num_position ?? t.NumPosition,
+          minQty: t.min_qty ?? t.MinQuantity,
+          maxQty: t.max_qty ?? t.MaxQuantity,
+          price: pricePerUnit,                   // customer-facing all-in
+          rawPrice: rawPrice != null ? Number(rawPrice) : null,
+          isPoa: !!(t.is_poa ?? false),
+          colourVariant: t.colour_variant ?? t.ColourVariant ?? null,
+          allInUnitPrice: pricePerUnit,          // back-compat alias (LaltexProductView)
+          marginAppliedPct: t.margin_applied_pct ?? null,
+        };
+      }),
       coordinates: pd.print_area_coordinates || pd.PrintAreaCoordinates || [],
     });
   }

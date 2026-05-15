@@ -93,6 +93,8 @@ The catalogue includes:
 
 Many products support multi-position printing (Front, Back, Wrap) and a range of print methods. Pricing scales with quantity. Typical tiers run from 25 units up to 5000+.
 
+Prices shown to customers include UK standard delivery, setup, and print costs at the quoted quantity. Non-UK delivery (Belfast, Channel Islands, Ireland) is firmed at quote time and may add a small upcharge. Customers do not see margin or cost workings — only the bundled per-unit price.
+
 A subset of products are PGifts Direct, our curated range with Designer integration for live previews, hex-accurate colour swatches, and competitive margins. The remainder are sourced via our Laltex supplier integration.
 
 NEXT STEPS YOU CAN OFFER
