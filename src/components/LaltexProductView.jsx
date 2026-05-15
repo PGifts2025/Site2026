@@ -308,9 +308,18 @@ const LaltexProductView = ({ product }) => {
     return Number((total * (1 + marginPct)).toFixed(4));
   }, [product?.shippingCharges, product?.piecesPerCarton, product?.marginPctOverride, quantity, isAnyPoa, basePrice]);
 
+  // Round to 2dp at the source. Every downstream price column —
+  // quote_items.unit_price, order_items.unit_price, order_items.line_total,
+  // quotes.total_amount, orders.total_amount — is numeric(10,2) and
+  // silently truncates anything finer on INSERT. If unitPrice is computed
+  // at 4dp here, the displayed totalPrice (quantity × precise unitPrice,
+  // rounded at display) and the Stripe-charged total (quantity ×
+  // 2dp-truncated unit_price, recomputed by recompute_quote_total trigger)
+  // drift apart by up to a few pence per order. The customer sees one
+  // total on screen and gets charged a different one. See CLAUDE.md §48.
   const unitPrice = basePrice == null || isAnyPoa
     ? null
-    : Number((basePrice + printPerUnitTotal + deliveryUnitWithMargin).toFixed(4));
+    : Number((basePrice + printPerUnitTotal + deliveryUnitWithMargin).toFixed(2));
   const totalPrice = unitPrice == null ? null : Number((unitPrice * quantity).toFixed(2));
 
   const isOrderValid = () => {
