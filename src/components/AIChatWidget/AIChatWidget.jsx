@@ -12,7 +12,15 @@
 // POST body — the server hashes it before storage.
 //
 // No localStorage usage for conversations (privacy + simplicity). Anon
-// conversations live in component state and vanish on close.
+// conversations live in component state. The header has two buttons:
+//   −  Minimise — collapses the panel but preserves messages, input,
+//                 and conversationId so the customer can resume.
+//   ×  Close   — collapses AND clears all client-side conversation
+//                 state. The server-side rolling 24h quota survives
+//                 either action (clearing the client doesn't reset
+//                 quota on the backend).
+// Re-opening from minimise scrolls to the bottom of the preserved
+// conversation. Re-opening from close shows the empty hint.
 
 import { useEffect, useRef, useState } from 'react';
 
@@ -119,17 +127,44 @@ export default function AIChatWidget() {
     return () => { cancelled = true; };
   }, [user]);
 
-  // Auto-scroll on new messages.
+  // Auto-scroll to bottom when:
+  //   (a) a new message arrives, OR
+  //   (b) the panel re-opens with preserved messages. The conditional
+  //       render of the panel at `{open && (…)}` remounts a fresh
+  //       scrollRef each open cycle, defaulting to scrollTop=0; without
+  //       this trigger, customers resuming a minimised conversation
+  //       would land scrolled to the top of the history.
   useEffect(() => {
-    if (scrollRef.current) {
+    if (open && scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages]);
+  }, [open, messages]);
 
   // Visibility gate.
   if (loading) return null;
   const visible = user ? profileEnabled : PUBLIC_ENABLED;
   if (!visible) return null;
+
+  // Minimise: collapse the panel, preserve everything. Re-opening
+  // (via launcher or another `pgifts:open-chat`) lands the customer
+  // back on the same conversation, scrolled to the bottom.
+  const handleMinimise = () => {
+    setOpen(false);
+  };
+
+  // Close: collapse + full client-side state clear. The server's
+  // rolling 24h quota is keyed on visitor_id_hash and is unaffected
+  // by clearing the client; we deliberately do NOT clear quotaStatus
+  // here so the displayed remaining-count keeps reflecting server
+  // reality (a customer who used 3/5 searches then closed should
+  // still see "2 searches left today" on next open).
+  const handleClose = () => {
+    setOpen(false);
+    setMessages([]);
+    setInput('');
+    setConversationId(null);
+    setError(null);
+  };
 
   const send = async () => {
     const text = input.trim();
@@ -193,15 +228,20 @@ export default function AIChatWidget() {
 
   return (
     <>
-      {/* Floating launcher */}
+      {/* Floating launcher. When a minimised conversation exists
+          (messages.length > 0), show a small indigo dot badge in the
+          top-right corner of the launcher so the customer knows there
+          is preserved chat waiting. The badge disappears on the next
+          full close. */}
       {!open && (
         <button
           type="button"
           onClick={() => setOpen(true)}
           style={launcherStyle}
-          aria-label="Open AI assistant"
+          aria-label={messages.length > 0 ? 'Resume AI conversation' : 'Open AI assistant'}
         >
           AI
+          {messages.length > 0 && <span style={launcherBadgeStyle} aria-hidden="true" />}
         </button>
       )}
 
@@ -209,7 +249,29 @@ export default function AIChatWidget() {
         <div style={panelStyle} role="dialog" aria-label="PGifts AI assistant">
           <div style={headerStyle}>
             <div>PGifts AI assistant <span style={{ opacity: 0.6, fontSize: 11 }}>(beta)</span></div>
-            <button type="button" style={closeBtnStyle} onClick={() => setOpen(false)} aria-label="Close">×</button>
+            <div style={headerBtnGroupStyle}>
+              <button
+                type="button"
+                style={iconBtnStyle}
+                onClick={handleMinimise}
+                aria-label="Minimise chat"
+                title="Minimise (keeps your conversation)"
+              >
+                {/* U+2212 minus sign — the universally understood
+                    minimise glyph (matches desktop window controls),
+                    renders consistently across fonts. */}
+                −
+              </button>
+              <button
+                type="button"
+                style={iconBtnStyle}
+                onClick={handleClose}
+                aria-label="Close and clear chat"
+                title="Close and clear chat"
+              >
+                ×
+              </button>
+            </div>
           </div>
 
           <div ref={scrollRef} style={historyStyle}>
@@ -456,13 +518,40 @@ const headerStyle = {
   alignItems: 'center',
   fontWeight: 600,
 };
-const closeBtnStyle = {
+// Shared style for the minimise (−) and close (×) header buttons.
+// Was `closeBtnStyle` pre-Task-16; renamed for the two-button pattern.
+const iconBtnStyle = {
   background: 'transparent',
   border: 'none',
   fontSize: 22,
   lineHeight: 1,
   cursor: 'pointer',
   color: '#6b7280',
+  padding: '0 6px',
+  minWidth: 24,
+};
+const headerBtnGroupStyle = {
+  display: 'flex',
+  gap: 2,
+  alignItems: 'center',
+};
+
+// Indigo dot badge on the launcher when a minimised conversation
+// exists. Sits in the launcher's top-right corner. The dark ring
+// (boxShadow) matches the launcher's black background so the badge
+// reads as a distinct visual element. Position: absolute is relative
+// to the launcher's position: fixed (fixed creates a positioning
+// context for absolute children).
+const launcherBadgeStyle = {
+  position: 'absolute',
+  top: 6,
+  right: 6,
+  width: 10,
+  height: 10,
+  borderRadius: '50%',
+  background: '#6366f1',
+  boxShadow: '0 0 0 2px #1a1a1a',
+  pointerEvents: 'none',
 };
 const historyStyle = {
   flex: 1,
