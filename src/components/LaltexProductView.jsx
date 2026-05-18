@@ -50,6 +50,7 @@ import { supabase } from '../services/supabaseService';
 import { useAuth } from '../context/AuthContext';
 import { deliveryPerUnit } from '../../scripts/lib/laltex-delivery.js';
 import { scheduleMarginForTier } from '../../scripts/lib/laltex-margin.js';
+import { isBucketADesignable } from '../utils/laltexPositionHeuristics';
 
 // ---------------------------------------------------------------------------
 // Pricing helpers
@@ -223,15 +224,28 @@ const LaltexProductView = ({ product }) => {
     return product?.images?.[0]?.url || null;
   }, [colourGalleryUrl, selectedColour, product?.images]);
 
-  // Designable products are those with at least one print-area
-  // coordinate entry across any row. DesignerV2 needs those to
-  // render the print rect; products with zero coords have no preview
-  // to offer and the button is hidden.
+  // Smart designability gate (CLAUDE.md §53).
+  //
+  // Path 1 — PAC-driven: product has at least one print_area_coordinates
+  // entry across all positions. Existing behaviour. DesignerV2 renders
+  // the blue dashed PAC rect at the supplier-provided coordinates.
+  //
+  // Path 2 — heuristic recognition (bucket-(a) relaxation): product
+  // has zero PAC anywhere BUT at least one position whose name
+  // canonicalises to a known entry in RECOGNISED_POSITIONS (e.g.
+  // "Front", "Wrap", "Barrel - Side 1"). DesignerV2 renders the product
+  // photo without a rect, with the amber disclaimer banner and the
+  // export watermark.
+  //
+  // Products that satisfy neither path stay hidden and surface the
+  // "Need help with artwork?" link below.
   const isDesignable = useMemo(() => {
     const groups = product?.printDetails?.positionGroups || [];
-    return groups.some((g) =>
+    const hasPac = groups.some((g) =>
       (g.rows || []).some((r) => (r.coordinates?.length || 0) > 0),
     );
+    if (hasPac) return true;
+    return isBucketADesignable(groups);
   }, [product?.printDetails]);
 
   const baseTier = useMemo(
@@ -556,6 +570,18 @@ const LaltexProductView = ({ product }) => {
                     Open Designer
                   </button>
                 </div>
+              )}
+              {!isDesignable && (
+                <p className="mt-3 text-center text-sm text-gray-500">
+                  Need help with artwork?{' '}
+                  <a
+                    href={`mailto:artwork@promo-gifts.co?subject=Artwork%20help%20-%20${encodeURIComponent(product.code)}`}
+                    className="text-blue-600 hover:underline"
+                  >
+                    Get in touch
+                  </a>
+                  .
+                </p>
               )}
             </div>
           </div>
