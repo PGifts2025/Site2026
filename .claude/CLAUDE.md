@@ -4731,3 +4731,9 @@ problems.
   products have their own existing banners (Fix #1 colour-
   preview-unavailable, Fix #2 single-rect-multi-position lock)
   that serve different cases.
+- **Do NOT move the `isBucketA` useMemo below the default-position
+  useEffect in DesignerV2.jsx.** The effect references `isBucketA`
+  during its deps array construction; a useMemo declared below would
+  TDZ and silently break the page. The useMemo's intentional
+  position above the effect block is documented inline at the
+  declaration site.
