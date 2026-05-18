@@ -185,6 +185,11 @@ async function getLaltexSupplierId({ supabaseUrl, serviceRoleKey }) {
 // overridable by ?limit or Range). Paginate explicitly.
 const EXISTING_CODES_PAGE_SIZE = 1000;
 
+// 3-strike threshold for retiring a product that has disappeared from
+// the bulk feed. After this many consecutive misses, is_retired flips
+// to true on the post-upsert reconciliation. See CLAUDE.md §51.
+const RETIRE_THRESHOLD = 3;
+
 async function getExistingCodes({ supabaseUrl, serviceRoleKey, supplierId }) {
   const set = new Set();
   let offset = 0;
@@ -206,6 +211,40 @@ async function getExistingCodes({ supabaseUrl, serviceRoleKey, supplierId }) {
   }
   /* eslint-enable no-await-in-loop */
   return set;
+}
+
+// Returns Map<supplier_product_code, { missing_from_feed_count, is_retired }>
+// for every existing row of the supplier. Used by the post-upsert
+// reconciliation step that increments / clears the missing-from-feed
+// counter. Paginated the same way as getExistingCodes per CLAUDE.md §28.1.
+async function getExistingRetirementState({ supabaseUrl, serviceRoleKey, supplierId }) {
+  const map = new Map();
+  let offset = 0;
+  /* eslint-disable no-await-in-loop */
+  for (;;) {
+    const url = `${supabaseUrl}/rest/v1/supplier_products` +
+      `?supplier_id=eq.${supplierId}` +
+      `&select=supplier_product_code,missing_from_feed_count,is_retired` +
+      `&order=supplier_product_code.asc` +
+      `&limit=${EXISTING_CODES_PAGE_SIZE}` +
+      `&offset=${offset}`;
+    const page = await pgRest('GET', url, serviceRoleKey);
+    if (!Array.isArray(page) || page.length === 0) break;
+    for (const r of page) {
+      if (r.supplier_product_code) {
+        map.set(r.supplier_product_code, {
+          missing_from_feed_count: Number.isFinite(r.missing_from_feed_count)
+            ? r.missing_from_feed_count
+            : 0,
+          is_retired: r.is_retired === true,
+        });
+      }
+    }
+    if (page.length < EXISTING_CODES_PAGE_SIZE) break;
+    offset += EXISTING_CODES_PAGE_SIZE;
+  }
+  /* eslint-enable no-await-in-loop */
+  return map;
 }
 
 // Per-product margin overrides, keyed on supplier_product_code. NULL value
@@ -281,7 +320,18 @@ async function fetchCatalogue({ laltexApiKey, baseUrl = LALTEX_BASE, path = LALT
 async function upsertChunk({ supabaseUrl, serviceRoleKey, supplierId, chunk }) {
   const upsertUrl = `${supabaseUrl}/rest/v1/supplier_products?on_conflict=supplier_id,supplier_product_code`;
   const now = new Date().toISOString();
-  const withMeta = chunk.map((r) => ({ ...r, supplier_id: supplierId, last_synced_at: now }));
+  // Seen-in-this-sync reset: any row that survived normalisation gets
+  // its missing-from-feed counter zeroed and is_retired cleared. A
+  // previously-retired product that reappears in the feed is fully
+  // reinstated by this single write (no separate UPDATE needed). See
+  // CLAUDE.md §51.
+  const withMeta = chunk.map((r) => ({
+    ...r,
+    supplier_id: supplierId,
+    last_synced_at: now,
+    missing_from_feed_count: 0,
+    is_retired: false,
+  }));
 
   // Try the batch first
   try {
@@ -402,6 +452,7 @@ export async function syncFullCatalogue({
     //    survive every nightly sync untouched.
     const existingCodes = await getExistingCodes({ supabaseUrl, serviceRoleKey, supplierId });
     const existingOverrides = await getExistingOverrides({ supabaseUrl, serviceRoleKey, supplierId });
+    const retirementState = await getExistingRetirementState({ supabaseUrl, serviceRoleKey, supplierId });
     const nowIso = new Date().toISOString();
 
     // 5. Normalise + bucket
@@ -490,6 +541,116 @@ export async function syncFullCatalogue({
 
     if (upsertFailures.length) {
       await insertJobFailures({ supabaseUrl, serviceRoleKey, rows: upsertFailures });
+    }
+
+    // 6.5 Retirement reconciliation
+    //
+    // After every row that DID appear in the feed has been upserted
+    // (with missing_from_feed_count=0, is_retired=false), bump the
+    // counter on every row that DID NOT appear. Threshold defined
+    // by RETIRE_THRESHOLD (currently 3) — see CLAUDE.md §51 for the
+    // rationale.
+    //
+    // Critical correctness notes:
+    //   * This step is gated on the upsert loop completing without
+    //     an infra-level throw. If Laltex returned a partial feed
+    //     (already short-circuited at fetched === 0) or the upsert
+    //     loop threw, we either won't be here or the catch block
+    //     will flip status='failed' and skip this step. We never
+    //     want to retire products because the feed itself was
+    //     unhealthy.
+    //   * Failed-upsert rows are NOT counted as "seen" — they kept
+    //     their previous last_synced_at and missing-counter values
+    //     (the merge-duplicates UPSERT didn't land for them). Their
+    //     code is still in retirementState but absent from
+    //     seenCodes, so they'll be treated as missing for this run.
+    //     That's intentional: a row whose upsert is broken should
+    //     count toward retirement just like a row Laltex omitted.
+    //   * last_synced_at is NOT touched on the missing-update —
+    //     it remains the indicator of when the row was last
+    //     actually seen in the feed. Matches CLAUDE.md §27 / §27.5.
+    const seenCodes = new Set();
+    for (const r of rows) {
+      if (r.supplier_product_code) seenCodes.add(r.supplier_product_code);
+    }
+    // Subtract upsert failures from seenCodes (they didn't actually persist).
+    for (const bf of upsertFailures) {
+      if (bf.supplier_product_code) seenCodes.delete(bf.supplier_product_code);
+    }
+
+    const missingUpdates = [];
+    let retiredNew = 0; // count of rows flipping to is_retired=true this run
+    for (const [code, state] of retirementState) {
+      if (seenCodes.has(code)) continue; // seen → already reset by upsertChunk
+      const newCount = state.missing_from_feed_count + 1;
+      const nowRetired = newCount >= RETIRE_THRESHOLD;
+      if (nowRetired && !state.is_retired) retiredNew += 1;
+      missingUpdates.push({
+        supplier_id: supplierId,
+        supplier_product_code: code,
+        missing_from_feed_count: newCount,
+        is_retired: nowRetired,
+      });
+    }
+
+    if (missingUpdates.length) {
+      log(`[sync] retirement: ${missingUpdates.length} rows missing from feed (${retiredNew} newly retired)`);
+      // Same UPSERT path the catalogue uses, but with a tiny payload
+      // shape: only the two retirement columns + the conflict keys.
+      // PostgREST's merge-duplicates leaves every other column on
+      // each existing row untouched.
+      const retireFailures = [];
+      const reBatches = [];
+      for (let i = 0; i < missingUpdates.length; i += UPSERT_BATCH_SIZE) {
+        reBatches.push(missingUpdates.slice(i, i + UPSERT_BATCH_SIZE));
+      }
+      for (let i = 0; i < reBatches.length; i += 1) {
+        const chunk = reBatches[i];
+        /* eslint-disable no-await-in-loop */
+        try {
+          await pgRest(
+            'POST',
+            `${supabaseUrl}/rest/v1/supplier_products?on_conflict=supplier_id,supplier_product_code`,
+            serviceRoleKey,
+            {
+              body: chunk,
+              extraHeaders: {
+                Prefer: 'resolution=merge-duplicates,return=minimal',
+              },
+            },
+          );
+        } catch (batchErr) {
+          // Fall back to per-row so a single bad row doesn't drop the chunk.
+          console.warn(`[laltex-sync] retirement batch failed, falling back: ${batchErr.message}`);
+          for (const r of chunk) {
+            try {
+              await pgRest(
+                'POST',
+                `${supabaseUrl}/rest/v1/supplier_products?on_conflict=supplier_id,supplier_product_code`,
+                serviceRoleKey,
+                {
+                  body: [r],
+                  extraHeaders: {
+                    Prefer: 'resolution=merge-duplicates,return=minimal',
+                  },
+                },
+              );
+            } catch (rowErr) {
+              retireFailures.push({
+                job_run_id: runId,
+                supplier_product_code: r.supplier_product_code,
+                reason: 'retirement_update_failed',
+                error_message: rowErr?.message?.slice(0, 1000) ?? 'unknown',
+                raw_snippet: { intended_state: r },
+              });
+            }
+          }
+        }
+        /* eslint-enable no-await-in-loop */
+      }
+      if (retireFailures.length) {
+        await insertJobFailures({ supabaseUrl, serviceRoleKey, rows: retireFailures });
+      }
     }
 
     status = 'completed';
