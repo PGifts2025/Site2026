@@ -4737,3 +4737,174 @@ problems.
   TDZ and silently break the page. The useMemo's intentional
   position above the effect block is documented inline at the
   declaration site.
+
+---
+
+## 54. CIRCULAR PAC ZONES (engraving, etching, label diameter prints)
+
+Laltex's API V1.7 ships two PrintAreaCoordinate shapes interchangeably
+in the same `PrintAreaCoordinates[]` array:
+
+| Shape | Width | Height | Diameter | PrintArea string |
+|---|---|---|---|---|
+| Rectangle | populated | populated | null | `"100x70mm"` |
+| Circle | null | null | populated | `"40mm dia."` |
+
+The parser ([scripts/lib/laltex-parser.js](../scripts/lib/laltex-parser.js))
+has handled both since session 4 — every PAC entry persisted in
+`supplier_products.print_details[].print_area_coordinates[]` carries
+either `(width, height)` or `diameter`, plus a `shape: 'rectangle' |
+'circle'` discriminator. **The data has always been correct.**
+
+Pre-§54 the DesignerV2 render code ignored `shape` and treated null
+W/H as a zero-dimension rect (`Number(null) * scale === 0`),
+producing an invisible 0×0 overlay. 63 active Laltex products
+(distinct count; ~380 PAC entries across colour variants) were
+affected — speakers, engraved bottles, frisbees, stress-balls,
+seed-kit lids, pen tops, and any other product where the print zone
+is naturally circular. ZA0176 (NOVA Bluetooth Speaker) was the
+canonical example.
+
+### 54.1 The render branch
+
+[DesignerV2.jsx ~L733-820](../src/pages/DesignerV2.jsx) chooses one
+of three paths inside the `if (colourCoord) { … }` block:
+
+1. **`shape === 'circle' && diameter > 0`** → render a
+   `fabric.Circle` with `originX/Y='center'`, centred at
+   `(x + diameter/2, y + diameter/2)` after `imageLeft/Top + scale`
+   translation.
+2. **shape is rectangle/unset AND `width > 0 && height > 0`** →
+   existing `fabric.Rect` path, unchanged.
+3. **Malformed PAC (no usable W/H AND no usable diameter)** → draw
+   nothing. The product image still loads; the customer sees the
+   photo without geometric guidance.
+
+The malformed branch is **defensive only** — no products in the
+audit hit it after the §54 fix lands, but the pre-§54 code path
+silently drew an invisible 0×0 rect which confused export logic.
+Falling through to no-overlay is strictly safer than rendering
+zero-dimension geometry.
+
+### 54.2 X/Y convention — top-left, same as rects
+
+Laltex's `Xpos`/`YPos` for circles is the **top-left of the
+bounding box**, not the centre. Verified in Phase 1 via visual
+overlay against ZA0176, MG0119, PS0045, TA0211
+([scripts/diagnostic/circular-pac-xy-convention.html](../scripts/diagnostic/circular-pac-xy-convention.html)).
+All four products' engraving zones aligned with the top-left
+interpretation; the centre interpretation was offset upper-left
+in every case.
+
+For `fabric.Circle` with `originX/Y='center'`, the `left`/`top`
+properties refer to the centre point. The translation:
+
+```js
+const diameter = Number(colourCoord.diameter) * scale;
+const radius = diameter / 2;
+const left = Number(colourCoord.x) * scale + imageLeft + radius;
+const top  = Number(colourCoord.y) * scale + imageTop  + radius;
+```
+
+### 54.3 Visual styling — transparent fill, blue dashed stroke
+
+Stroke colour `#3b82f6` (same as rect overlay). Dash pattern `[6, 4]`
+(same). Stroke width `1.5px` (same). **Fill is `transparent`**
+(distinct from the rect's `rgba(59, 130, 246, 0.08)` light blue
+tint).
+
+Why transparent for circles, tinted for rects:
+- Engraving zones are small (typically 25–40mm diameter) and the
+  tinted interior reads heavy at typical canvas scales.
+- Rects cover larger surfaces (T-shirt fronts, mug wraps) where
+  the tint helps the customer perceive the print boundary.
+- The customer should perceive both as "same level of authority"
+  (Laltex-supplied, geometrically accurate). The dashed blue stroke
+  carries the trust signal; the fill is a presentation detail.
+
+This is **not** the amber bucket-(a) treatment. Circular PAC products
+are PAC-driven (Path 1 in the smart gate); they get the same trust
+treatment as rect-PAC products. No amber banner. No watermark on
+export.
+
+### 54.4 Mixed-shape products
+
+6 of the 63 affected products carry BOTH rect positions and circle
+positions on the same product:
+
+| Code | Name | Mix |
+|---|---|---|
+| PN3025 | Marico Chalk Set | rect Front/Back + circle Lid |
+| SS0505 | Stress Heart | rect Front/Back + circle Front/Back (different sizes) |
+| TA0121 | Rainbow Foldable Flying Disk | rect Pouch + circle Disc |
+| TA0211 | Foldable Frisbee | rect Pouch + circle Disc |
+| TPC950601 | HI-Chrome Ball Pen | rect Barrel positions + circle "Top Circle of Pen" |
+| TPC951401 | HI-Chrome Roller Ball Pen | same shape as TPC950601 |
+
+When the customer toggles position tabs, the overlay switches
+between rect and circle accordingly. The per-position render is
+independent — no special handling needed beyond the shape branch
+at §54.1.
+
+### 54.5 No parser change, no resync, no migration
+
+The data is already in place. Persisted PAC entries already carry
+`shape` and `diameter`. The fix is render-only — single file
+change in DesignerV2.jsx. The 63 affected products go from broken
+to correct at deploy time without any data manipulation.
+
+### 54.6 PRINT_AREA_OVERLAY_ID is shared
+
+Circle and rect both use the same `PRINT_AREA_OVERLAY_ID`
+constant. Export-time chrome stripping in
+[fabricCanvasManager.js](../src/utils/fabricCanvasManager.js)
+finds objects by id and hides them regardless of underlying shape
+class. Save-time `userObjects` filter at DesignerV2.jsx:704
+excludes the overlay by id — same uniform treatment.
+
+Future-proofing note: if a third shape ever lands (Laltex's V1.8+
+or another supplier), the same id should be reused. Anything
+keying on `instanceof fabric.Rect` would silently break — don't
+introduce such guards.
+
+### 54.7 Diagnostic helpers (committed)
+
+- [scripts/diagnostic/probe-circular-pac.mjs](../scripts/diagnostic/probe-circular-pac.mjs)
+  — full audit: raw_payload field shape, PrintArea variety,
+  per-product breakdown, mixed-shape detection.
+- [scripts/diagnostic/probe-persisted-diameter.mjs](../scripts/diagnostic/probe-persisted-diameter.mjs)
+  — quick check that persisted PAC entries carry `shape` and
+  `diameter`. Run after any parser change to confirm
+  round-tripping.
+- [scripts/diagnostic/circular-pac-xy-convention.html](../scripts/diagnostic/circular-pac-xy-convention.html)
+  — visual overlay harness for confirming Laltex's X/Y convention.
+  Useful if a future API version changes the anchor.
+
+### 54.8 Invariants — DO NOT BREAK
+
+- **Do NOT branch on `instanceof fabric.Rect`** to decide overlay
+  behaviour. Both Circle and Rect share `PRINT_AREA_OVERLAY_ID`;
+  type checks are the wrong signal.
+- **Do NOT add a tinted fill to the circle overlay** without
+  re-evaluating against the typical engraving size. The
+  transparent fill (A2 decision, 2026-05-18) was chosen
+  deliberately. The rect's tinted fill stays — the styling
+  divergence is intentional, not a bug.
+- **Do NOT remove the malformed-PAC fall-through.** Today no
+  products hit it; tomorrow's Laltex feed change might. A
+  zero-dimension Fabric Rect is worse than nothing.
+- **Do NOT change the X/Y convention** from top-left without
+  re-running the visual harness against fresh products. Laltex's
+  API V1.7 documents this convention; V1.8+ MAY differ.
+- **Do NOT introduce an "amber circle banner" path** for circular
+  PAC products. They are PAC-driven (Path 1); the bucket-(a)
+  amber banner is exclusively for Path 2 (no-PAC) products. The
+  trust signals must stay distinct.
+- **Do NOT consume `MarkedImageUrl` on circular PAC entries** any
+  more than on rect entries. CLAUDE.md §50.4 still applies —
+  marked images are customer-mockup samples, not authoritative
+  references.
+- **Do NOT special-case the 6 mixed-shape products.** The
+  per-position render is independent by design. Anything that
+  branches on "is this a mixed-shape product" introduces a
+  classification step that drifts as Laltex's feed changes.

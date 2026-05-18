@@ -730,36 +730,88 @@ const DesignerV2 = () => {
         canvas.add(img);
         canvas.sendToBack(img);
 
-        // Print area overlay rectangle — only when we have a matching
-        // coordinate entry (Fix #1: no rect on the catalogue-thumb
-        // fallback path, since the coords were calculated against a
-        // different image and would land in empty space). Coords use
-        // the SAME imageLeft/imageTop offset as the image itself, so
-        // any clamp that fired stays in lockstep.
+        // Print area overlay — only when we have a matching coordinate
+        // entry (Fix #1: no overlay on the catalogue-thumb fallback
+        // path, since the coords were calculated against a different
+        // image and would land in empty space). Coords use the SAME
+        // imageLeft/imageTop offset as the image itself, so any clamp
+        // that fired stays in lockstep.
+        //
+        // Shape branching (CLAUDE.md §54):
+        //   - shape='circle' AND diameter > 0  -> Fabric.Circle
+        //   - shape='rectangle' (or unset) AND width/height > 0 -> Fabric.Rect (existing)
+        //   - anything else (malformed PAC) -> draw nothing.
+        //
+        // The malformed branch is the safety net for PAC entries where
+        // Laltex shipped neither a usable rect nor a usable diameter
+        // (defensive — none observed in production today, but the old
+        // code path silently drew a 0x0 Rect which was invisible AND
+        // confused export logic). Falling through to no-overlay keeps
+        // the product photo visible without misleading geometry.
         if (colourCoord) {
-          const rectLeft = Number(colourCoord.x) * scale + imageLeft;
-          const rectTop = Number(colourCoord.y) * scale + imageTop;
-          const rectWidth = Number(colourCoord.width) * scale;
-          const rectHeight = Number(colourCoord.height) * scale;
-          const rect = new fabric.Rect({
-            id: PRINT_AREA_OVERLAY_ID,
-            name: PRINT_AREA_OVERLAY_ID,
-            originX: 'left',
-            originY: 'top',
-            left: rectLeft,
-            top: rectTop,
-            width: rectWidth,
-            height: rectHeight,
-            fill: 'rgba(59, 130, 246, 0.08)',
-            stroke: '#3b82f6',
-            strokeDashArray: [6, 4],
-            strokeWidth: 1.5,
-            selectable: false,
-            evented: false,
-            hoverCursor: 'default',
-            excludeFromExport: true,
-          });
-          canvas.add(rect);
+          const overlayLeft = Number(colourCoord.x) * scale + imageLeft;
+          const overlayTop = Number(colourCoord.y) * scale + imageTop;
+          const isCircle =
+            colourCoord.shape === 'circle' && Number(colourCoord.diameter) > 0;
+          const w = Number(colourCoord.width);
+          const h = Number(colourCoord.height);
+          const isRect = !isCircle && w > 0 && h > 0;
+
+          if (isCircle) {
+            // Laltex's (x, y) is the TOP-LEFT of the bounding box — same
+            // convention as rects. The visual sampling probe in Phase 1
+            // (scripts/diagnostic/circular-pac-xy-convention.html)
+            // confirmed this against ZA0176, MG0119, PS0045, TA0211.
+            // Fabric.Circle with originX/Y='center' expects the centre,
+            // so offset by radius.
+            const diameter = Number(colourCoord.diameter) * scale;
+            const radius = diameter / 2;
+            const circle = new fabric.Circle({
+              id: PRINT_AREA_OVERLAY_ID,
+              name: PRINT_AREA_OVERLAY_ID,
+              originX: 'center',
+              originY: 'center',
+              left: overlayLeft + radius,
+              top: overlayTop + radius,
+              radius,
+              // Transparent fill (per A2 decision): blue tint inside a
+              // small engraving circle reads heavy. Rect overlay still
+              // uses the light blue tint for visual continuity within
+              // its larger footprint.
+              fill: 'transparent',
+              stroke: '#3b82f6',
+              strokeDashArray: [6, 4],
+              strokeWidth: 1.5,
+              selectable: false,
+              evented: false,
+              hoverCursor: 'default',
+              excludeFromExport: true,
+            });
+            canvas.add(circle);
+          } else if (isRect) {
+            const rect = new fabric.Rect({
+              id: PRINT_AREA_OVERLAY_ID,
+              name: PRINT_AREA_OVERLAY_ID,
+              originX: 'left',
+              originY: 'top',
+              left: overlayLeft,
+              top: overlayTop,
+              width: w * scale,
+              height: h * scale,
+              fill: 'rgba(59, 130, 246, 0.08)',
+              stroke: '#3b82f6',
+              strokeDashArray: [6, 4],
+              strokeWidth: 1.5,
+              selectable: false,
+              evented: false,
+              hoverCursor: 'default',
+              excludeFromExport: true,
+            });
+            canvas.add(rect);
+          }
+          // else: malformed PAC -> no overlay (draw-nothing fall-through,
+          // §54.6 / A3 decision). Image still loaded; customer sees the
+          // product without geometry.
         }
 
         // Re-establish user-object z-order on top of the new chrome.
