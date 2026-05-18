@@ -948,24 +948,36 @@ export const getDesignerUrl = (productKey, color = null, view = null) => {
  * LaltexProductView, etc.) MUST go through this helper rather than
  * issuing their own .eq() — same bug hit in session 6 and session 7.
  *
+ * Retired products: by default, rows with is_retired=true are
+ * excluded — active listings, product pages, the Designer, and search
+ * paths must not surface them (CLAUDE.md §51). Callers that need to
+ * resolve retired products (saved-design history, order detail pages,
+ * the admin dashboard) MUST pass { includeRetired: true } explicitly
+ * so the opt-in is auditable.
+ *
  * @param {string} code - supplier_product_code (any case)
+ * @param {object} [options]
+ * @param {boolean} [options.includeRetired=false] - return retired rows too
  * @returns {Promise<Object|null>} supplier_products row + supplier join, or null
  */
-export const getSupplierProductByCode = async (code) => {
+export const getSupplierProductByCode = async (code, options = {}) => {
   if (isMockAuth) return null;
   if (!code) return null;
+  const { includeRetired = false } = options;
 
   const tryFetch = async (variant) => {
     const client = getSupabaseClient();
-    const { data, error } = await client
+    let query = client
       .from('supplier_products')
       .select(`
         *,
         supplier:suppliers(id, slug, name)
       `)
-      .eq('supplier_product_code', variant)
-      .limit(1)
-      .maybeSingle();
+      .eq('supplier_product_code', variant);
+    if (!includeRetired) {
+      query = query.eq('is_retired', false);
+    }
+    const { data, error } = await query.limit(1).maybeSingle();
     if (error) {
       if (error.code === 'PGRST116') return null;
       throw error;
@@ -996,11 +1008,20 @@ export const getSupplierProductByCode = async (code) => {
  *                                  if a PGifts Direct slug exists only
  *                                  in the mirror)
  *
+ * Retired products: by default, supplier rows with is_retired=true
+ * return null (so /products/<code>, /design/<code>, and any other
+ * routes built on this helper 404 cleanly). Callers that need to
+ * resolve retired products (e.g. order detail page) MUST pass
+ * { includeRetired: true } — see CLAUDE.md §51.
+ *
  * @param {string} identifier
+ * @param {object} [options]
+ * @param {boolean} [options.includeRetired=false] - resolve retired supplier rows too
  * @returns {Promise<{source:'catalog'|'supplier', raw:Object, normalised:Object}|null>}
  */
-export const getProductByIdentifier = async (identifier) => {
+export const getProductByIdentifier = async (identifier, options = {}) => {
   if (!identifier) return null;
+  const { includeRetired = false } = options;
 
   // Path 1: catalog_products (preserves existing rendering for PGifts Direct)
   try {
@@ -1019,7 +1040,7 @@ export const getProductByIdentifier = async (identifier) => {
   // Path 2: supplier_products (Laltex by SKU code, or PGifts mirror
   // by slug). Case handling lives inside getSupplierProductByCode now
   // — every caller of that helper gets the same casing tolerance.
-  const supplierRow = await getSupplierProductByCode(identifier);
+  const supplierRow = await getSupplierProductByCode(identifier, { includeRetired });
   if (supplierRow) {
     const supplierSlug = supplierRow.supplier?.slug || 'laltex';
     return {

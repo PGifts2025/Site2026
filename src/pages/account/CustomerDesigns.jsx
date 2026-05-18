@@ -72,7 +72,13 @@ const CustomerDesigns = ({ user }) => {
       const v2Entries = await Promise.all(
         [...v2Codes].map(async (code) => {
           try {
-            const row = await getSupplierProductByCode(code);
+            // includeRetired: a customer can have saved a design against
+            // a product that has since been retired. The card still
+            // needs to render with the product name/thumbnail so the
+            // saved work is recognisable — buying actions will surface
+            // the unavailability via the v2 designer's own 404 path
+            // (CLAUDE.md §51).
+            const row = await getSupplierProductByCode(code, { includeRetired: true });
             if (!row) return [`v2:${code}`, null];
             const supplierSlug = row.supplier?.slug || 'laltex';
             return [`v2:${code}`, normaliseProduct(row, supplierSlug)];

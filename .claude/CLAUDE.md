@@ -4203,3 +4203,185 @@ PAC, and within that position any PAC entry is correct rect-wise.
   Laltex, not a Designer bug. Do not relax `isDesignable` to let
   Designer open against zero-PAC products without coordinating
   product decisions first.
+
+---
+
+## 51. RETIRED PRODUCT HANDLING — 3-STRIKE MISSING-FROM-FEED FLAG
+
+Laltex sometimes removes products from their bulk feed without warning
+(TF0003 was the originating example: last seen 10 days before the
+audit). Pre-this-section, the only thing stopping a retired SKU from
+serving customers was the 14-day staleness filter inside the search
+RPC (§31.3); the product page, Designer, and category listings would
+all continue to serve it until that window expired.
+
+Two columns on `supplier_products` now drive a soft-retire flag:
+
+| Column | Type | Meaning |
+|---|---|---|
+| `is_retired` | `boolean NOT NULL DEFAULT false` | Single read-side gate. Active listings, product pages, the Designer, and the search RPC filter this to false. |
+| `missing_from_feed_count` | `integer NOT NULL DEFAULT 0` | Running count of consecutive sync runs in which the row was not seen in the bulk feed. Increments by 1 per miss; resets to 0 on reappearance. |
+
+Migration: [`20260518_supplier_products_retired_flag.sql`](../supabase/migrations/20260518_supplier_products_retired_flag.sql).
+Down migration exists; columns + index + CHECK constraint all drop
+cleanly.
+
+### 51.1 The 3-strike threshold
+
+`is_retired` flips to `true` when `missing_from_feed_count` reaches
+**3**. Constant: `RETIRE_THRESHOLD` in
+[`scripts/lib/laltex-sync.js`](../scripts/lib/laltex-sync.js).
+
+**Why 3 strikes, not 1.** Laltex's bulk feed occasionally fails to
+enumerate a product for a single run (transient supplier-side issues,
+intermittent network glitches). At nightly cadence:
+
+- 1 miss = same-day blip; could be a network drop. Retiring instantly
+  would false-positive on outages.
+- 3 misses = consistent absence for ~3 days. Genuinely retired
+  products clear within a working week; a one-off glitch never
+  false-positives.
+- The window must be **shorter than the 14-day staleness filter**
+  (otherwise retirement is redundant with staleness — already exists).
+  3 days achieves that comfortably.
+
+**Why retire rather than delete.** Order history and saved-design
+gallery (My Designs) reference `supplier_products` rows for past
+customer work. Deleting would either orphan those rows or require
+destructive `ON DELETE CASCADE`. Retirement is a read-side gate; the
+row stays intact for historical lookup.
+
+### 51.2 Sync reconciliation phase
+
+Inside [`scripts/lib/laltex-sync.js`](../scripts/lib/laltex-sync.js)
+`syncFullCatalogue()`, immediately after the upsert loop completes:
+
+1. **Seen-in-this-sync reset:** every row that survived normalisation
+   is upserted with `missing_from_feed_count: 0, is_retired: false`
+   alongside its other fields. A previously-retired product that
+   reappears in the feed is fully reinstated by this single write — no
+   separate UPDATE needed.
+
+2. **Missing-from-feed increment:** the reconciliation block computes
+   `missing = existingCodes \ seenCodes` (where `seenCodes` excludes
+   upsert-failed rows so a row whose upsert is broken is treated as
+   missing too — same trajectory toward retirement as a row Laltex
+   omitted). For each missing code, the local counter increments and
+   a small bulk UPSERT writes only `{ supplier_id,
+   supplier_product_code, missing_from_feed_count, is_retired }` —
+   every other column on the row is untouched by
+   `Prefer: resolution=merge-duplicates`.
+
+3. **Gating:** the reconciliation block runs only when the upsert loop
+   completes without an infra-level throw. If Laltex returned a
+   partial feed, the early-return at `fetched === 0` short-circuits
+   before this point. If the upsert loop itself threw, the catch
+   block flips `status='failed'` and skips reconciliation. Retirement
+   never fires on an unhealthy feed.
+
+4. **`last_synced_at` is NOT touched on the missing-update.** The
+   column remains the indicator of when the row was last actually
+   seen — matches CLAUDE.md §27 / §27.5's "failed rows keep previous
+   `last_synced_at`" principle.
+
+5. **Per-batch failure isolation.** Same pattern as the main upsert
+   loop: batch UPSERT first, single-row fallback on failure, log
+   per-row to `job_failures` with `reason='retirement_update_failed'`.
+
+### 51.3 Read paths — where the filter lands
+
+| Surface | How it filters | Default |
+|---|---|---|
+| `getSupplierProductByCode(code)` | `.eq('is_retired', false)` on the PostgREST query | Retired excluded |
+| `getProductByIdentifier(identifier)` | Inherits from `getSupplierProductByCode` | Retired → null → 404 |
+| `rpc_search_supplier_products` | `sp.is_retired = false` inside the candidate WHERE | Non-bypassable |
+| `rpc_find_alternatives` (neighbour set) | `sp.is_retired = false` inside the WHERE | Non-bypassable |
+| `rpc_find_alternatives` (source lookup) | Unfiltered | Retired source allowed |
+| ProductDetailPage `/products/:code` | Uses `getProductByIdentifier` | Retired → "Product not found" error state |
+| DesignerV2 `/design/:code` | Uses `getProductByIdentifier` | Retired → `setLoadError` → 404 message |
+| AI tool dispatch (`searchProducts`, `findAlternatives`) | Through the RPCs | Retired invisible |
+
+**Opt-in callers** (must pass `{ includeRetired: true }`):
+- [`CustomerDesigns.jsx`](../src/pages/account/CustomerDesigns.jsx) —
+  saved-design gallery. Customer's design card still needs to render
+  the product name/thumbnail; the purchase actions (Edit, Add to
+  Quote) fall through to the v2 designer route which 404s for
+  retired codes.
+- Future: any order-detail page that resolves a `supplier_product_code`
+  fresh from the row reference. Today order detail reads from
+  `order_items` snapshot directly, so no opt-in needed yet.
+
+### 51.4 Find-alternatives source lookup is intentionally unfiltered
+
+The RPC's source-product SELECT does NOT exclude retired products.
+Customers landing from a saved design or an order detail page may
+legitimately want "what's similar?" for a now-retired SKU. The
+neighbour set still excludes retired alternatives, so every result
+remains orderable.
+
+The endpoint-side `lookupSourceProduct` in
+[`api/find-alternatives.js`](../api/find-alternatives.js) is also
+unfiltered for the same reason. The 404 it surfaces is for "code
+doesn't exist" / "not yet embedded", not "retired".
+
+### 51.5 What this does NOT do
+
+- **No `ItemIndicator` consumption.** Laltex's `ItemIndicator` field
+  (`'Clearance'`, `'To Be Discontinued'`, `'New'`, …) is a separate
+  signal from feed presence. We already round-trip it as
+  `product_indicator` on `supplier_products` and the search RPC
+  exposes it as a filter, but we don't act on `'To Be Discontinued'`
+  automatically. Future enhancement.
+- **No stocks-endpoint integration.** Laltex's `GET stocks/{code}`
+  returns real-time stock levels with optional due-in dates.
+  Retirement is about whether the product exists at all in the feed,
+  not whether it's currently in stock. The two are orthogonal:
+  `in_stock` is a different (also-soft) signal already on the row.
+  Future enhancement.
+- **No admin "view retired products" surface.** Admins inspecting
+  retirement state today must query the DB directly:
+  ```sql
+  SELECT supplier_product_code, name, missing_from_feed_count, last_synced_at
+    FROM supplier_products
+   WHERE is_retired = true
+   ORDER BY last_synced_at DESC;
+  ```
+  Admin-side UI is out of scope for this PR.
+
+### 51.6 Invariants — DO NOT BREAK
+
+- **DO NOT delete `supplier_products` rows for retired products.**
+  Orders, saved designs, and analytics all reference them by id /
+  code. Retirement is a soft-flag.
+- **DO NOT bypass the `is_retired = false` filter in either RPC.**
+  Same treatment as the 14-day staleness filter (§31.3) — lives
+  inside the function precisely so callers can't disable it.
+- **DO NOT include `missing_from_feed_count` or `is_retired` on the
+  normaliser output.** They are sync-orchestrator-owned state, not
+  feed-derived. The orchestrator stamps them onto the upsert payload
+  in [`upsertChunk`](../scripts/lib/laltex-sync.js).
+- **DO NOT touch `last_synced_at` on a missing-update.** It must
+  continue to reflect when the row was last seen in the actual feed,
+  for the staleness filter and any future audit.
+- **DO NOT lower `RETIRE_THRESHOLD` below 2 without re-evaluating
+  the false-positive risk.** At 1 strike, a single Laltex feed
+  glitch retires real products and customers see "product not found"
+  the next morning. At 3, the worst case is a 3-day delay before a
+  genuinely retired product clears.
+- **DO NOT use `is_retired = true` as a stand-in for `in_stock =
+  false`.** The two are orthogonal. A product can be in-stock and
+  retired (last day of selling old stock — though we'd typically
+  retire after stock=0). A product can be out-of-stock and not
+  retired (temporary supplier-side fulfilment problem). Keep the
+  signals separate.
+- **DO NOT remove `{ includeRetired: true }` from
+  CustomerDesigns.jsx.** It's there so customers can see their saved
+  work even after the product retires. Removing it makes the design
+  card render as "Unknown Product" silently — confusing and
+  unhelpful.
+- **DO NOT add retirement filtering to `catalogue-embed.js`.** The
+  embed cron is supplier-agnostic and should keep embedding retired
+  rows so a reappearing product is immediately searchable on its
+  next sync (counter resets, flag clears, embedding already
+  present). Retirement is a read-side gate; the embed pipeline is
+  upstream of that.
