@@ -203,7 +203,16 @@ export default function AIChatWidget() {
           role: 'assistant',
           content: data?.message?.content ?? '(no response)',
           tool_calls: data?.message?.tool_calls ?? [],
+          // Pagination contract (CLAUDE.md §55):
+          //   `products`           = rendered now (server-sent first batch of 5).
+          //   `products_remainder` = revealed in batches of 5 on "Show me more"
+          //                          click. Pre-loaded — no follow-up tool call.
+          //   Each message holds its own pagination state so customers can
+          //   scroll back to an earlier result set and keep expanding it.
           products: Array.isArray(data?.products) ? data.products : [],
+          products_remainder: Array.isArray(data?.products_remainder)
+            ? data.products_remainder
+            : [],
         },
       ]);
     } catch (err) {
@@ -218,6 +227,28 @@ export default function AIChatWidget() {
       e.preventDefault();
       send();
     }
+  };
+
+  // "Show me more" pagination handler (CLAUDE.md §55).
+  // Moves BATCH_SIZE items from products_remainder into products for the
+  // given message index. Pure local state update — no network call.
+  // Each message's pagination state is independent, so a customer can
+  // scroll back to an earlier result set and keep expanding it after
+  // sending further messages.
+  const SHOW_MORE_BATCH_SIZE = 5;
+  const revealMoreProducts = (messageIndex) => {
+    setMessages((prev) => prev.map((msg, idx) => {
+      if (idx !== messageIndex) return msg;
+      const remainder = Array.isArray(msg.products_remainder) ? msg.products_remainder : [];
+      if (remainder.length === 0) return msg;
+      const toReveal = remainder.slice(0, SHOW_MORE_BATCH_SIZE);
+      const stillRemaining = remainder.slice(SHOW_MORE_BATCH_SIZE);
+      return {
+        ...msg,
+        products: [...(msg.products || []), ...toReveal],
+        products_remainder: stillRemaining,
+      };
+    }));
   };
 
   const quotaExhausted =
@@ -296,6 +327,16 @@ export default function AIChatWidget() {
                     {m.products.map((p) => (
                       <ProductCard key={p.supplier_product_code} product={p} />
                     ))}
+                    {/* "Show me more" card — pure client-side pagination
+                        from the pre-loaded `products_remainder` cache. No
+                        new chat round-trip, no LLM cost, no quota hit.
+                        See CLAUDE.md §55. */}
+                    {Array.isArray(m.products_remainder) && m.products_remainder.length > 0 && (
+                      <ShowMoreCard
+                        remainingCount={m.products_remainder.length}
+                        onClick={() => revealMoreProducts(i)}
+                      />
+                    )}
                   </div>
                 )}
                 {Array.isArray(m.tool_calls) && m.tool_calls.length > 0 && (
@@ -423,6 +464,29 @@ function ProductCard({ product }) {
         </div>
       </div>
     </a>
+  );
+}
+
+/**
+ * "Show me more" reveal card (CLAUDE.md §55). Renders below the
+ * visible product cards when the pagination remainder is non-empty.
+ * Click reveals the next BATCH_SIZE items from the in-message cache;
+ * no network call, no LLM round-trip.
+ *
+ * Visually distinct from a ProductCard — soft indigo tint signals
+ * "action, not product". Width matches the card list so it lines up
+ * underneath the cards.
+ */
+function ShowMoreCard({ remainingCount, onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={showMoreCardStyle}
+      aria-label={`Show ${Math.min(remainingCount, 5)} more matches (${remainingCount} cached)`}
+    >
+      Show me more →
+    </button>
   );
 }
 
@@ -614,6 +678,23 @@ const cardListStyle = {
   flexDirection: 'column',
   gap: 6,
   marginTop: 8,
+};
+// "Show me more" pagination button (CLAUDE.md §55). Soft indigo to
+// signal it's an action, not a product. Sits inside cardListStyle's
+// flex column so it lines up underneath the visible product cards.
+const showMoreCardStyle = {
+  display: 'block',
+  width: '100%',
+  padding: '10px 12px',
+  background: 'rgba(99, 102, 241, 0.08)',
+  border: '1px solid rgba(99, 102, 241, 0.35)',
+  borderRadius: 6,
+  color: '#4f46e5',
+  fontWeight: 600,
+  fontSize: 13,
+  textAlign: 'center',
+  cursor: 'pointer',
+  transition: 'background 120ms, border-color 120ms',
 };
 const cardStyle = {
   display: 'flex',

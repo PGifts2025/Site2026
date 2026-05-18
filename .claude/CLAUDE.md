@@ -4908,3 +4908,141 @@ introduce such guards.
   per-position render is independent by design. Anything that
   branches on "is this a mixed-shape product" introduces a
   classification step that drifts as Laltex's feed changes.
+
+---
+
+## 55. AI CHAT "SHOW ME MORE" PAGINATION + HEADER SEARCH REMOVAL
+
+Two homepage-related changes shipped together:
+
+1. **Header search bar removed.** The desktop + mobile search inputs
+   in [HeaderBar.jsx](../src/components/HeaderBar.jsx) were not
+   wired to anything functional and caused mobile layout problems.
+   Removed cleanly — flex layout reflows; no placeholder, no
+   "search via Ava" CTA, no replacement at all.
+2. **AI chat product-card pagination.** Ava's product responses now
+   return up to 20 matches; widget renders the first 5 immediately
+   and reveals the next 5 per click on a "Show me more →" card.
+   Pure client-side pagination from a pre-loaded cache — no extra
+   chat round-trip, no LLM cost, no quota tick on expansion.
+
+### 55.1 Pagination contract
+
+| Layer | Behaviour |
+|---|---|
+| Tool (`scripts/lib/ai-tools.js`) | **Unchanged.** Schema lives in the cached system+tools prefix (CLAUDE.md §32.4) — touching it invalidates the cache. The model's `limit` parameter still defaults to 10 / max 50. |
+| Chat endpoint ([api/ai/chat.js](../api/ai/chat.js)) | Accumulates products from every tool call this turn (`productCardMap`). At end-of-turn, caps the result set at **20**, then splits: first **5** go in `products`; remaining (up to 15) go in `products_remainder`. `total_matches` reports the post-cap count. |
+| Widget ([AIChatWidget.jsx](../src/components/AIChatWidget/AIChatWidget.jsx)) | Each message holds `products` (currently visible) and `products_remainder` (cached for expansion). Renders one `ProductCard` per visible entry, then a `ShowMoreCard` if remainder is non-empty. Click handler shifts **5** items from remainder to visible. |
+
+Constants:
+
+| Constant | Value | Location | Purpose |
+|---|---|---|---|
+| `PRODUCT_CARDS_CAP` | 20 | `api/ai/chat.js` | Hard ceiling for product cards surfaced per turn. Beyond that the customer should refine the query. |
+| `INITIAL_BATCH_SIZE` | 5 | `api/ai/chat.js` | Cards rendered immediately on response. |
+| `SHOW_MORE_BATCH_SIZE` | 5 | `AIChatWidget.jsx` | Cards revealed per "Show me more" click. |
+
+### 55.2 Why pre-loaded vs paginated-RPC
+
+Three reasons the cache lives client-side rather than re-calling
+the tool on expansion:
+
+- **Latency.** Each tool round-trip is ~500-800ms on Vercel
+  (Anthropic API + RPC + slim). Pre-loading 20 cards once
+  collapses N pagination clicks into N free reveals.
+- **No extra LLM cost.** The Anthropic system+tools cached prefix
+  is the expensive part of each turn; "Show me more" doesn't
+  reset the cache, but it doesn't even reach Anthropic in the
+  pre-loaded model. Zero token cost.
+- **No quota tick.** Anonymous users have 5 `searchProducts` calls
+  per 24h. Pagination would burn through the cap on a single
+  result set. Pre-loading respects the quota.
+
+The cost: response payload grows from ~5 cards to ~20 cards per
+turn. Each slimmed card is ~600-800 bytes after `slimProduct`, so
+20 cards × 800 bytes ≈ 16 KB — negligible vs the existing 5-card
+~4 KB baseline. Network cost stays under 50 KB for the chat
+endpoint's typical response.
+
+### 55.3 Edge-case behaviour
+
+- **Fewer than 5 matches:** All matches go in `products`,
+  `products_remainder` is empty, no Show More card. Today's
+  behaviour for sparse queries.
+- **Exactly 5 matches:** Same as above. `products_remainder.length
+  > 0` is the gate; equality at 5 means nothing more to show.
+- **Cap reached (>20 matches accumulated):** Sliced to 20. The
+  "Show me more" card disappears after the customer fully expands
+  — there is no "even more" reveal. Refine query message would be
+  premature at this scale; just hide the card silently.
+- **Customer asks a follow-up while a Show More card is showing:**
+  The previous message's pagination state persists. Each message
+  carries independent `products` + `products_remainder`. Scrolling
+  back and clicking "Show me more" on the older message works
+  exactly as if it were the latest.
+- **Mobile chat panel:** Same batch size (5). Vertical stacking on
+  mobile means 5 cards is more scroll, but consistency beats a
+  separate mobile cap. Don't size-shift per viewport.
+
+### 55.4 ShowMoreCard styling
+
+Soft indigo tint (`rgba(99, 102, 241, 0.08)` background,
+`rgba(99, 102, 241, 0.35)` border, `#4f46e5` text). Centred
+**"Show me more →"** label in 600-weight 13px. Full width within
+the cardListStyle column.
+
+Intentionally distinct from `ProductCard` (white background, grey
+border, left-aligned, image + name + price). The customer should
+read the row as an action button, not as another product.
+
+### 55.5 Header layout integrity
+
+`HeaderBar.jsx` is the only shared header used across product
+detail, category, account, and admin pages. Removed:
+
+- `Search` from the lucide-react import.
+- `searchQuery` state declaration.
+- The desktop search div (`hidden lg:flex flex-1 max-w-2xl mx-8` wrapper).
+- The mobile search div (`lg:hidden pb-4` wrapper, including its inner relative+input).
+
+The remaining flex layout — logo+phone on the left,
+Sign In / Cart / Mobile menu button on the right — collapses
+naturally without the centre element. No placeholder div added;
+no z-index orphans.
+
+The page-level Navbar.jsx (a different, less-used component) keeps
+its placeholder search input — out of scope for this PR. Only the
+shared HeaderBar.jsx changed.
+
+### 55.6 Invariants — DO NOT BREAK
+
+- **Do NOT call a tool on "Show me more" click.** Pagination is
+  pure client-side state from `products_remainder`. Adding a
+  network call here ticks the quota and breaks the response-time
+  promise.
+- **Do NOT extend `PRODUCT_CARDS_CAP` beyond 20.** Bigger result
+  sets defeat the point of pagination — past 20 the customer
+  should refine the query rather than scroll forever. A future
+  change to this number is a deliberate decision, not a tidy-up.
+- **Do NOT change `INITIAL_BATCH_SIZE` or `SHOW_MORE_BATCH_SIZE`
+  to different values.** Keeping them both at 5 makes the rhythm
+  predictable. Asymmetric batch sizes (e.g. 5 then 10) are a UX
+  decision that needs its own evaluation.
+- **Do NOT size-shift the batch size based on viewport.** Mobile
+  customers should see the same pagination cadence as desktop;
+  scroll length is the only difference.
+- **Do NOT move pagination state to a global store.** Each message
+  carries its own `products` + `products_remainder`. Moving to a
+  global store breaks the "scroll back and keep expanding"
+  behaviour and adds reconciliation complexity for zero benefit.
+- **Do NOT change the system prompt or tool schemas to teach Ava
+  about pagination.** Pagination is widget UI, not prose. Ava
+  still describes the products conversationally; the Show More
+  card handles "more available" surfacing on its own.
+- **Do NOT re-add a search input to HeaderBar.jsx.** If a search
+  feature is wanted in the future, it should route through Ava
+  (existing AI chat surface) rather than a separate parallel
+  search bar. The shared header's centre column is intentionally
+  empty.
+- **Do NOT touch `Navbar.jsx`'s placeholder input.** Out of scope
+  for this PR and used in fewer places; separate cleanup decision.
