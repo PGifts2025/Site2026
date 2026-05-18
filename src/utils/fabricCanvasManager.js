@@ -108,6 +108,57 @@ export function captureCanvasThumbnail(canvas, { multiplier = 1.5 } = {}) {
 }
 
 /**
+ * Build the indicative-position watermark band (CLAUDE.md §53).
+ * Returns an array of temporarily-added Fabric objects so the caller
+ * can remove them after toDataURL. Returns [] if no watermark is
+ * requested.
+ *
+ * The band is baked into the exported pixels: it covers the top 32
+ * canvas units, full width. Customer artwork in that strip is
+ * intentionally obscured — the watermark must reach the proof team
+ * regardless of where the customer placed their design.
+ */
+function attachIndicativeBanner(canvas, indicativeBanner) {
+  if (!indicativeBanner?.positionName) return [];
+  const w = canvas.getWidth();
+  const bandHeight = 32;
+  const bg = new fabric.Rect({
+    id: 'indicative-banner-bg',
+    name: 'indicative-banner-bg',
+    left: 0,
+    top: 0,
+    width: w,
+    height: bandHeight,
+    fill: 'rgba(55, 65, 81, 0.95)',
+    selectable: false,
+    evented: false,
+    excludeFromExport: false,
+  });
+  const text = new fabric.Text(
+    `INDICATIVE POSITION — confirm placement at proof stage. Customer intent: ${indicativeBanner.positionName}.`,
+    {
+      id: 'indicative-banner-text',
+      name: 'indicative-banner-text',
+      left: 8,
+      top: bandHeight / 2,
+      originX: 'left',
+      originY: 'center',
+      fontSize: 12,
+      fill: '#ffffff',
+      fontFamily: 'Arial, sans-serif',
+      selectable: false,
+      evented: false,
+      excludeFromExport: false,
+    },
+  );
+  canvas.add(bg);
+  canvas.bringToFront(bg);
+  canvas.add(text);
+  canvas.bringToFront(text);
+  return [bg, text];
+}
+
+/**
  * Export the canvas as PNG (download). Multiplier 3 is load-bearing
  * for print quality — see CLAUDE.md §8.4. Print-area overlays and
  * watermark are hidden during the export and restored after.
@@ -117,8 +168,13 @@ export function captureCanvasThumbnail(canvas, { multiplier = 1.5 } = {}) {
  * @param {string} opts.filename - download filename without extension
  * @param {boolean} [opts.hideWatermark=true]
  * @param {number} [opts.multiplier=3]
+ * @param {{positionName: string} | null} [opts.indicativeBanner=null]
+ *   When set, bakes a dark-grey "INDICATIVE POSITION" band into the
+ *   top 32 canvas units. Used for bucket-(a) Laltex exports per
+ *   CLAUDE.md §53 — the band is mandatory and cannot be opted out of
+ *   by the customer.
  */
-export function exportCanvasAsPNG(canvas, { filename, hideWatermark = true, multiplier = 3 }) {
+export function exportCanvasAsPNG(canvas, { filename, hideWatermark = true, multiplier = 3, indicativeBanner = null }) {
   if (!canvas) return;
   const overlay = canvas.getObjects().find((obj) => obj.id === 'printAreaOverlay');
   const watermark = canvas.getObjects().find((obj) => obj.id === 'watermark');
@@ -126,6 +182,7 @@ export function exportCanvasAsPNG(canvas, { filename, hideWatermark = true, mult
   const watermarkWasVisible = watermark?.visible;
   if (overlay) overlay.set('visible', false);
   if (watermark && hideWatermark) watermark.set('visible', false);
+  const bannerObjects = attachIndicativeBanner(canvas, indicativeBanner);
   canvas.renderAll();
 
   try {
@@ -145,6 +202,7 @@ export function exportCanvasAsPNG(canvas, { filename, hideWatermark = true, mult
       'PNG export is temporarily unavailable for this product (image security). The team has been notified.',
     );
   } finally {
+    bannerObjects.forEach((o) => canvas.remove(o));
     if (overlay) overlay.set('visible', overlayWasVisible !== false);
     if (watermark) watermark.set('visible', watermarkWasVisible !== false);
     canvas.renderAll();
@@ -161,8 +219,11 @@ export function exportCanvasAsPNG(canvas, { filename, hideWatermark = true, mult
  * @param {string} opts.filename - download filename without extension
  * @param {boolean} [opts.hideWatermark=true]
  * @param {number} [opts.multiplier=3]
+ * @param {{positionName: string} | null} [opts.indicativeBanner=null]
+ *   Bakes the bucket-(a) "INDICATIVE POSITION" band into the rendered
+ *   image (see exportCanvasAsPNG docs and CLAUDE.md §53).
  */
-export function exportCanvasAsPDF(canvas, { filename, hideWatermark = true, multiplier = 3 }) {
+export function exportCanvasAsPDF(canvas, { filename, hideWatermark = true, multiplier = 3, indicativeBanner = null }) {
   if (!canvas) return;
   const overlay = canvas.getObjects().find((obj) => obj.id === 'printAreaOverlay');
   const watermark = canvas.getObjects().find((obj) => obj.id === 'watermark');
@@ -170,6 +231,7 @@ export function exportCanvasAsPDF(canvas, { filename, hideWatermark = true, mult
   const watermarkWasVisible = watermark?.visible;
   if (overlay) overlay.set('visible', false);
   if (watermark && hideWatermark) watermark.set('visible', false);
+  const bannerObjects = attachIndicativeBanner(canvas, indicativeBanner);
   canvas.renderAll();
 
   try {
@@ -184,6 +246,7 @@ export function exportCanvasAsPDF(canvas, { filename, hideWatermark = true, mult
       'PDF export is temporarily unavailable for this product (image security). The team has been notified.',
     );
   } finally {
+    bannerObjects.forEach((o) => canvas.remove(o));
     if (overlay) overlay.set('visible', overlayWasVisible !== false);
     if (watermark) watermark.set('visible', watermarkWasVisible !== false);
     canvas.renderAll();

@@ -71,6 +71,10 @@ import {
   isUserObject,
 } from '../utils/fabricCanvasManager';
 import { prettyPrintArea } from '../utils/printAreaFormat';
+import {
+  isBucketADesignable,
+  isPositionDesignable,
+} from '../utils/laltexPositionHeuristics';
 
 const CANVAS_SIZE = 800;
 
@@ -289,27 +293,76 @@ const DesignerV2 = () => {
     }
   }, []);
 
+  // Bucket-(a) detection (CLAUDE.md §53). A Laltex product is in
+  // bucket-(a) when it has NO print_area_coordinates anywhere but at
+  // least one of its position names is recognised by the heuristic
+  // module. In that case the canvas renders the product photo + the
+  // amber "Indicative position" banner with no rect overlay; the
+  // export bakes in the "INDICATIVE POSITION" watermark band.
+  //
+  // PAC-driven products (Path 1 in LaltexProductView's isDesignable)
+  // are NOT bucket-(a) and run the existing rendering path unchanged.
+  //
+  // Declared up here (NOT alongside canonicalGroupName lower down)
+  // because the default-position useEffect that follows references
+  // isBucketA. A useMemo declared after the useEffect would TDZ when
+  // the effect's render-phase deps array is built.
+  const isBucketA = useMemo(() => {
+    if (!product) return false;
+    const groups = product.printDetails?.positionGroups || [];
+    const hasPac = groups.some((g) =>
+      (g.rows || []).some((r) => (r.coordinates?.length || 0) > 0),
+    );
+    if (hasPac) return false;
+    return isBucketADesignable(groups);
+  }, [product]);
+
+  // Position groups shown in the UI tabs. For bucket-(a) products we
+  // filter out treatment-only (Pantone, Hard Enamel, …),
+  // personalisation (Individual Names) and gift-set positions — they
+  // appear in Laltex's print_details schema but aren't designable.
+  // PAC-driven products keep showing every position (the current tab
+  // mute behaviour handles the single-rect-multi-position case).
+  const displayedPositionGroups = useMemo(() => {
+    const groups = product?.printDetails?.positionGroups || [];
+    if (!isBucketA) return groups;
+    return groups.filter((g) => isPositionDesignable(g.name));
+  }, [product, isBucketA]);
+
   // ---------------------------------------------------------------------
   // 3. Default position + colour when product loads
   // ---------------------------------------------------------------------
   useEffect(() => {
     if (!product) return;
-    const groups = product.printDetails?.positionGroups || [];
-    // Default position = group containing the default-flagged row;
-    // fallback to the first group. Default row inside each group =
-    // group.defaultRowIndex.
-    const defaultGroupIdx = Math.max(
-      0,
-      groups.findIndex((g) => (g.rows || []).some((r) => r.defaultOption)),
-    );
-    const defaultGroup = groups[defaultGroupIdx];
+    const allGroups = product.printDetails?.positionGroups || [];
+    // For bucket-(a) products the default-flag isn't meaningful (the
+    // flag is per-row and the rows we'd land on may be filtered out
+    // by the smart gate). Pick by name priority among designable
+    // positions instead — Wrap > Front > Back > first remaining.
+    let defaultGroup = null;
+    if (isBucketA) {
+      const candidates = allGroups.filter((g) => isPositionDesignable(g.name));
+      const byName = (target) =>
+        candidates.find((g) => (g.name || '').toLowerCase().trim() === target);
+      defaultGroup = byName('wrap') || byName('front') || byName('back') || candidates[0] || null;
+    } else {
+      // PAC path: existing behaviour — first group whose row carries
+      // defaultOption, fallback to first group in source order.
+      const defaultGroupIdx = Math.max(
+        0,
+        allGroups.findIndex((g) => (g.rows || []).some((r) => r.defaultOption)),
+      );
+      defaultGroup = allGroups[defaultGroupIdx];
+    }
     setActivePositionName(defaultGroup?.name || null);
+    // Row mapping covers EVERY group so state shape stays stable even
+    // if a future change unhides filtered groups.
     const initialRowByPosition = {};
-    groups.forEach((g) => { initialRowByPosition[g.name] = g.defaultRowIndex; });
+    allGroups.forEach((g) => { initialRowByPosition[g.name] = g.defaultRowIndex; });
     setActiveRowByPosition(initialRowByPosition);
     const firstColour = product.colours?.[0]?.id || null;
     setSelectedColourId(firstColour);
-  }, [product]);
+  }, [product, isBucketA]);
 
   // ---------------------------------------------------------------------
   // 4. Pre-load saved design via ?design=<id>
@@ -445,10 +498,12 @@ const DesignerV2 = () => {
   //   2. From the filtered list, pick by case-insensitive name in this
   //      priority order: Wrap, Front, Back, then any other group in
   //      the existing array order.
-  //   3. If nothing passes the filter, return null. LaltexProductView's
-  //      isDesignable conditional hides the Customize card when no PAC
-  //      exists anywhere, so this null state shouldn't be reachable in
-  //      practice — but it's the correct neutral default.
+  //   3. If nothing passes the filter, return null. The two ways this
+  //      happens in practice: (a) PAC products before the Customize
+  //      gate would have hidden them (shouldn't be reachable); (b)
+  //      bucket-(a) products (no PAC anywhere) — these run via the
+  //      isBucketA short-circuit in renderPosition above, so null
+  //      here is intentional and consumed safely.
   //
   // Why this changes:
   //   The previous heuristic preferred "Wrap" unconditionally if a
@@ -478,14 +533,22 @@ const DesignerV2 = () => {
   // The row whose image+rect actually drives the canvas. Equals
   // activeRow for normal products; locked to the canonical group's
   // default row for the 12.6% single-rect-multi-position bucket.
+  //
+  // Bucket-(a) (CLAUDE.md §53): no PAC anywhere, so canonicalGroupName
+  // is null and the existing "locked to canonical" branch would
+  // produce a null renderPosition. Instead we point at the active row
+  // so the image-load effect has something to drive the canvas. The
+  // active row carries no coordinates, so the existing "no colourCoord"
+  // branch (lines below) skips the print-rect overlay automatically.
   const renderPosition = useMemo(() => {
     if (!product) return null;
+    if (isBucketA) return activeRow;
     if (positionsHaveDistinctRects) return activeRow;
     const groups = product.printDetails?.positionGroups || [];
     const canonicalGroup = groups.find((g) => g.name === canonicalGroupName);
     if (!canonicalGroup) return null;
     return canonicalGroup.rows[canonicalGroup.defaultRowIndex] || canonicalGroup.rows[0] || null;
-  }, [product, activeRow, canonicalGroupName, positionsHaveDistinctRects]);
+  }, [product, activeRow, canonicalGroupName, positionsHaveDistinctRects, isBucketA]);
 
   const canonicalPositionName = canonicalGroupName;
 
@@ -895,11 +958,18 @@ const DesignerV2 = () => {
   const runExport = (format) => {
     if (!canvas || !product) return;
     const filename = `${product.code.toLowerCase()}-design`;
+    // Bucket-(a) exports MUST carry the indicative-position watermark
+    // (CLAUDE.md §53). The customer-intent string uses the original
+    // (un-canonicalised) position name from print_details so the proof
+    // team sees exactly what the customer clicked on.
+    const indicativeBanner = isBucketA && activeGroup
+      ? { positionName: activeGroup.name }
+      : null;
     try {
       if (format === 'png') {
-        exportCanvasAsPNG(canvas, { filename, hideWatermark: true });
+        exportCanvasAsPNG(canvas, { filename, hideWatermark: true, indicativeBanner });
       } else if (format === 'pdf') {
-        exportCanvasAsPDF(canvas, { filename, hideWatermark: true });
+        exportCanvasAsPDF(canvas, { filename, hideWatermark: true, indicativeBanner });
       }
     } catch (err) {
       // Defense in depth: /api/proxy-image (CLAUDE.md §39) keeps the
@@ -1025,25 +1095,26 @@ const DesignerV2 = () => {
             <div className="bg-white rounded-2xl shadow-md border border-gray-200/50 p-4">
               <h3 className="font-bold text-sm text-gray-700 mb-3">Print Position</h3>
               <div className="space-y-1.5">
-                {positionGroups.length === 0 && (
+                {displayedPositionGroups.length === 0 && (
                   <p className="text-xs text-gray-500">
                     No print positions configured for this product.
                   </p>
                 )}
-                {positionGroups.map((g) => {
+                {displayedPositionGroups.map((g) => {
                   const rowIdx = activeRowByPosition[g.name] ?? g.defaultRowIndex;
                   const currentRow = g.rows[rowIdx] || g.rows[0];
                   const sizeHint = currentRow?.area || null;
                   const methodHint = currentRow?.printType || 'Print';
                   const isActive = g.name === activePositionName;
                   const isCanonical = g.name === canonicalGroupName;
-                  // Fix #2: non-canonical tabs of a single-rect product
-                  // stay clickable (the customer still records their
-                  // intended print position for the quote) but are
-                  // visually muted to signal the canvas preview is
-                  // locked to the canonical view.
+                  // Fix #2: non-canonical tabs of a single-rect PAC
+                  // product stay clickable but are visually muted to
+                  // signal the canvas preview is locked to the
+                  // canonical view. Does NOT apply to bucket-(a) —
+                  // there's no canonical lock there, every designable
+                  // tab is a peer.
                   const isMutedForPreview =
-                    !positionsHaveDistinctRects && !isCanonical;
+                    !isBucketA && !positionsHaveDistinctRects && !isCanonical;
                   return (
                     <button
                       key={g.name}
@@ -1069,8 +1140,13 @@ const DesignerV2 = () => {
               </div>
               {/* Fix #2 notice: surfaces when the product is in the
                   single-rect-multi-position bucket (~12.6% of Laltex
-                  catalogue, mainly mugs + power banks). */}
-              {!positionsHaveDistinctRects && positionGroups.length > 1 && (
+                  catalogue, mainly mugs + power banks). Skipped for
+                  bucket-(a) products — they trip the
+                  !positionsHaveDistinctRects precondition for the
+                  wrong reason (no rects at all, not duplicated rects)
+                  and the banner above the canvas carries the right
+                  copy for them. */}
+              {!isBucketA && !positionsHaveDistinctRects && positionGroups.length > 1 && (
                 <div className="mt-3 p-2.5 rounded-lg bg-amber-50 border border-amber-200">
                   <p className="text-[11px] text-amber-900 leading-snug">
                     Live preview available on <strong>{canonicalGroupName}</strong> only.
@@ -1172,6 +1248,22 @@ const DesignerV2 = () => {
               sits flush against the card border instead — overflow
               is the wallpaper-clip rounded-2xl gives us. */}
           <main className="lg:col-span-6 w-full">
+            {/* Bucket-(a) indicative-position banner (CLAUDE.md §53).
+                Renders above the canvas for products with no PAC anywhere
+                but at least one recognised position. The PrintArea
+                interpolation is dropped silently when the active row
+                doesn't carry one — partial sentence is better than a
+                "approx undefined" mistake. */}
+            {isBucketA && activeGroup && (
+              <div
+                role="note"
+                className="max-w-[800px] mx-auto mb-3 p-3 rounded-lg border border-amber-400 bg-amber-100 text-amber-900 text-xs leading-snug"
+              >
+                <span className="font-semibold">Indicative position — {activeGroup.name}.</span>{' '}
+                Our artwork team confirms exact placement at proof stage.
+                {activeRow?.area ? ` Print area approx ${activeRow.area}.` : ''}
+              </div>
+            )}
             <div className="bg-white rounded-2xl shadow-lg border border-gray-200/50 max-w-[800px] mx-auto overflow-hidden">
               <canvas
                 ref={handleCanvasRef}

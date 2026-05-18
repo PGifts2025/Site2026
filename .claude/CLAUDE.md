@@ -4490,3 +4490,250 @@ wrong order whenever schema changes are involved.
   a `BEGIN ... COMMIT;` block on error, or a Dashboard timeout can
   all silently leave the migration unapplied. The SELECT is the
   evidence that the change actually landed.
+
+---
+
+## 53. BUCKET-(A) DESIGNER RELAXATION — SMART GATE, BANNER, WATERMARK
+
+Background: ~33% of Laltex products (390 of 1192 active, audited
+2026-05-18) have full `print_details` entries but ZERO
+`print_area_coordinates` anywhere. Pre-this-section those products
+hid the Customize card entirely — `LaltexProductView.isDesignable`
+gated on PAC presence and there was no fallback. After the
+relaxation, products with at least one recognised position name are
+designable via a no-rect Designer path: product photo, amber
+disclaimer banner, watermarked export.
+
+The full Phase 1 investigation report (heuristic sanity check
+against 4 representative products) is in the
+`feat/bucket-a-designer-relaxation` PR description. The short
+version of why Option A (no on-canvas rect) is shipping instead of
+the originally-spec'd rect overlay:
+
+> Single canvas-fraction coordinates don't survive Laltex's variety
+> of photo framings (model-worn / flat-lay / multi-product / mixed
+> orientation). Every test product overlay landed wrong somewhere:
+> hoodie rects on the model's face, cap rects on the model's chin,
+> vertical-pen barrel rects as awkward horizontal slices. Drawing
+> nothing is strictly better than drawing wrong — the banner copy
+> and watermarked export do the semantic work.
+
+### 53.1 The smart gate
+
+`LaltexProductView.isDesignable` returns true when EITHER:
+
+1. **Path 1 (PAC):** at least one position group has at least one
+   row with at least one `print_area_coordinates` entry. Existing
+   behaviour, unchanged by this section. CLAUDE.md §50 still
+   applies to this path.
+2. **Path 2 (heuristic recognition):** no PAC anywhere, but at
+   least one position name canonicalises to an entry in
+   `RECOGNISED_POSITIONS`.
+
+Products that satisfy neither path stay hidden. The Customize card
+disappears and a `mailto:artwork@promo-gifts.co` "Need help with
+artwork?" fallback link renders below the Configure & Quote panel.
+
+### 53.2 The recognition module
+
+`src/utils/laltexPositionHeuristics.js` exports:
+
+- `RECOGNISED_POSITIONS: Set<string>` — canonicalised position
+  names that are designable. Apparel (Front, Back, Left/Right
+  Breast, Left/Right Sleeve), Drinkware (Wrap, Bottle Front/Back,
+  Front Centre, …), pen anatomy (Barrel, Barrel - Side 1/2, Clip,
+  …), hard-good faces (Top, Lid, Side N, …), accessory positions
+  (Patch, Band, Strap, …). Full list in the file; do not duplicate
+  here.
+- `TREATMENT_POSITIONS: Set<string>` — Laltex's production-
+  treatment options that share the schema with real positions
+  (`pantone`, `gold plating`, `hard enamel`, …). Products with
+  ONLY these stay hidden.
+- `PERSONALISATION_POSITIONS: Set<string>` — `individual names`.
+  Per-unit personalisation is collected at quote time, not designed
+  on the canvas.
+- `canonicalisePosition(rawName)` — lowercases, trims, and strips
+  everything before the last colon (collapses gift-set prefixes
+  like `Goa Bamboo Ball Pen:Barrel` → `barrel`).
+- `isPositionDesignable(rawName)` — single-position predicate.
+  Returns false for any colon-containing name (gift-set exclusion —
+  see §53.7), any treatment-only name, any personalisation name,
+  and any unrecognised name.
+- `isGiftSetProduct(positionGroups)` — product-level helper.
+  Returns true iff any position in the array carries a colon.
+- `isBucketADesignable(positionGroups)` — product-level smart-gate
+  predicate (Path 2). Returns true iff the product is NOT a
+  gift-set AND at least one position passes
+  `isPositionDesignable`. This is the function `LaltexProductView`
+  and `DesignerV2` call to decide Path 2 eligibility — neither
+  should re-implement the gate inline.
+
+`isBucketADesignable` is intentionally stricter than "at least one
+designable position". Goa Bamboo (a real example) ships BOTH
+colon-prefixed positions like `Goa Bamboo Ball Pen:Barrel` AND
+clean siblings like `Barrel - Side 1`. The single-position check
+would mark the clean siblings as designable; the product-level
+check sees the colons and refuses the whole product. The latter
+matches the intent: a gift-set canvas has no honest way to render
+"Barrel - Side 1" because the customer can't tell which item (pen
+vs pencil) the position refers to.
+
+The module is **intentionally NOT a coordinate generator**. No rect
+dimensions, no canvas-fraction values, no Fabric.js imports. It is
+pure data + lookup.
+
+### 53.3 The Designer path for bucket-(a)
+
+`DesignerV2.jsx` derives `isBucketA` (no PAC anywhere AND at least
+one designable position). When true:
+
+- Position tabs are filtered to designable positions only
+  (`displayedPositionGroups`). Treatment-only, personalisation, and
+  gift-set positions don't render as tabs.
+- The default active position picks by name priority (`Wrap` >
+  `Front` > `Back` > first remaining) among designable positions.
+  PAC products keep the existing `defaultOption`-row default.
+- `renderPosition` short-circuits to `activeRow` so the image-load
+  effect has something to drive. Since `activeRow.coordinates` is
+  empty for bucket-(a), the existing no-coord branch in the
+  image-load effect (lines around 525–635) naturally:
+  - centres the image bounds (no rect to anchor on);
+  - skips adding the print-rect overlay;
+  - leaves `colourPreviewUnavailable` false (no mismatched-colour
+    notice).
+- The amber "Indicative position — *Position*. Our artwork team
+  confirms exact placement at proof stage. Print area approx
+  *PrintArea*." banner renders above the canvas card. `PrintArea`
+  is interpolated from `activeRow.area`; the sentence is omitted
+  if the field is missing.
+- The PAC-specific Fix #2 amber notice ("Live preview available on
+  *Wrap* only…") is suppressed in bucket-(a) — its
+  `!positionsHaveDistinctRects` precondition trips for the wrong
+  reason (no rects at all vs duplicated rects) and the banner
+  above the canvas carries the right copy.
+- Export bakes the mandatory watermark band into the rendered
+  image (§53.5).
+
+### 53.4 The "Need help with artwork?" fallback
+
+When `isDesignable` is false (no PAC, no recognised position),
+`LaltexProductView` renders a small grey-text link in the same
+column where the Customize card would have lived:
+
+```
+Need help with artwork? <a>Get in touch</a>.
+```
+
+Target: `mailto:artwork@promo-gifts.co?subject=Artwork help - <code>`.
+The artwork inbox is the documented support address for artwork
+queries (CLAUDE.md §21.3), already configured on Resend with DKIM,
+and the subject pre-fill carries the product code so the artwork
+team has context.
+
+There is no `/contact` route in the React app today; the existing
+"Request Sample" button is an unwired placeholder. Linking to a
+real, working mailto is strictly better than inventing a fictional
+contact route.
+
+### 53.5 The wearer-vs-viewer convention
+
+Industry standard for apparel embroidery: **"Left Breast" =
+wearer's left = viewer's right** when looking at a front-on model
+photo. "Right Breast" = wearer's right = viewer's left.
+
+Currently this convention does not influence any rendered UI
+element because Option A renders no rect. It IS relevant to the
+proof team's manual placement work — when a customer says "Left
+Breast" they mean the wearer's left, and the proof should reflect
+that regardless of which side of the photo it appears on.
+
+If a future iteration revisits Option C (per-image bounding-box
+pipeline + rect placement), the convention is locked: left/right
+in position names refers to the wearer, not the viewer.
+
+### 53.6 The export watermark
+
+`fabricCanvasManager.exportCanvasAsPNG` and `exportCanvasAsPDF`
+accept an optional `indicativeBanner: { positionName: string }`
+parameter. When set, the helper temporarily adds two Fabric
+objects to the top of the canvas before `toDataURL`:
+
+- A dark-grey `Rect` (`fill: rgba(55, 65, 81, 0.95)`), full canvas
+  width, 32 canvas units tall, anchored at (0, 0).
+- A white 12px `Text` reading `"INDICATIVE POSITION — confirm
+  placement at proof stage. Customer intent: <PositionName>."`,
+  origin-left, 8px padding, vertically centred in the band.
+
+The objects are removed in a `finally` block immediately after
+`toDataURL` returns, so the on-canvas UI never shows the band —
+the watermark is intrinsic to the exported pixels only. The
+customer cannot opt out and the proof team cannot receive an
+export without it.
+
+`hideWatermark: true` (the existing parameter, distinct from the
+new `indicativeBanner`) still hides the legacy on-canvas
+watermark id. The two are independent.
+
+PAC-driven exports continue to receive `indicativeBanner: null`
+and remain visually clean.
+
+### 53.7 Gift-set exclusion (re-evaluated post-launch)
+
+Any position name containing a colon character is treated as a
+gift-set item and is **not** designable in this iteration, even
+when the post-colon suffix is a recognised name (e.g. `Goa
+Bamboo Ball Pen:Barrel` would otherwise canonicalise to
+`barrel`, which is recognised). The exclusion is enforced in
+`isPositionDesignable` and reflected in the gift-set test case
+in the PR verification matrix.
+
+Re-evaluate after the main relaxation ships and we have real
+customer signal on bucket-(a). The colon-rule is conservative —
+removing it unlocks ~10–20 products at the cost of representing
+a multi-item set on a single canvas, which has its own UX
+problems.
+
+### 53.8 Invariants — DO NOT BREAK
+
+- **Do NOT bypass the smart gate.** Bucket-(a) products without
+  a recognised position should never reach DesignerV2. The
+  Customize card's gate AND the `isBucketA` derivation in
+  DesignerV2 both rely on `isPositionDesignable` for consistent
+  behaviour.
+- **Do NOT add an on-canvas rect for bucket-(a) products** without
+  revisiting the Option-A decision. Phase 1 of the investigation
+  verified that any single-fraction heuristic falls over on at
+  least one common Laltex photo style. Restoring rects requires
+  a per-image bounding-box pipeline (Option C, currently parked).
+- **Do NOT strip the export watermark.** It's mandatory on every
+  bucket-(a) PNG/PDF export so the proof team can never receive
+  an artwork file without the "INDICATIVE POSITION" callout. The
+  customer-facing path through `runExport` always sets
+  `indicativeBanner` based on `isBucketA`; there is no
+  override.
+- **Do NOT extend `RECOGNISED_POSITIONS` speculatively.** Add
+  values only when audit evidence shows real Laltex products use
+  the new name. The current set was authored from the §1 audit
+  in the investigation report against the live catalogue.
+- **Do NOT add coordinate values to the heuristic module.** It is
+  a recognition module, not a placement module. If a future
+  Option-C pipeline needs coordinates, store them in a new file
+  alongside the per-image bbox data — keep recognition and
+  placement as separate concerns.
+- **Do NOT remove the gift-set colon-exclusion** without a fresh
+  decision. The re-evaluation is a deliberate post-launch step
+  (§53.7), not a tidy-up cleanup.
+- **Do NOT change the "Need help" link to a non-existent route.**
+  `mailto:artwork@promo-gifts.co` is real, working, and routes
+  to the correct inbox. A fictional `/contact` page would 404.
+- **Do NOT propagate the bucket-(a) banner to PAC products.** The
+  amber "Indicative position" banner is gated on `isBucketA`. PAC
+  products have their own existing banners (Fix #1 colour-
+  preview-unavailable, Fix #2 single-rect-multi-position lock)
+  that serve different cases.
+- **Do NOT move the `isBucketA` useMemo below the default-position
+  useEffect in DesignerV2.jsx.** The effect references `isBucketA`
+  during its deps array construction; a useMemo declared below would
+  TDZ and silently break the page. The useMemo's intentional
+  position above the effect block is documented inline at the
+  declaration site.
