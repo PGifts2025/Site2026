@@ -4385,3 +4385,108 @@ doesn't exist" / "not yet embedded", not "retired".
   next sync (counter resets, flag clears, embedding already
   present). Retirement is a read-side gate; the embed pipeline is
   upstream of that.
+
+---
+
+## 52. MIGRATION-FIRST DEPLOY RULE
+
+### The hard rule
+
+**When a PR introduces SQL migrations, ALL migrations must be applied
+to production before the PR is merged.** Merging first and migrating
+after is a production outage — every code path that references the
+new schema fails until the columns exist.
+
+### Required deploy-step checklist for migration PRs
+
+Every PR that touches `supabase/migrations/` MUST include this exact
+checklist in the PR body. Every item must be ticked before merge:
+
+```
+## Deploy steps (READ BEFORE MERGING)
+
+☐ Migration files reviewed
+☐ Migrations applied to production via Supabase Dashboard → SQL Editor
+   (in numerical order, one at a time)
+☐ Column / function / index existence verified with SELECT against
+   information_schema / pg_proc / pg_indexes (paste verification SQL
+   and result rows)
+☐ If migration adds RPC: call the RPC once with a sample input,
+   confirm shape matches
+☐ Only NOW is it safe to merge
+```
+
+The verification step is non-negotiable. "I ran the migration" is not
+the same as "I confirmed the migration landed". Pasted SELECT output in
+the PR body is the auditable trail.
+
+### Why the order matters
+
+Vercel deploys within seconds of a merge to `main`. If the migrations
+haven't run, the deploy lands code that immediately fails against the
+old schema — every customer-facing route that references the new
+column / RPC / index returns an error until someone manually applies
+the missing migrations.
+
+### Rollback guidance
+
+If a migration PR is merged before its migrations are applied AND
+production is broken:
+
+1. **Apply the migrations immediately** via Supabase SQL Editor. This
+   is the fastest recovery path — usually 30 seconds. The code is
+   already deployed; bringing the schema up to meet it heals
+   production in one step.
+2. **Don't revert the merge.** Reverting puts production in a
+   different broken state (columns now exist, deployed code no longer
+   references them, and any subsequent PR depending on the reverted
+   change has to be reworked). Forward-fix the schema, not backward
+   the code.
+3. **Document the incident in CLAUDE.md** if it surfaced a new
+   failure mode the rule didn't cover.
+
+### Exempt migration categories
+
+These categories cannot break existing queries, so the merge-after-
+apply rule does not bind them:
+
+- **DOWN-only migrations.** Rollback paths applied separately after a
+  confirmed bad migration.
+- **Index-only migrations** that use `CREATE INDEX CONCURRENTLY`.
+  Non-blocking and don't change query semantics — existing queries
+  keep running, just unindexed, until the build completes.
+- **Comment-only migrations** (`COMMENT ON COLUMN`, `COMMENT ON
+  FUNCTION`, etc.) — pure documentation.
+
+If you're not sure a migration fits one of these categories, treat it
+as a binding migration and follow the full checklist.
+
+### Origin: PR #29 (2026-05-18)
+
+This rule was codified after PR #29 (retired-product handling) caused
+a brief production outage. The PR was approved and merged before the
+two migrations it required (`20260518_supplier_products_retired_flag.sql`
+and `20260518_search_rpcs_exclude_retired.sql`) had been applied to
+Supabase. Every Laltex product page returned "Product not found" until
+Dave manually applied them via the SQL Editor. The PR body listed the
+deploy steps but framed them as post-merge actions, which is the
+wrong order whenever schema changes are involved.
+
+### Invariants — DO NOT BREAK
+
+- **DO NOT merge a migration PR without the checklist above filled in
+  and ticked.** "I'll apply them right after merge" is exactly the
+  pattern that caused PR #29.
+- **DO NOT rely on Vercel preview deployments to test migrations.**
+  Preview uses the same Supabase project as production for the DB
+  layer; the only way to test the post-migration code is to apply
+  the migration to that shared DB, which is the production apply.
+- **DO NOT collapse multiple migrations into a single Dashboard
+  paste.** Apply them in numerical order, one at a time, so a
+  failure on migration N doesn't leave migration N+1 partially
+  applied.
+- **DO NOT skip the SELECT verification step** even for "obvious"
+  schema additions. Schema-cache drift, transaction rollback inside
+  a `BEGIN ... COMMIT;` block on error, or a Dashboard timeout can
+  all silently leave the migration unapplied. The SELECT is the
+  evidence that the change actually landed.
