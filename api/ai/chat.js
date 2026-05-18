@@ -531,16 +531,30 @@ export default async function handler(req, res) {
     .filter((b) => b.type === 'tool_use')
     .map((b) => ({ name: b.name, input: b.input }));
 
-  // Session 6: build the product cards payload. If the assistant text
+  // Session 6+: build the product cards payload. If the assistant text
   // mentions specific codes, surface only those (most relevant); else
-  // return everything we accumulated this turn, capped at 6.
+  // return everything we accumulated this turn.
+  //
+  // Pagination contract (CLAUDE.md §55):
+  //   - Hard ceiling of 20 cards per response. Beyond that the customer
+  //     should refine the query; we don't paginate to infinity.
+  //   - First INITIAL_BATCH_SIZE go in `products` (rendered immediately).
+  //   - The rest go in `products_remainder` (revealed by the widget's
+  //     "Show me more" button, in batches of 5). Pure client-side
+  //     pagination — no new chat round-trip.
+  //   - `total_matches` reports the total accumulated for this turn
+  //     (informational; can equal products.length + products_remainder.length).
   const assistantText = assistantTextBlocks.join('\n\n');
   const allCards = Array.from(productCardMap.values());
   const mentioned = allCards.filter((c) =>
     c.supplier_product_code &&
     assistantText.toLowerCase().includes(String(c.supplier_product_code).toLowerCase()),
   );
-  const productCards = (mentioned.length > 0 ? mentioned : allCards).slice(0, 6);
+  const PRODUCT_CARDS_CAP = 20;
+  const INITIAL_BATCH_SIZE = 5;
+  const cards = (mentioned.length > 0 ? mentioned : allCards).slice(0, PRODUCT_CARDS_CAP);
+  const productCards = cards.slice(0, INITIAL_BATCH_SIZE);
+  const productCardsRemainder = cards.slice(INITIAL_BATCH_SIZE);
 
   return res.status(200).json({
     conversation_id: conversation.id,
@@ -550,6 +564,8 @@ export default async function handler(req, res) {
       tool_calls: toolCallSummaries,
     },
     products: productCards,
+    products_remainder: productCardsRemainder,
+    total_matches: cards.length,
     stop_reason: stopReason,
     quota_status: {
       used: quotaAfter.used,

@@ -1,7 +1,7 @@
 // src/components/HeaderBar.jsx
 import React, { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
-import { Phone, Search, ShoppingCart, User, LogOut, Menu, X, ChevronDown, Package, FileText, MapPin, Settings, Palette } from 'lucide-react';
+import { Phone, ShoppingCart, User, LogOut, Menu, X, ChevronDown, Package, FileText, MapPin, Settings, Palette } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useCart } from '../context/CartContext';
 import { supabase } from '../services/supabaseService';
@@ -25,7 +25,6 @@ const categories = [
 function HeaderBar() {
   const { user, signOut } = useAuth();
   const { cart, toggleCart } = useCart();
-  const [searchQuery, setSearchQuery] = useState('');
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -95,22 +94,6 @@ function HeaderBar() {
               </div>
             </div>
           </Link>
-
-          {/* Desktop Search Bar */}
-          <div className="hidden lg:flex flex-1 max-w-2xl mx-8">
-            <div className="relative w-full">
-              <input
-                type="text"
-                placeholder="Search product, brand, colour, keyword or code"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent"
-              />
-              <button className="absolute right-2 top-2 bg-red-500 text-white p-2 rounded-md hover:bg-red-600 transition-colors">
-                <Search className="h-5 w-5" />
-              </button>
-            </div>
-          </div>
 
           {/* Right Side Icons */}
           <div className="flex items-center space-x-2 md:space-x-4">
@@ -248,21 +231,6 @@ function HeaderBar() {
           </div>
         </div>
 
-        {/* Mobile Search Bar */}
-        <div className="lg:hidden pb-4">
-          <div className="relative">
-            <input
-              type="text"
-              placeholder="Search products..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent text-sm"
-            />
-            <button className="absolute right-2 top-1.5 bg-red-500 text-white p-1.5 rounded-md hover:bg-red-600 transition-colors">
-              <Search className="h-4 w-4" />
-            </button>
-          </div>
-        </div>
       </div>
 
       {/* Desktop Navigation */}
