@@ -4097,3 +4097,109 @@ PR; flagged here as a follow-up. Tooling: any image optimiser
   elsewhere. JSX must survive in the file.
 - **Do NOT scope rate-limit hardening (§49.6) into unrelated PRs.**
   Each of the three follow-ups is its own scope and review.
+
+---
+
+## 50. LALTEX DESIGNER POSITION + IMAGE FALLBACK INVARIANTS
+
+DesignerV2's canvas rendering for Laltex products depends on two
+contracts that the canonical-group resolver and the image-fallback
+chain must respect together. Investigation report (audit) and the
+follow-up fix landed in `feat/laltex-designer-position-priority`.
+
+### 50.1 Position priority must respect PAC presence
+
+`canonicalGroupName` in
+[`src/pages/DesignerV2.jsx`](../src/pages/DesignerV2.jsx) picks the
+position group that drives the canvas. Resolver invariants:
+
+1. Filter to position groups whose rows carry **at least one
+   `print_area_coordinates` entry**. Groups with all-empty rows are
+   eliminated from consideration entirely — they have no
+   image+coordinate payload to drive the canvas.
+2. From the filtered set, prefer by **case-insensitive name** in this
+   order: `Wrap`, `Front`, `Back`, then the first remaining group in
+   source order.
+3. If no group passes the filter, return `null`.
+
+**Why:** Laltex ships some products (e.g. MG0660, the Korvex engraved
+tumbler) with a `Wrap` position present but EMPTY of PAC, while the
+real engraving PAC lives on `Front`. The pre-fix resolver preferred
+the name "Wrap" unconditionally, locking the canvas to an empty
+position. Image fallback then walked past the (null) PAC image and
+landed on `Items[].ItemImages[0]` — Laltex's marketing photo, which
+can carry mockup branding from another customer ("BLACKBRIDGE
+SECURITY SOLUTIONS" was a real production sighting). The overlay rect
+also dropped out because `colourCoord` was null.
+
+### 50.2 Image fallback chain — plain over marketing
+
+`rawImageUrl` selection priority:
+
+1. `colourCoord?.image_url` — Laltex's plain PAC image (coord-aligned).
+2. `selectedColour?.plainImages?.[0]` — per-colour PlainImages (clean).
+3. `selectedColour?.images?.[0]` — per-colour ItemImages (**may carry
+   mockup branding**, last resort).
+4. `product.images?.[0]?.url` — top-level marketing (same risk).
+
+**Why:** Laltex API V1.7 documents PlainImages as the unbranded
+product photo. ItemImages is the marketing/catalogue image and may
+ship with customer-mockup branding. Always prefer clean over
+potentially-branded except where the PAC field is the primary source.
+
+A top-level `product.plainImages` does NOT exist on the normalised
+product today (`productCatalogService.normaliseProduct` only surfaces
+plain_images at the colour level). If a future refactor adds it,
+insert between steps 2 and 3.
+
+### 50.3 `colourCoord` defensive fallback
+
+When the selected colour name doesn't match any PAC entry's `colour`
+field in the chosen render position, fall back to `allCoords[0]`
+rather than null:
+
+```js
+const colourCoord =
+  (selectedColour?.name ? allCoords.find(c =>
+    c.colour?.toLowerCase().trim() === selectedColour.name.toLowerCase().trim()
+  ) : null) || allCoords[0] || null;
+```
+
+**Why:** rect coordinates are identical across colours within a
+single position group (only the per-colour image varies slightly).
+With the canvas locked to a populated position via §50.1, the
+worst-case fallback is a marginally-mismatched colour preview — still
+strictly better than dropping into the no-coord path where the
+overlay disappears AND the image fallback walks back to marketing
+photos. The session-7 "Amber→Blue silent swap" bug (CLAUDE.md §37)
+does NOT reappear because that bug's prerequisite (some colours
+have PAC, customer's colour doesn't, fall back vs not) is rendered
+moot — the position-priority rule §50.1 now picks the position with
+PAC, and within that position any PAC entry is correct rect-wise.
+
+### 50.4 Invariants — DO NOT BREAK
+
+- **Do NOT lock the canonical group to a position name without
+  checking PAC presence first.** The session-9 bug Dave observed
+  (MG0660 "BLACKBRIDGE" image + missing overlay) is exactly this
+  failure mode. Any new heuristic that bypasses §50.1 is rejecting
+  the fix.
+- **Do NOT promote `selectedColour.images[0]` above
+  `selectedColour.plainImages[0]` in the image fallback chain.**
+  ItemImages is marketing-grade and may be branded; PlainImages is
+  contractually clean per Laltex API docs.
+- **Do NOT consume `marked_image_url` in the Designer.** Parsed and
+  stored for completeness only. Despite the field name, it is
+  Laltex's "mockup-branded sample for marketing review" — exactly
+  what we want to AVOID showing to a customer designing their own
+  print.
+- **Do NOT change PGifts Direct image-loading paths to share this
+  fallback chain.** PGifts Direct uses `variant.template_url` from
+  `product_template_variants`; the Laltex chain documented here is
+  Laltex-specific.
+- **Products with zero PAC anywhere (~34% of the Laltex catalogue per
+  the §1.1 audit) correctly hide the Customize card** via
+  `isDesignable` in `LaltexProductView`. This is a data gap from
+  Laltex, not a Designer bug. Do not relax `isDesignable` to let
+  Designer open against zero-PAC products without coordinating
+  product decisions first.

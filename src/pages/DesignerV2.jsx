@@ -436,24 +436,43 @@ const DesignerV2 = () => {
 
   // When positionsHaveDistinctRects is false we lock the canvas to one
   // canonical position group regardless of the user's selection.
-  // Heuristic:
-  // - Drinkware ships with a head-on "Wrap" image whose rect coords align
-  //   with the visible cup body — prefer Wrap if present.
-  // - Otherwise pick the position whose default row has the most colour
-  //   coord entries (most field-tested framing).
+  //
+  // Resolver (CLAUDE.md §50):
+  //   1. Filter positionGroups to only those with at least one row
+  //      carrying at least one PAC entry. Empty groups are eliminated
+  //      from consideration entirely — they have no image+coordinate
+  //      payload to drive the canvas.
+  //   2. From the filtered list, pick by case-insensitive name in this
+  //      priority order: Wrap, Front, Back, then any other group in
+  //      the existing array order.
+  //   3. If nothing passes the filter, return null. LaltexProductView's
+  //      isDesignable conditional hides the Customize card when no PAC
+  //      exists anywhere, so this null state shouldn't be reachable in
+  //      practice — but it's the correct neutral default.
+  //
+  // Why this changes:
+  //   The previous heuristic preferred "Wrap" unconditionally if a
+  //   group named Wrap existed, even when Laltex shipped Wrap as an
+  //   empty placeholder. For engraving-heavy drinkware (MG0660, etc.)
+  //   the real PAC lives on Front, which got bypassed — leading to
+  //   the marketing-mockup fallback image and no overlay. See the
+  //   audit report for details.
   const canonicalGroupName = useMemo(() => {
     const groups = product?.printDetails?.positionGroups || [];
     if (groups.length === 0) return null;
-    const wrap = groups.find((g) => g.name === 'Wrap');
-    if (wrap) return wrap.name;
-    let best = groups[0];
-    let bestCount = -1;
-    groups.forEach((g) => {
-      const r = g.rows[g.defaultRowIndex] || g.rows[0];
-      const cnt = (r?.coordinates || []).length;
-      if (cnt > bestCount) { bestCount = cnt; best = g; }
-    });
-    return best?.name || null;
+    const groupHasPac = (g) => (g.rows || []).some(
+      (r) => (r?.coordinates?.length || 0) > 0,
+    );
+    const usable = groups.filter(groupHasPac);
+    if (usable.length === 0) return null;
+    // Priority order — case-insensitive name match.
+    const priority = ['wrap', 'front', 'back'];
+    for (const target of priority) {
+      const hit = usable.find((g) => (g.name || '').trim().toLowerCase() === target);
+      if (hit) return hit.name;
+    }
+    // No priority name; preserve source order (first remaining group).
+    return usable[0].name;
   }, [product]);
 
   // The row whose image+rect actually drives the canvas. Equals
@@ -485,16 +504,25 @@ const DesignerV2 = () => {
     // DIFFERENT image at different dimensions/crop and would put the
     // rectangle in the wrong place.
     //
-    // Fix #1 (Bug A, session 7): strict colour match. If the selected
-    // colour has no entry in this position's coordinates, we do NOT fall
-    // back to allCoords[0] - that silently swapped the customer's chosen
-    // colour for whichever sorted first (the original "Amber selected,
-    // Blue cup rendered" bug on MG0192's Back).
+    // Defensive fallback (CLAUDE.md §50): if no PAC entry matches the
+    // selected colour name, fall back to allCoords[0] rather than null.
+    // The rect coordinates are identical across colours within a single
+    // position group — only the per-colour image varies slightly. With
+    // the canvas locked to a populated position (post-Change-1), the
+    // worst-case is a marginally-mismatched colour preview, which is
+    // strictly better than dropping into the no-coord path where the
+    // overlay disappears and the image fallback walks back to marketing
+    // photos. Bug A from session 7 (Amber→Blue silent swap on MG0192's
+    // Back) does NOT reappear because the previous null path is gone
+    // entirely — there is no silent-swap-vs-no-preview decision left to
+    // get wrong.
     const allCoords = renderPosition.coordinates || [];
-    const colourCoord = allCoords.find((c) =>
-      c.colour && selectedColour?.name &&
-      c.colour.toLowerCase().trim() === selectedColour.name.toLowerCase().trim(),
-    ) || null;
+    const exactColourMatch = selectedColour?.name
+      ? allCoords.find((c) =>
+          c.colour && c.colour.toLowerCase().trim() === selectedColour.name.toLowerCase().trim(),
+        )
+      : null;
+    const colourCoord = exactColourMatch || allCoords[0] || null;
 
     // Step 2 — pick the BACKGROUND image.
     // - colourCoord present: use its image_url. Coords match this exact
@@ -511,10 +539,30 @@ const DesignerV2 = () => {
     const previewUnavailable = positionHasAnyCoords && !colourCoord;
     setColourPreviewUnavailable(previewUnavailable);
 
+    // Image fallback chain (CLAUDE.md §50): prefer plain/unbranded
+    // images over marketing images at every step.
+    //
+    //   1. colourCoord.image_url   — Laltex's plain PAC image, primary.
+    //                                 Coords-aligned, never branded.
+    //   2. selectedColour.plainImages[0] — clean unbranded product photo
+    //                                       per Laltex API V1.7 docs.
+    //   3. selectedColour.images[0]      — supplier marketing image
+    //                                       (Items[].ItemImages[0]). MAY
+    //                                       contain customer-mockup
+    //                                       branding (BLACKBRIDGE bug).
+    //                                       Last resort.
+    //   4. product.images[0].url         — top-level marketing image,
+    //                                       same risk profile as step 3.
+    //
+    // Note: there is no top-level `product.plainImages` on the
+    // normalised product shape today; productCatalogService.normaliseProduct
+    // only surfaces plain_images per-colour (selectedColour.plainImages).
+    // If a future refactor adds product.plainImages, insert it between
+    // steps 2 and 3 as a sensible additional clean fallback.
     const rawImageUrl =
       colourCoord?.image_url ||
-      selectedColour?.images?.[0] ||
       selectedColour?.plainImages?.[0] ||
+      selectedColour?.images?.[0] ||
       product.images?.[0]?.url ||
       null;
 
