@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Circular PAC X/Y convention check</title>
+<style>
+  body { font: 13px/1.4 system-ui, sans-serif; background: #f3f4f6; color: #111; margin: 16px; }
+  h2 { margin: 18px 0 6px; font-size: 15px; }
+  .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; }
+  .card { background: #fff; padding: 12px; border-radius: 6px; }
+  .stage { position: relative; display: inline-block; }
+  .stage img { display: block; max-width: 100%; height: auto; }
+  .circle-tl { position: absolute; border: 3px dashed #f59e0b; border-radius: 50%; box-sizing: border-box; pointer-events: none; }
+  .circle-ct { position: absolute; border: 3px dashed #10b981; border-radius: 50%; box-sizing: border-box; pointer-events: none; }
+  .point-tl  { position: absolute; width: 12px; height: 12px; background: #f59e0b; border-radius: 50%; transform: translate(-50%, -50%); }
+  .point-ct  { position: absolute; width: 12px; height: 12px; background: #10b981; border-radius: 50%; transform: translate(-50%, -50%); }
+  .meta { font-size: 12px; color: #444; margin: 6px 0; }
+  .legend { background: #fff; padding: 8px 12px; border-radius: 6px; margin-bottom: 12px; font-size: 12px; }
+  .legend span.tl { color: #f59e0b; font-weight: bold; }
+  .legend span.ct { color: #10b981; font-weight: bold; }
+</style>
+</head>
+<body>
+<h1>Circular PAC X/Y convention check</h1>
+<div class="legend">
+  Two interpretations of the (X, Y) coordinates:<br>
+  <span class="tl">Amber (dashed)</span>: X/Y is TOP-LEFT of the bounding box. Circle centre = (X + D/2, Y + D/2).<br>
+  <span class="ct">Green (dashed)</span>: X/Y IS the circle centre. Circle centre = (X, Y).<br>
+  Whichever circle aligns with the visible engraving/print zone tells us the convention.
+</div>
+
+<div class="grid">
+  <div class="card">
+    <h2>ZA0176 / Top — pac/ZA0176BK.jpg</h2>
+    <div class="meta">x=1375.75, y=1137.91, diameter=742.692</div>
+    <div class="stage" data-stage="za0176" data-x="1375.75" data-y="1137.91" data-d="742.692">
+      <img src="https://laltex-extranet.co.uk/images/pac/ZA0176BK.jpg" alt="ZA0176 PAC" />
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>MG0119 / Top — pac/MG0119.jpg</h2>
+    <div class="meta">x=379.84, y=561.94, diameter=476</div>
+    <div class="stage" data-stage="mg0119" data-x="379.84" data-y="561.94" data-d="476">
+      <img src="https://laltex-extranet.co.uk/images/pac/MG0119.jpg" alt="MG0119 PAC" />
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>PS0045 / Lid — pac/PS0045.jpg</h2>
+    <div class="meta">x=221, y=488, diameter=792.252</div>
+    <div class="stage" data-stage="ps0045" data-x="221" data-y="488" data-d="792.252">
+      <img src="https://laltex-extranet.co.uk/images/pac/PS0045.jpg" alt="PS0045 PAC" />
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>TA0211 / Disc — pac/TA0211 BK Print, Print on pouch.jpg</h2>
+    <div class="meta">x=331.5, y=527.5, diameter=572</div>
+    <div class="stage" data-stage="ta0211" data-x="331.5" data-y="527.5" data-d="572">
+      <img src="https://laltex-extranet.co.uk/images/pac/TA0211 BK Print, Print on pouch.jpg" alt="TA0211 PAC" />
+    </div>
+  </div>
+</div>
+
+<script>
+  function placeAll() {
+    for (const stage of document.querySelectorAll('.stage')) {
+      const img = stage.querySelector('img');
+      if (!img.complete || !img.naturalWidth) continue;
+      stage.querySelectorAll('.circle-tl,.circle-ct,.point-tl,.point-ct').forEach(el => el.remove());
+      const renderedW = img.offsetWidth;
+      const naturalW = img.naturalWidth;
+      const naturalH = img.naturalHeight;
+      const scale = renderedW / naturalW;
+      const renderedH = naturalH * scale;
+      const x = parseFloat(stage.dataset.x);
+      const y = parseFloat(stage.dataset.y);
+      const d = parseFloat(stage.dataset.d);
+      const sxX = x * scale, sxY = y * scale, sxD = d * scale;
+      // Amber: X/Y is top-left of bbox → circle.left = X*scale, circle.top = Y*scale
+      const tl = document.createElement('div');
+      tl.className = 'circle-tl';
+      tl.style.left = `${sxX}px`;
+      tl.style.top = `${sxY}px`;
+      tl.style.width = `${sxD}px`;
+      tl.style.height = `${sxD}px`;
+      stage.appendChild(tl);
+      // Amber dot at TL corner
+      const ptl = document.createElement('div');
+      ptl.className = 'point-tl';
+      ptl.style.left = `${sxX}px`;
+      ptl.style.top = `${sxY}px`;
+      stage.appendChild(ptl);
+      // Green: X/Y IS centre → circle.left = (X - D/2)*scale, circle.top = (Y - D/2)*scale
+      const ct = document.createElement('div');
+      ct.className = 'circle-ct';
+      ct.style.left = `${sxX - sxD / 2}px`;
+      ct.style.top = `${sxY - sxD / 2}px`;
+      ct.style.width = `${sxD}px`;
+      ct.style.height = `${sxD}px`;
+      stage.appendChild(ct);
+      // Green dot at centre
+      const pct = document.createElement('div');
+      pct.className = 'point-ct';
+      pct.style.left = `${sxX}px`;
+      pct.style.top = `${sxY}px`;
+      stage.appendChild(pct);
+      // Label image dims
+      stage.title = `natural=${naturalW}x${naturalH} rendered=${renderedW}x${Math.round(renderedH)}`;
+    }
+  }
+  window.addEventListener('load', () => { placeAll(); setTimeout(placeAll, 800); setTimeout(placeAll, 2000); });
+  window.addEventListener('resize', placeAll);
+</script>
+</body>
+</html>
