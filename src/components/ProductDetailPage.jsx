@@ -1804,10 +1804,6 @@ const ProductDetailPage = ({ productSlug, identifier }) => {
                         </>
                       )}
                     </button>
-
-                    <button className="w-full border-2 border-gray-300 text-gray-700 py-2 text-sm rounded-xl font-semibold hover:border-gray-400 hover:bg-gray-50 transition-all duration-300">
-                      Request Sample
-                    </button>
                   </div>
 
                 </div>

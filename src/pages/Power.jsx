@@ -364,10 +364,6 @@ const Power = () => {
                       <ShoppingCart className="h-5 w-5" />
                       <span>Add to Quote</span>
                     </button>
-                    
-                    <button className="w-full border-2 border-gray-300 text-gray-700 py-4 rounded-xl font-semibold hover:border-gray-400 hover:bg-gray-50 transition-all duration-300">
-                      Request Sample
-                    </button>
                   </div>
 
                   {/* Trust Badges */}
