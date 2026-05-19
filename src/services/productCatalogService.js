@@ -1053,6 +1053,80 @@ export const getProductByIdentifier = async (identifier, options = {}) => {
   return null;
 };
 
+/**
+ * Fetch the curated Laltex products for a category page, ordered by
+ * `category_product_curation.position`.
+ *
+ * CategoryPage.jsx data-gates the Ava widget + curated grid + Load more
+ * sections on the result being non-empty (CLAUDE.md §56). Categories with
+ * zero curation rows render exactly as they do today.
+ *
+ * Retired-product handling:
+ *   - Looks up each curated code via getSupplierProductByCode which respects
+ *     `is_retired = false` by default (CLAUDE.md §51).
+ *   - If a curated row references a code that's been retired (or deleted from
+ *     supplier_products entirely), the lookup returns null and we silently
+ *     drop that entry. The page still renders the rest. Don't surface the
+ *     drop to the customer — they'd see a row count that doesn't match
+ *     curation, which is confusing and not actionable from their end.
+ *
+ * @param {string} categorySlug - matches the URL slug (e.g. 'water-bottles')
+ * @returns {Promise<Array<{code: string, supplier: object, normalised: object}>>}
+ *   Empty array on error or empty curation. Never throws — the page must
+ *   degrade gracefully when the table doesn't exist yet (pre-migration deploys).
+ */
+export const getCuratedCategoryProducts = async (categorySlug) => {
+  if (isMockAuth) return [];
+  if (!categorySlug) return [];
+
+  try {
+    const client = getSupabaseClient();
+    const { data: curationRows, error: curationError } = await client
+      .from('category_product_curation')
+      .select('supplier_product_code, position')
+      .eq('category_slug', categorySlug)
+      .order('position', { ascending: true });
+
+    if (curationError) {
+      // Pre-migration deploy or RLS hiccup — degrade gracefully so the
+      // existing PGifts Direct rendering path is unaffected.
+      console.warn('[getCuratedCategoryProducts] curation fetch failed:', curationError.message);
+      return [];
+    }
+    if (!Array.isArray(curationRows) || curationRows.length === 0) return [];
+
+    // Resolve each code in parallel. Order is reapplied AFTER resolution
+    // since Promise.all preserves array order but lookups may return null
+    // for retired/missing products which we drop.
+    const resolved = await Promise.all(
+      curationRows.map(async (row) => {
+        try {
+          const supplierRow = await getSupplierProductByCode(row.supplier_product_code);
+          if (!supplierRow) return null; // retired or missing — silently drop
+          const supplierSlug = supplierRow.supplier?.slug || 'laltex';
+          return {
+            code: row.supplier_product_code,
+            position: row.position,
+            supplier: supplierRow,
+            normalised: normaliseProduct(supplierRow, supplierSlug),
+          };
+        } catch (err) {
+          console.warn(
+            `[getCuratedCategoryProducts] resolve failed for ${row.supplier_product_code}:`,
+            err?.message,
+          );
+          return null;
+        }
+      }),
+    );
+
+    return resolved.filter(Boolean);
+  } catch (err) {
+    console.error('[getCuratedCategoryProducts] unexpected error:', err);
+    return [];
+  }
+};
+
 // ---------------------------------------------------------------------------
 // Unified product shape — normalises catalog_products vs supplier_products
 // ---------------------------------------------------------------------------

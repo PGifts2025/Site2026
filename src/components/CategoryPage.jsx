@@ -1,7 +1,65 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ChevronRight, Zap, Shield, Clock, Loader } from 'lucide-react';
 import { supabase } from '../services/supabaseService';
+import { getCuratedCategoryProducts } from '../services/productCatalogService';
+import AvaPromptCard from './AvaPromptCard';
+
+// ---------------------------------------------------------------------------
+// CategoryPage — shared component rendered by all 11 category routes
+// (BagsCategory, CablesCategory, …). Each route passes its `categorySlug`.
+//
+// Curation layer (CLAUDE.md §56): the Ava widget + curated Laltex grid +
+// Load more button are DATA-GATED on `category_product_curation` having
+// rows for the current slug. Categories without curation rows render the
+// existing PGifts Direct surface unchanged. Adding a new category is
+// seed-only: INSERT rows into `category_product_curation` (and add an
+// entry to AVA_COPY below); no JSX changes needed.
+//
+// Hard rules (do not break):
+//   - The new sections MUST be conditional on `hasCuration`.
+//   - The curation fetch failure mode MUST be graceful — set
+//     curatedProducts to [] and let the existing path render normally.
+//   - `getCuratedCategoryProducts` already excludes retired products
+//     (CLAUDE.md §51). Don't bypass.
+//   - Use `plain_images[0]` for the Laltex thumbnail, not `images[0]`
+//     (CLAUDE.md §50.2 — ItemImages may carry mockup branding).
+// ---------------------------------------------------------------------------
+
+// Per-category Ava copy. Keyed by `categorySlug`. Future categories add
+// entries here when they get seeded. Missing entries fall back to the
+// generic copy in resolveAvaCopy below.
+//
+// Each entry provides three strings (no nesting, easy to grep + extend):
+//   - prefill          → the text injected into the chat input on click
+//   - welcomeMessage   → first assistant message after the chat opens
+//   - placeholderText  → bubble copy on the card itself
+const AVA_COPY = {
+  'water-bottles': {
+    prefill: "Show me water bottles under £5 at 250 units",
+    welcomeMessage:
+      "Hi! What kind of water bottle are you looking for? Let me know your budget, quantity, or any specific features (metal, recycled, with a logo on the lid…).",
+    placeholderText: "Ask Ava to narrow these down — e.g. 'metal bottles under £5'",
+  },
+};
+
+function resolveAvaCopy(categorySlug, categoryName) {
+  const explicit = AVA_COPY[categorySlug];
+  if (explicit) return explicit;
+  const lowerSingular = (categoryName || categorySlug || 'products').toString().toLowerCase();
+  return {
+    prefill: `Help me find a ${lowerSingular}`,
+    welcomeMessage: `Hi! What kind of ${lowerSingular} are you looking for?`,
+    placeholderText: `Ask Ava to narrow these ${lowerSingular} down`,
+  };
+}
+
+// Initial visible count + Load-more step. CLAUDE.md §56 invariant —
+// don't raise without a fresh decision; the 4×4 grid is the visual
+// contract and the per-step reveal matches the §55 chat pagination
+// rhythm.
+const CURATED_INITIAL_VISIBLE = 16;
+const CURATED_LOAD_MORE_STEP = 16;
 
 const CategoryPage = ({ categorySlug }) => {
   const navigate = useNavigate();
@@ -10,9 +68,38 @@ const CategoryPage = ({ categorySlug }) => {
   const [products, setProducts] = useState([]);
   const [error, setError] = useState(null);
 
+  // Curated Laltex products (CLAUDE.md §56). Separate state + separate
+  // fetch so the PGifts Direct rendering path stays untouched.
+  const [curatedProducts, setCuratedProducts] = useState([]);
+  const [visibleCuratedCount, setVisibleCuratedCount] = useState(CURATED_INITIAL_VISIBLE);
+
   useEffect(() => {
     fetchCategoryData();
   }, [categorySlug]);
+
+  useEffect(() => {
+    if (!categorySlug) return;
+    let cancelled = false;
+    getCuratedCategoryProducts(categorySlug)
+      .then((rows) => {
+        if (cancelled) return;
+        setCuratedProducts(rows);
+        setVisibleCuratedCount(CURATED_INITIAL_VISIBLE); // reset on slug change
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        console.error('[CategoryPage] curated fetch failed:', err);
+        setCuratedProducts([]); // graceful degrade — existing path unaffected
+      });
+    return () => { cancelled = true; };
+  }, [categorySlug]);
+
+  const hasCuration = curatedProducts.length > 0;
+  const visibleCuratedProducts = useMemo(
+    () => curatedProducts.slice(0, visibleCuratedCount),
+    [curatedProducts, visibleCuratedCount],
+  );
+  const moreCuratedRemaining = curatedProducts.length - visibleCuratedCount;
 
   const fetchCategoryData = async () => {
     try {
@@ -128,6 +215,23 @@ const CategoryPage = ({ categorySlug }) => {
       </header>
 
       <div className="max-w-7xl mx-auto px-6 py-12">
+        {/* Ava widget — appears below the page title, ABOVE the feature
+            strip. Data-gated on category having seeded curation rows
+            (CLAUDE.md §56). Categories without curation render exactly
+            as they do today — no widget, no curated grid, no Load more. */}
+        {hasCuration && (() => {
+          const avaCopy = resolveAvaCopy(categorySlug, category.name);
+          return (
+            <div className="mb-8">
+              <AvaPromptCard
+                prefill={avaCopy.prefill}
+                welcomeMessage={avaCopy.welcomeMessage}
+                placeholderText={avaCopy.placeholderText}
+              />
+            </div>
+          );
+        })()}
+
         {/* Features Banner */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
           <div className="bg-white rounded-2xl p-6 shadow-md border border-gray-200 flex items-start space-x-4">
@@ -230,6 +334,98 @@ const CategoryPage = ({ categorySlug }) => {
                 </div>
               </div>
             ))}
+          </div>
+        )}
+
+        {/* Curated Laltex products + Load more (CLAUDE.md §56).
+            Data-gated: only renders when the curation table has rows for
+            this category. Card thumbnails read plain_images[0] first per
+            CLAUDE.md §50.2 (ItemImages may carry mockup branding).
+            Click routes to /products/<code> (the existing supplier route
+            in App.jsx, NOT /<categorySlug>/<slug> which is PGifts Direct
+            only). */}
+        {hasCuration && (
+          <div className="mt-10">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+              {visibleCuratedProducts.map(({ code, normalised }) => {
+                const colour0 = normalised?.colours?.[0];
+                const thumb =
+                  colour0?.plainImages?.[0]
+                  || colour0?.images?.[0]
+                  || normalised?.images?.[0]?.url
+                  || null;
+                // Normalised pricingTiers per productCatalogService.normaliseProduct:
+                // each entry has { minQty, maxQty, pricePerUnit, isPoa, ... }.
+                // pricePerUnit = sell_price (margin baked) with raw price fallback;
+                // delivery share is read-time per LaltexProductView and not
+                // included on the category-card "From £X.XX" line — the product
+                // page is where the full inclusive price is shown.
+                const lowestTier = Array.isArray(normalised?.pricingTiers) && normalised.pricingTiers.length > 0
+                  ? normalised.pricingTiers
+                      .filter((t) => t && !t.isPoa && Number.isFinite(Number(t.pricePerUnit)))
+                      .reduce((min, t) => {
+                        const p = Number(t.pricePerUnit);
+                        return min == null || p < min ? p : min;
+                      }, null)
+                  : null;
+                return (
+                  <div
+                    key={code}
+                    className="group bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden hover:shadow-2xl hover:-translate-y-1 transition-all duration-300 cursor-pointer"
+                    onClick={() => navigate(`/products/${encodeURIComponent(code)}`)}
+                  >
+                    <div className="relative aspect-square bg-gradient-to-br from-gray-100 to-gray-200 flex items-center justify-center p-6">
+                      {thumb ? (
+                        <img
+                          src={thumb}
+                          alt={normalised?.name || code}
+                          className="w-full h-full object-contain group-hover:scale-110 transition-transform duration-300"
+                          loading="lazy"
+                        />
+                      ) : (
+                        <div className="text-7xl group-hover:scale-110 transition-transform duration-300">📦</div>
+                      )}
+                    </div>
+                    <div className="p-5">
+                      <h3 className="text-lg font-bold text-gray-900 mb-1 line-clamp-2 group-hover:text-blue-600 transition-colors">
+                        {normalised?.name || code}
+                      </h3>
+                      <p className="text-xs text-gray-500 mb-3">Code: {code}</p>
+                      {lowestTier != null && (
+                        <div className="flex items-baseline mb-4">
+                          <span className="text-sm text-gray-500">From</span>
+                          <span className="text-xl font-bold text-green-600 ml-2">£{lowestTier.toFixed(2)}</span>
+                        </div>
+                      )}
+                      <button
+                        className="w-full bg-blue-600 text-white py-2.5 rounded-xl font-semibold hover:bg-blue-700 transition-colors flex items-center justify-center space-x-2 group-hover:shadow-lg"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigate(`/products/${encodeURIComponent(code)}`);
+                        }}
+                      >
+                        <span>View Details</span>
+                        <ChevronRight className="h-5 w-5" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {moreCuratedRemaining > 0 && (
+              <div className="mt-8 flex justify-center">
+                <button
+                  type="button"
+                  onClick={() => setVisibleCuratedCount((n) =>
+                    Math.min(n + CURATED_LOAD_MORE_STEP, curatedProducts.length))
+                  }
+                  className="px-8 py-3 rounded-xl bg-white border border-indigo-200 text-indigo-700 font-semibold hover:bg-indigo-50 hover:border-indigo-300 transition-colors shadow-sm"
+                >
+                  Load more ({moreCuratedRemaining} remaining)
+                </button>
+              </div>
+            )}
           </div>
         )}
 

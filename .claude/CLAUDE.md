@@ -5145,3 +5145,180 @@ unintentionally.
   thinking about pagination. If `limit` drops to 5, Ava asks for
   5, mentions all 5, `unmentionedCards` is empty, Show-me-more
   hides — the bug returns under a different cause.
+
+---
+
+## 56. CATEGORY PAGE LALTEX CURATION
+
+Category pages (`/water-bottles`, `/bags`, `/cables`, …) previously
+rendered only PGifts Direct products. Laltex's ~1,160 active
+products weren't surfaced on category pages because Laltex's
+`category` / `sub_category` fields are too messy to auto-derive
+against (e.g. "Misc Drinkware" containing both mugs and bottles).
+
+This section documents the editorial curation system: each
+category page reads from `category_product_curation` (Dave-controlled
+or future admin-UI-controlled) to render a slug-specific list of
+Laltex products. The shared `CategoryPage.jsx` component
+data-gates three new sections on the curation table being
+non-empty for the current slug.
+
+### 56.1 The data-gated shared-component model
+
+All 11 category routes (`Bags`, `Cables`, `Clothing`, …) delegate
+to a single shared component at
+[src/components/CategoryPage.jsx](../src/components/CategoryPage.jsx)
+via one-line wrappers in `src/pages/categories/*.jsx`. The shared
+component:
+
+1. Fetches the existing PGifts Direct category data
+   (`catalog_categories` + `catalog_products`). Unchanged.
+2. Fetches curated Laltex products via
+   `getCuratedCategoryProducts(slug)` from
+   [productCatalogService.js](../src/services/productCatalogService.js).
+3. Derives `hasCuration = curatedProducts.length > 0` and
+   conditionally renders three new sections on that flag.
+
+Categories without curation rows (every category except
+water-bottles on PR #36's deploy day) hit `hasCuration === false`
+and render identically to the pre-§56 page. **The PR #36
+verification matrix explicitly tested all 10 unseeded categories
+for visual unchanged-ness** — Option A's safety depends on this
+gate.
+
+Adding a new category to the curation programme is **seed-only**:
+
+1. `INSERT INTO category_product_curation` rows for the new slug,
+   with positions 1..N in editorial order.
+2. Add an entry to `AVA_COPY` in `CategoryPage.jsx` with
+   category-specific prefill / welcomeMessage / placeholderText.
+3. Done. No JSX changes, no new route, no per-category page file.
+
+If `AVA_COPY` doesn't have an entry for a slug, `resolveAvaCopy`
+falls back to a generic template using the category name. The
+fallback is acceptable as a "shipped without final copy" state;
+prefer to add the explicit entry alongside the seed migration.
+
+### 56.2 Three new sections (all gated on `hasCuration`)
+
+1. **Ava prompt card** — below the page title, above the feature
+   strip. Renders the [`AvaPromptCard`](../src/components/AvaPromptCard.jsx)
+   component with slug-specific `prefill` / `welcomeMessage` /
+   `placeholderText`. Click dispatches `pgifts:open-chat` (CLAUDE.md
+   §49) which opens the global chat widget pre-filled.
+2. **Curated Laltex grid** — appears AFTER the PGifts Direct grid
+   (or directly after the feature strip if the category has no
+   PGifts Direct products). 4-column grid on desktop; stacks
+   1-column on mobile via `grid-cols-1 sm:grid-cols-2 lg:grid-cols-4`.
+3. **Load more button** — below the curated grid, only when
+   `visibleCuratedCount < curatedProducts.length`. Reveals the
+   next `CURATED_LOAD_MORE_STEP` (16) cards from local state.
+   Pure client-side pagination — no network call, same pattern
+   as Ava's "Show me more" (CLAUDE.md §55).
+
+`CURATED_INITIAL_VISIBLE = 16` and `CURATED_LOAD_MORE_STEP = 16`.
+The 4×4 visual contract is the rationale; raising either is a
+deliberate decision.
+
+### 56.3 The service helper
+
+`getCuratedCategoryProducts(slug)` lives at
+[productCatalogService.js](../src/services/productCatalogService.js)
+and:
+
+- Selects from `category_product_curation` filtered by `category_slug`,
+  ordered by `position` ascending.
+- For each row, resolves the supplier_products row via
+  `getSupplierProductByCode(code)` which inherits the
+  `is_retired = false` filter (CLAUDE.md §51).
+- Returns normalised products via `normaliseProduct(row, supplierSlug)`.
+- **Silently drops** rows where the supplier_products lookup
+  returns null (retired, deleted, or migration not yet applied).
+  The page still renders the rest. Don't surface the drop to the
+  customer — it's not actionable from their end.
+- **Never throws.** Catches and returns `[]` on any error.
+  Page-level effect handles this as "no curation, render existing
+  PGifts Direct path unchanged" — graceful degrade. This means
+  even a pre-migration deploy (Vercel ships the code before Dave
+  runs the migration SQL) renders correctly: every category looks
+  like today's production.
+
+### 56.4 Card thumbnail — `plain_images[0]` first
+
+The curated grid's card thumbnail reads from:
+
+```
+colour0.plainImages[0]    →  per-colour plain (clean) image
+colour0.images[0]          →  per-colour ItemImages (may carry mockup branding)
+product.images[0].url      →  top-level fallback
+```
+
+`plain_images[0]` is the load-bearing source. ItemImages may
+carry a customer-mockup brand on the product (CLAUDE.md §50.2 —
+the "BLACKBRIDGE" bug from session 7), which is why the chain
+prefers plain.
+
+### 56.5 Click-through routing — `/products/<code>`
+
+Curated cards route to `/products/<supplier_product_code>` (the
+generic supplier route from App.jsx) — NOT
+`/<categorySlug>/<slug>` which is the PGifts Direct catalog route.
+Laltex products don't have a slug in the catalog table; they
+identify by `supplier_product_code` only.
+
+### 56.6 Migration-first deploy (CLAUDE.md §52)
+
+`category_product_curation` is a new table. The PR ships the
+migration in `supabase/migrations/20260519_category_product_curation.sql`
+(+ `.down.sql`). Per CLAUDE.md §52, the migration **must be applied
+to production via Supabase SQL Editor BEFORE merging** the PR.
+
+The graceful-degrade fetch (§56.3) means an unapplied migration
+won't crash production — the new sections just don't render. But
+the seeded water-bottles surface won't render until the table
+exists and is populated.
+
+### 56.7 Invariants — DO NOT BREAK
+
+- **Do NOT bypass `is_retired = false`** in
+  `getCuratedCategoryProducts`. Use the existing
+  `getSupplierProductByCode` helper which respects the filter by
+  default. A retired curated product must silently drop, not
+  surface in the grid.
+- **Do NOT use `images[0]`** (ItemImages) for the card thumbnail.
+  Use `plainImages[0]` first — see §50.2 for the BLACKBRIDGE
+  precedent. Top-level `images[0].url` is the final fallback only
+  when no per-colour image exists.
+- **Do NOT add a network call on "Load more" click.** Pure local
+  state — slice from `curatedProducts` into `visibleCuratedProducts`.
+  Same pattern as CLAUDE.md §55.
+- **Do NOT auto-derive Laltex products from `category` or
+  `sub_category` fields.** Laltex's field hygiene is poor (mugs in
+  "Misc Drinkware", etc.); the curation table is the editorial
+  safety net.
+- **Do NOT raise `CURATED_INITIAL_VISIBLE` or
+  `CURATED_LOAD_MORE_STEP` above 16** without a fresh decision.
+  The 4×4 grid is the visual contract.
+- **Do NOT make the new sections unconditional.** `hasCuration`
+  must gate the Ava widget AND the curated grid AND the Load more
+  button. Categories without curation rows render exactly as they
+  do today. The PR #36 regression matrix verifies all 10
+  unseeded categories visually unchanged — that contract holds
+  forever as new categories get seeded.
+- **Do NOT bespoke a per-category page when adding a new category.**
+  Follow the established pattern: seed
+  `category_product_curation` rows, add an `AVA_COPY` entry,
+  done. The shared component handles the rendering.
+- **Do NOT refactor `Home.jsx`'s inline Ava widget** to use
+  `AvaPromptCard`. The homepage cycles through phrases via
+  `AvaTypewriter` and uses a different layout (larger avatar,
+  multi-phrase typewriter); the shared component is single-phrase.
+  Migrating Home.jsx is a separate decision.
+- **Do NOT route curated cards to `/<categorySlug>/<slug>`.**
+  That's the PGifts Direct catalog route. Laltex products use
+  `/products/<supplier_product_code>` (the generic supplier route).
+- **Do NOT remove the graceful-degrade catch** in the curation
+  fetch effect. An unapplied migration, an RLS hiccup, or a
+  pre-merge deploy where Vercel ships the code first MUST render
+  the page like today's production — not crash, not show empty
+  state.
