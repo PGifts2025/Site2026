@@ -263,91 +263,102 @@ const CategoryPage = ({ categorySlug }) => {
           </div>
         </div>
 
-        {/* Products Grid */}
-        {products.length === 0 ? (
+        {/* Unified products grid (CLAUDE.md §56).
+            PGifts Direct products and curated Laltex products render in
+            a single 4-column grid for visual continuity — no row break
+            between the two pools, no empty cells. PGifts Direct cards
+            come first (preserving the existing "Best Seller" badge +
+            full description), then Laltex cards append in curation
+            order. Each card retains its own JSX treatment + click
+            target (catalog slug route for PGifts Direct; /products/<code>
+            for Laltex per §56.5).
+
+            Grid classes match the pre-merge PGifts Direct values
+            (md:grid-cols-2 lg:grid-cols-4 gap-8) precisely — the 10
+            unseeded categories rendering changes nothing visually. The
+            Laltex cards become visual citizens of the same grid rather
+            than living in a separate row group below. */}
+        {(products.length === 0 && !hasCuration) ? (
           <div className="text-center py-12">
             <p className="text-gray-600 text-lg">No products available in this category yet.</p>
             <p className="text-gray-500 text-sm mt-2">Check back soon for new items!</p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
-            {products.map((product) => (
-              <div
-                key={product.id}
-                className="group bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden hover:shadow-2xl hover:-translate-y-1 transition-all duration-300 cursor-pointer"
-                onClick={() => navigate(`/${categorySlug}/${product.slug}`)}
-              >
-                {/* Product Image */}
-                <div className="relative aspect-square bg-gradient-to-br from-gray-100 to-gray-200 flex items-center justify-center p-8">
-                  {product.primaryImage ? (
-                    <img
-                      src={product.primaryImage}
-                      alt={product.name}
-                      className="w-full h-full object-contain group-hover:scale-110 transition-transform duration-300"
-                    />
-                  ) : (
-                    <div className="text-8xl group-hover:scale-110 transition-transform duration-300">
-                      📦
-                    </div>
-                  )}
-                  {product.badge && (
-                    <div className="absolute top-4 left-4 bg-blue-600 text-white px-3 py-1 rounded-full text-xs font-semibold shadow-lg">
-                      {product.badge}
-                    </div>
-                  )}
-                </div>
-
-                {/* Product Info */}
-                <div className="p-6">
-                  <h3 className="text-xl font-bold text-gray-900 mb-2 group-hover:text-blue-600 transition-colors">
-                    {product.name}
-                  </h3>
-                  <p className="text-sm text-gray-600 mb-4 line-clamp-2">
-                    {product.short_description || product.description}
-                  </p>
-
-                  {/* Price */}
-                  <div className="flex items-baseline justify-between mb-4">
-                    <div>
-                      {product.lowestPrice && (
-                        <>
-                          <span className="text-sm text-gray-500">From</span>
-                          <span className="text-2xl font-bold text-green-600 ml-2">
-                            £{product.lowestPrice.toFixed(2)}
-                          </span>
-                        </>
-                      )}
-                    </div>
+          <>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
+              {products.map((product) => (
+                <div
+                  key={product.id}
+                  className="group bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden hover:shadow-2xl hover:-translate-y-1 transition-all duration-300 cursor-pointer"
+                  onClick={() => navigate(`/${categorySlug}/${product.slug}`)}
+                >
+                  {/* Product Image */}
+                  <div className="relative aspect-square bg-gradient-to-br from-gray-100 to-gray-200 flex items-center justify-center p-8">
+                    {product.primaryImage ? (
+                      <img
+                        src={product.primaryImage}
+                        alt={product.name}
+                        className="w-full h-full object-contain group-hover:scale-110 transition-transform duration-300"
+                      />
+                    ) : (
+                      <div className="text-8xl group-hover:scale-110 transition-transform duration-300">
+                        📦
+                      </div>
+                    )}
+                    {product.badge && (
+                      <div className="absolute top-4 left-4 bg-blue-600 text-white px-3 py-1 rounded-full text-xs font-semibold shadow-lg">
+                        {product.badge}
+                      </div>
+                    )}
                   </div>
 
-                  {/* View Details Button */}
-                  <button
-                    className="w-full bg-blue-600 text-white py-3 rounded-xl font-semibold hover:bg-blue-700 transition-colors flex items-center justify-center space-x-2 group-hover:shadow-lg"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      navigate(`/${categorySlug}/${product.slug}`);
-                    }}
-                  >
-                    <span>View Details</span>
-                    <ChevronRight className="h-5 w-5" />
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
+                  {/* Product Info */}
+                  <div className="p-6">
+                    <h3 className="text-xl font-bold text-gray-900 mb-2 group-hover:text-blue-600 transition-colors">
+                      {product.name}
+                    </h3>
+                    <p className="text-sm text-gray-600 mb-4 line-clamp-2">
+                      {product.short_description || product.description}
+                    </p>
 
-        {/* Curated Laltex products + Load more (CLAUDE.md §56).
-            Data-gated: only renders when the curation table has rows for
-            this category. Card thumbnails read plain_images[0] first per
-            CLAUDE.md §50.2 (ItemImages may carry mockup branding).
-            Click routes to /products/<code> (the existing supplier route
-            in App.jsx, NOT /<categorySlug>/<slug> which is PGifts Direct
-            only). */}
-        {hasCuration && (
-          <div className="mt-10">
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-              {visibleCuratedProducts.map(({ code, normalised }) => {
+                    {/* Price */}
+                    <div className="flex items-baseline justify-between mb-4">
+                      <div>
+                        {product.lowestPrice && (
+                          <>
+                            <span className="text-sm text-gray-500">From</span>
+                            <span className="text-2xl font-bold text-green-600 ml-2">
+                              £{product.lowestPrice.toFixed(2)}
+                            </span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* View Details Button */}
+                    <button
+                      className="w-full bg-blue-600 text-white py-3 rounded-xl font-semibold hover:bg-blue-700 transition-colors flex items-center justify-center space-x-2 group-hover:shadow-lg"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        navigate(`/${categorySlug}/${product.slug}`);
+                      }}
+                    >
+                      <span>View Details</span>
+                      <ChevronRight className="h-5 w-5" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+
+              {/* Curated Laltex cards — appended into the SAME grid as
+                  PGifts Direct cards so they flow continuously (no row
+                  break, no empty cells). Card thumbnails read
+                  plain_images[0] first per CLAUDE.md §50.2 (ItemImages
+                  may carry mockup branding). Click routes to
+                  /products/<code> (generic supplier route in App.jsx,
+                  NOT /<categorySlug>/<slug> which is PGifts Direct
+                  only). */}
+              {hasCuration && visibleCuratedProducts.map(({ code, normalised }) => {
                 const colour0 = normalised?.colours?.[0];
                 const thumb =
                   colour0?.plainImages?.[0]
@@ -370,7 +381,7 @@ const CategoryPage = ({ categorySlug }) => {
                   : null;
                 return (
                   <div
-                    key={code}
+                    key={`laltex-${code}`}
                     className="group bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden hover:shadow-2xl hover:-translate-y-1 transition-all duration-300 cursor-pointer"
                     onClick={() => navigate(`/products/${encodeURIComponent(code)}`)}
                   >
@@ -413,7 +424,11 @@ const CategoryPage = ({ categorySlug }) => {
               })}
             </div>
 
-            {moreCuratedRemaining > 0 && (
+            {/* "Load more" lives BELOW the unified grid and reveals more
+                Laltex cards (PGifts Direct is always fully shown above).
+                Gated on hasCuration so unseeded categories don't render
+                this. Pure client-side pagination per CLAUDE.md §56. */}
+            {hasCuration && moreCuratedRemaining > 0 && (
               <div className="mt-8 flex justify-center">
                 <button
                   type="button"
@@ -426,7 +441,7 @@ const CategoryPage = ({ categorySlug }) => {
                 </button>
               </div>
             )}
-          </div>
+          </>
         )}
 
         {/* Bottom CTA Section */}
