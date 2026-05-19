@@ -5206,10 +5206,18 @@ prefer to add the explicit entry alongside the seed migration.
    component with slug-specific `prefill` / `welcomeMessage` /
    `placeholderText`. Click dispatches `pgifts:open-chat` (CLAUDE.md
    §49) which opens the global chat widget pre-filled.
-2. **Curated Laltex grid** — appears AFTER the PGifts Direct grid
-   (or directly after the feature strip if the category has no
-   PGifts Direct products). 4-column grid on desktop; stacks
-   1-column on mobile via `grid-cols-1 sm:grid-cols-2 lg:grid-cols-4`.
+2. **Unified product grid** — PGifts Direct products and curated
+   Laltex products render in a SINGLE 4-column grid for visual
+   continuity. PGifts Direct cards come first (preserving the
+   existing "Best Seller" badge + full description), then Laltex
+   cards append in curation order. No row break, no empty cells
+   between the two pools. Grid classes
+   `grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8` match the
+   pre-merge PGifts Direct values precisely — the 10 unseeded
+   categories render identically to today (their rendering doesn't
+   even reach the new Laltex appendix because `hasCuration` is
+   false). Card click routes diverge by source: PGifts Direct uses
+   `/<categorySlug>/<slug>`, Laltex uses `/products/<code>` (§56.5).
 3. **Load more button** — below the curated grid, only when
    `visibleCuratedCount < curatedProducts.length`. Reveals the
    next `CURATED_LOAD_MORE_STEP` (16) cards from local state.
@@ -5322,3 +5330,10 @@ exists and is populated.
   pre-merge deploy where Vercel ships the code first MUST render
   the page like today's production — not crash, not show empty
   state.
+- **Do NOT split PGifts Direct and curated Laltex into separate
+  grid wrappers.** The visual contract is one continuous
+  catalogue: PGifts Direct cards first, Laltex cards appended in
+  the same grid. Splitting them creates a row break with empty
+  cells (the original PR #36 visual bug — fixed in PR #37). Both
+  pools share the `grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8`
+  wrapper.
