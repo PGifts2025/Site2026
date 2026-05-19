@@ -5046,3 +5046,102 @@ shared HeaderBar.jsx changed.
   empty.
 - **Do NOT touch `Navbar.jsx`'s placeholder input.** Out of scope
   for this PR and used in fewer places; separate cleanup decision.
+
+### 55.7 Card accumulation — mentioned-first, top up from unmentioned (Fix A)
+
+PR #33 shipped the Show-me-more pagination but the card never
+appeared in practice because the prior accumulation logic only
+included products Ava explicitly named by code in her prose:
+
+```js
+// pre-Fix-A
+const cards = (mentioned.length > 0 ? mentioned : allCards).slice(0, PRODUCT_CARDS_CAP);
+```
+
+Ava typically names 3-5 products per response. So `cards.length`
+was 3-5 in the typical case, the cap of 20 never bit, and
+`products_remainder` was empty. The Show-me-more card was
+correctly gated on `products_remainder.length > 0` (CLAUDE.md
+§55.3) so it never rendered.
+
+The fix (PR #34, [api/ai/chat.js](../api/ai/chat.js)) keeps the
+mentioned products first — preserving Ava's editorial choice and
+the prose↔card alignment — but tops up from `allCards` minus
+mentioned, until `PRODUCT_CARDS_CAP` is reached:
+
+```js
+// Fix A
+const mentionedCards    = allCards.filter((c) => mentionedCodes.has(c.supplier_product_code));
+const unmentionedCards  = allCards.filter((c) => !mentionedCodes.has(c.supplier_product_code));
+const cards             = [...mentionedCards, ...unmentionedCards].slice(0, PRODUCT_CARDS_CAP);
+```
+
+Three properties this preserves:
+
+1. **Mentioned-first ordering** — Ava's editorial intent is the
+   anchor. A customer reading "Hoodie, HF0003, HF0001..." in the
+   prose sees those products at the top of the card list in the
+   same order. Mentioned products inside `allCards` keep their
+   original order (which is `final_score` descending from
+   `rpc_search_supplier_products`).
+
+2. **Stable unmentioned ordering** — appended in the order
+   `allCards` lists them. No re-ranking, no shuffling.
+
+3. **Edge cases unchanged**:
+   - `mentioned.length === 0` (rare — Ava names no codes): falls
+     through to `unmentionedCards === allCards` and the entire pool
+     is used. Same outcome as the pre-fix `else` branch.
+   - `allCards.length <= INITIAL_BATCH_SIZE` (sparse query): all
+     cards go to `productCards`, `productCardsRemainder` is empty,
+     no Show-me-more card. Matches the §55.3 sparse-query rule.
+
+#### Why "Show me more" works ONLY when the tool returns more candidates than Ava mentions
+
+The pagination depends on `allCards.length > mentioned.length`
+holding for the typical query. Today the underlying
+`searchProducts` tool defaults to `limit: 10` (max 50) — Ava
+usually requests 10, mentions 3-5, the remaining 5-7 land in
+`products_remainder`. If a future change tightens the tool's
+default `limit` below ~6, pagination shrinks alongside it.
+
+The tool schema lives in the cached prefix (CLAUDE.md §32.4) so
+changes are deliberate and rare — but worth knowing the
+dependency. Don't tighten the default below 10 without thinking
+about pagination.
+
+#### Diagnostic — verifying pagination works in production
+
+For any query that should yield 8+ candidates:
+
+1. Open DevTools Network tab.
+2. Send the query to Ava.
+3. Inspect `/api/ai/chat` response payload:
+   - `products.length` should equal 5
+   - `products_remainder.length` should be 1-15
+   - `total_matches` should be > 5
+4. Click "Show me more" in the chat UI.
+5. **No new `/api/ai/chat` request** should fire — pagination is
+   pure client-side state (CLAUDE.md §55.2).
+
+If `products_remainder.length === 0` for a query that should be
+broad: the bug is likely that the LLM's `limit` request to
+`searchProducts` was too low. Inspect `tool_calls[].input.limit`
+in the response and check it isn't being clamped server-side
+unintentionally.
+
+#### Invariants — DO NOT BREAK (Fix A specific)
+
+- **Do NOT drop the mentioned-first prioritisation.** Pure
+  `allCards.slice(0, cap)` would put unmentioned products above
+  mentioned ones whenever `final_score` ranks them higher,
+  breaking the prose↔card alignment that customers rely on.
+- **Do NOT add a third tier (e.g. "mentioned, then core-product
+  boosted, then rest")** without a fresh decision. The current
+  two-tier scheme is the minimum complexity that fixes the bug;
+  more tiers re-introduce the editorial-vs-relevance tension
+  this fix sidesteps.
+- **Do NOT change the tool's default `limit` below 10** without
+  thinking about pagination. If `limit` drops to 5, Ava asks for
+  5, mentions all 5, `unmentionedCards` is empty, Show-me-more
+  hides — the bug returns under a different cause.

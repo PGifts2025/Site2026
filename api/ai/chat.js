@@ -531,11 +531,9 @@ export default async function handler(req, res) {
     .filter((b) => b.type === 'tool_use')
     .map((b) => ({ name: b.name, input: b.input }));
 
-  // Session 6+: build the product cards payload. If the assistant text
-  // mentions specific codes, surface only those (most relevant); else
-  // return everything we accumulated this turn.
+  // Build the product cards payload (CLAUDE.md §55 / §55.7).
   //
-  // Pagination contract (CLAUDE.md §55):
+  // Pagination contract:
   //   - Hard ceiling of 20 cards per response. Beyond that the customer
   //     should refine the query; we don't paginate to infinity.
   //   - First INITIAL_BATCH_SIZE go in `products` (rendered immediately).
@@ -543,16 +541,45 @@ export default async function handler(req, res) {
   //     "Show me more" button, in batches of 5). Pure client-side
   //     pagination — no new chat round-trip.
   //   - `total_matches` reports the total accumulated for this turn
-  //     (informational; can equal products.length + products_remainder.length).
+  //     (informational; equals products.length + products_remainder.length).
+  //
+  // Prioritisation (Fix A — CLAUDE.md §55.7):
+  //   1. Products Ava explicitly named in her prose go first, in the
+  //      order allCards lists them (preserves the tool's relevance
+  //      ranking). This keeps editorial continuity — a customer who
+  //      reads "Hoodie, HF0003, HF0001..." in the prose sees those
+  //      products at the top of the card list in the same order.
+  //   2. Top up from `allCards` minus mentioned, until PRODUCT_CARDS_CAP
+  //      is reached or the pool is exhausted. These are the "more
+  //      results from the same search" the customer can reach via
+  //      "Show me more".
+  //
+  // Why this isn't just `allCards.slice(0, cap)`:
+  //   Without prioritisation, products Ava named might land outside
+  //   the initial INITIAL_BATCH_SIZE batch — the customer would see
+  //   prose referencing codes that aren't visible until they click
+  //   Show More. Mentioned-first keeps prose and visible cards aligned.
+  //
+  // Pre-Fix-A behaviour (the bug PR #34 fixes):
+  //   `mentioned`-only when non-empty meant `cards.length` was usually
+  //   3-5 (Ava typically names that many) and the cap of 20 never bit.
+  //   `products_remainder` was therefore almost always empty and the
+  //   "Show me more" card never appeared in practice.
   const assistantText = assistantTextBlocks.join('\n\n');
   const allCards = Array.from(productCardMap.values());
-  const mentioned = allCards.filter((c) =>
-    c.supplier_product_code &&
-    assistantText.toLowerCase().includes(String(c.supplier_product_code).toLowerCase()),
+  const mentionedCodes = new Set(
+    allCards
+      .filter((c) =>
+        c.supplier_product_code &&
+        assistantText.toLowerCase().includes(String(c.supplier_product_code).toLowerCase()),
+      )
+      .map((c) => c.supplier_product_code),
   );
+  const mentionedCards = allCards.filter((c) => mentionedCodes.has(c.supplier_product_code));
+  const unmentionedCards = allCards.filter((c) => !mentionedCodes.has(c.supplier_product_code));
   const PRODUCT_CARDS_CAP = 20;
   const INITIAL_BATCH_SIZE = 5;
-  const cards = (mentioned.length > 0 ? mentioned : allCards).slice(0, PRODUCT_CARDS_CAP);
+  const cards = [...mentionedCards, ...unmentionedCards].slice(0, PRODUCT_CARDS_CAP);
   const productCards = cards.slice(0, INITIAL_BATCH_SIZE);
   const productCardsRemainder = cards.slice(INITIAL_BATCH_SIZE);
 
