@@ -382,7 +382,7 @@ const PromoGiftsApp = () => {
         <div className="absolute inset-0 bg-gradient-to-br from-gray-100/50 via-blue-50/30 to-purple-50/50"></div>
         
         <div className="max-w-7xl mx-auto px-4 relative z-10">
-          <div className="text-center mb-6">
+          <div className="text-center mb-12">
             <h2 className="text-3xl font-bold text-gray-900 mb-2">Best Selling Products</h2>
             <p className="text-gray-600">Premium promotional items for your brand</p>
           </div>
@@ -401,7 +401,15 @@ const PromoGiftsApp = () => {
               <ChevronRight className="h-5 w-5" />
             </button>
 
-            <div className="relative h-52 overflow-hidden mx-12">
+            {/* overflow-x-clip (NOT overflow-hidden) is load-bearing here:
+                horizontally clips off-page slides during translateX transitions,
+                but overflow-y-visible lets the cards' hover lift (-translate-y-6 +
+                scale-110, ~34px upward) escape into the heading whitespace.
+                Don't simplify to overflow-hidden — re-clips the hover.
+                Why clip not hidden: CSS spec coerces overflow-y to auto when
+                overflow-x is hidden (one axis can't be visible if the other is
+                hidden). overflow-x: clip lifts that restriction. */}
+            <div className="relative h-52 overflow-x-clip overflow-y-visible mx-12">
               {loadingFeatured ? (
                 <div className="flex items-center justify-center h-full">
                   <Loader className="h-12 w-12 text-blue-600 animate-spin" />
