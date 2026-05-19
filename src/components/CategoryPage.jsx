@@ -35,6 +35,65 @@ import AvaPromptCard from './AvaPromptCard';
 //   - welcomeMessage   → first assistant message after the chat opens
 //   - placeholderText  → bubble copy on the card itself
 const AVA_COPY = {
+  'bags': {
+    prefill: "Natural cotton shopper bag under £2 for 500 units",
+    welcomeMessage:
+      "Hi! What kind of bag are you looking for? Let me know your budget, quantity, or any specific features (cotton, jute, recycled, branded, drawstring…).",
+    placeholderText: "Ask Ava to narrow these down — e.g. 'natural cotton shoppers under £2'",
+  },
+  'cables': {
+    prefill: "USB-C charging cables for 250 units",
+    welcomeMessage:
+      "Hi! What kind of cable are you looking for? Let me know your quantity, output requirements (USB-A, USB-C, multi-port), or any specific features (recycled materials, with keyring, branded…).",
+    placeholderText: "Ask Ava to narrow these down — e.g. 'multi-charging cables under £5'",
+  },
+  'clothing': {
+    prefill: "Polo shirts under £10 for 100 units",
+    welcomeMessage:
+      "Hi! What kind of clothing are you looking for? Let me know your budget, quantity, garment type (polo, t-shirt, hoodie, jacket…), or any specific features.",
+    placeholderText: "Ask Ava to narrow these down — e.g. 'unisex hoodies under £15'",
+  },
+  'cups': {
+    prefill: "Can you show me some travel mugs under £7 for 250 units",
+    welcomeMessage:
+      "Hi! What kind of cup are you looking for? Let me know your budget, quantity, or any specific features (metal, ceramic, ceramic with handle, full-wrap print…).",
+    placeholderText: "Ask Ava to narrow these down — e.g. 'travel mugs under £7'",
+  },
+  'hi-vis': {
+    prefill: "Hi-vis vests for 50 units",
+    welcomeMessage:
+      "Hi! What kind of hi-vis item are you after? Let me know your quantity and use case (event staff, construction, charity walk…).",
+    placeholderText: "Ask Ava to find the right hi-vis option for you",
+  },
+  'notebooks': {
+    prefill: "A5 recycled notebooks under £3 for 100 units",
+    welcomeMessage:
+      "Hi! What kind of notebook are you looking for? Let me know your size (A4, A5, A6), budget, quantity, or any specific features (recycled, with pen, gift sets, hardback…).",
+    placeholderText: "Ask Ava to narrow these down — e.g. 'recycled A5 notebooks under £3'",
+  },
+  'pens': {
+    prefill: "Recycled pens under £1 for 500 units",
+    // welcomeMessage explicitly mentions pencils + gift sets because
+    // the Pens curated list (sorted TPC DESC -> TPCPN DESC -> PN DESC)
+    // surfaces pencils mixed throughout and gift sets at the end. Ava
+    // search is the recommended path to find them — see CLAUDE.md §56
+    // discovery notes.
+    welcomeMessage:
+      "Hi! What kind of pen are you looking for? Let me know your budget, quantity, or any specific features (recycled, metal, gift sets, pencils, fountain pens…).",
+    placeholderText: "Ask Ava to narrow these down — e.g. 'metal ballpoint pens under £2'",
+  },
+  'power': {
+    prefill: "USB power banks under £8 for 100 units",
+    welcomeMessage:
+      "Hi! What kind of power product are you looking for? Power banks, wireless chargers, USB drives? Let me know your budget, quantity, or any specific features.",
+    placeholderText: "Ask Ava to narrow these down — e.g. 'wireless chargers under £10'",
+  },
+  'speakers': {
+    prefill: "Bluetooth speakers under £15 for 50 units",
+    welcomeMessage:
+      "Hi! What kind of speaker are you looking for? Let me know your budget, quantity, or any specific features (Bluetooth range, waterproof, mini portable, premium audio…).",
+    placeholderText: "Ask Ava to narrow these down — e.g. 'portable Bluetooth speakers under £15'",
+  },
   'water-bottles': {
     prefill: "Show me water bottles under £5 at 250 units",
     welcomeMessage:
