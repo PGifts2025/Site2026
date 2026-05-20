@@ -5,6 +5,7 @@ import {
   ShoppingCart,
   Users,
   Package,
+  PoundSterling,
   UserCog,
   Settings,
   Menu,
@@ -45,6 +46,12 @@ const AdminLayout = ({ children, user, adminRole, pageTitle }) => {
       path: '/admin/products',
       icon: Package,
       label: 'Products'
+    },
+    {
+      path: '/admin/pricing',
+      icon: PoundSterling,
+      label: 'Pricing',
+      superAdminOnly: true
     },
     {
       path: '/admin/team',

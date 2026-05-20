@@ -61,6 +61,7 @@ import AdminCustomers from './pages/admin/AdminCustomers';
 import AdminCustomerDetail from './pages/admin/AdminCustomerDetail';
 import AdminTeam from './pages/admin/AdminTeam';
 import AdminSettings from './pages/admin/AdminSettings';
+import AdminPricing from './pages/AdminPricing';
 
 function App() {
   return (
@@ -140,6 +141,7 @@ function App() {
             <Route path="/admin/customers" element={<AdminGuard><AdminCustomers /></AdminGuard>} />
             <Route path="/admin/customers/:id" element={<AdminGuard><AdminCustomerDetail /></AdminGuard>} />
             <Route path="/admin/products" element={<AdminGuard><ProductManager /></AdminGuard>} />
+            <Route path="/admin/pricing" element={<AdminGuard><AdminPricing /></AdminGuard>} />
             <Route path="/admin/team" element={<AdminGuard><AdminTeam /></AdminGuard>} />
             <Route path="/admin/settings" element={<AdminGuard><AdminSettings /></AdminGuard>} />
             <Route path="/admin/seed-data" element={<AdminSeedData />} />
