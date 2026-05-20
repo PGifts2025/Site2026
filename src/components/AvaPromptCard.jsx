@@ -45,7 +45,7 @@ export default function AvaPromptCard({ prefill, welcomeMessage, placeholderText
         <div className="flex-shrink-0">
           <div className="w-16 h-16 sm:w-24 sm:h-24 rounded-full overflow-hidden ring-4 ring-indigo-100 shadow-md bg-white">
             <img
-              src="/images/ava.png"
+              src="/images/ava.png?v=2"
               alt="Ava — PGifts AI assistant"
               className="w-full h-full object-cover"
               width="96"
