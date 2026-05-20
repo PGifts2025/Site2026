@@ -104,25 +104,39 @@ const AdminDashboard = ({ user, adminRole }) => {
   };
 
   const fetchRecentOrders = async () => {
-    const { data, error } = await supabase
+    // No direct FK from orders → customer_profiles (both reference auth.users),
+    // so PostgREST can't auto-embed. Fetch orders and customer_profiles
+    // separately and merge client-side so the JSX can keep reading
+    // order.customer_profiles.* (mirrors AdminOrders.jsx / AdminOrderDetail.jsx).
+    const { data: ordersData, error } = await supabase
       .from('orders')
-      .select(`
-        id,
-        order_number,
-        status,
-        total_amount,
-        created_at,
-        customer_profiles (
-          first_name,
-          last_name,
-          company_name
-        )
-      `)
+      .select('id, order_number, status, total_amount, created_at, customer_id')
       .order('created_at', { ascending: false })
       .limit(10);
 
     if (error) throw error;
-    setRecentOrders(data || []);
+
+    const customerIds = [...new Set(
+      (ordersData || []).map(o => o.customer_id).filter(Boolean)
+    )];
+    let profilesMap = {};
+    if (customerIds.length) {
+      const { data: profilesData, error: profilesError } = await supabase
+        .from('customer_profiles')
+        .select('id, first_name, last_name, company_name')
+        .in('id', customerIds);
+      if (profilesError) throw profilesError;
+      profilesMap = Object.fromEntries(
+        (profilesData || []).map(p => [p.id, p])
+      );
+    }
+
+    const withProfiles = (ordersData || []).map(o => ({
+      ...o,
+      customer_profiles: profilesMap[o.customer_id] || null,
+    }));
+
+    setRecentOrders(withProfiles);
   };
 
   const fetchRecentCustomers = async () => {
