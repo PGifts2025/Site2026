@@ -1,0 +1,16 @@
+{
+  "name": "pgifts-competitor-pricing",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "On-demand competitor pricing intelligence: scrape Total Merchandise and compare against PGifts. Lives outside the app build; deps are local to this directory.",
+  "scripts": {
+    "sitemap": "node scrape-tm-sitemap.js",
+    "prices": "node scrape-tm-prices.js",
+    "compare": "node compare-with-pgifts.js"
+  },
+  "dependencies": {
+    "cheerio": "^1.0.0",
+    "string-similarity": "^4.0.4"
+  }
+}
