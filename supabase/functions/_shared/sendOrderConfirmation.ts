@@ -59,7 +59,7 @@ export async function sendOrderConfirmation(
   const { data: orderRow, error: orderFetchError } = await supabase
     .from("orders")
     .select(
-      "id, order_number, total_amount, customer_id, confirmation_email_sent_at",
+      "id, order_number, total_amount, customer_id, confirmation_email_sent_at, shipping_address, po_number",
     )
     .eq("id", orderId)
     .single();
@@ -151,6 +151,30 @@ export async function sendOrderConfirmation(
     })
     .join("\n");
 
+  // "Delivering to" block (PR B). Customer-entered free text, so HTML-escape
+  // it. Rendered only when the order has a shipping_address (legacy orders
+  // pre-this-feature have none → no empty section).
+  const escHtml = (v: unknown): string =>
+    String(v ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+
+  const addr: any = orderRow.shipping_address || null;
+  const poNumber: string | null = orderRow.po_number || null;
+
+  const deliveryHtml = addr
+    ? `              <h3 style="margin:24px 0 8px 0; font-size:16px; font-weight:700; color:#1a1a1a;">Delivering to</h3>
+              <p style="margin:0 0 16px 0; font-size:14px; line-height:1.6; color:#1a1a1a;">
+                ${addr.company ? `${escHtml(addr.company)}<br>` : ""}${addr.fao ? `FAO: ${escHtml(addr.fao)}<br>` : ""}${escHtml(addr.line1)}<br>${addr.line2 ? `${escHtml(addr.line2)}<br>` : ""}${[addr.city, addr.postcode].filter(Boolean).map(escHtml).join(", ")}<br>${escHtml(addr.country)}${addr.phone ? `<br>Phone: ${escHtml(addr.phone)}` : ""}${addr.instructions ? `<br><em>Instructions: ${escHtml(addr.instructions)}</em>` : ""}${poNumber ? `<br>PO: ${escHtml(poNumber)}` : ""}
+              </p>`
+    : "";
+
+  const deliveryText = addr
+    ? `\n\nDelivering to:\n${addr.company ? `${addr.company}\n` : ""}${addr.fao ? `FAO: ${addr.fao}\n` : ""}${addr.line1 || ""}\n${addr.line2 ? `${addr.line2}\n` : ""}${[addr.city, addr.postcode].filter(Boolean).join(", ")}\n${addr.country || ""}${addr.phone ? `\nPhone: ${addr.phone}` : ""}${addr.instructions ? `\nInstructions: ${addr.instructions}` : ""}${poNumber ? `\nPO: ${poNumber}` : ""}`
+    : "";
+
   // Body content only — the shared shell in _shared/emailShell.ts
   // wraps this with the PG header, CTA button, and footer. Indented
   // to match the 14-space column inside the shell's content <td>.
@@ -172,6 +196,7 @@ export async function sendOrderConfirmation(
                   </tr>
                 </tfoot>
               </table>
+${deliveryHtml}
               <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:20px 0 8px 0;">
                 <tr>
                   <td style="background:#f5f5f5; border-radius:8px; padding:20px;">
@@ -185,7 +210,7 @@ export async function sendOrderConfirmation(
 
 ${itemsText}
 
-Total paid: £${totalAmount.toFixed(2)}
+Total paid: £${totalAmount.toFixed(2)}${deliveryText}
 
 Next step — upload your artwork
 To move your order into production we need your artwork files — logo, design, or any print-ready artwork.`;
