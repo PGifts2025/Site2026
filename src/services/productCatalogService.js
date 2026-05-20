@@ -1054,6 +1054,79 @@ export const getProductByIdentifier = async (identifier, options = {}) => {
 };
 
 /**
+ * Lean column allowlist for product-card surfaces (category grids, "My Designs").
+ * Deliberately excludes:
+ *   - embedding (vector(1536), ~6.1 kB/row — semantic-search column, never used in UI)
+ *   - raw_payload (audit JSONB, ~5.4 kB/row — only read by normaliseProduct when the
+ *     supplier is unknown; the bulk callers pass 'laltex' explicitly so it's not needed)
+ * Dropping these ~halves bytes-per-row (~19 kB → ~8 kB) for card rendering.
+ * If a new surface needs a column, add it here with a comment explaining why.
+ */
+const CARD_COLUMNS = [
+  'supplier_product_code',
+  'name',
+  'category',
+  'sub_category',
+  'minimum_order_qty',
+  'is_retired',
+  'margin_pct_override',
+  'margin_last_applied_at',
+  'items',
+  'images',
+  'plain_images',
+  'product_pricing',
+  'print_details',
+  'shipping_charges',
+  'carton_qty',
+  // supplier embed for normaliseProduct (callers pass 'laltex' so this is belt-and-braces)
+  'supplier:suppliers(slug, name)',
+].join(', ');
+
+/**
+ * Bulk fetch supplier_products by code. Single query, single round-trip — the
+ * fix for the N+1 pattern that previously called getSupplierProductByCode in a
+ * loop (CLAUDE.md §56 category pages + CustomerDesigns). Uses the lean
+ * CARD_COLUMNS allowlist.
+ *
+ * Returns RAW rows (not normalised) — the caller invokes normaliseProduct so it
+ * can supply the correct supplier slug. Matching by code is exact-case; codes
+ * absent from supplier_products (retired with includeRetired=false, or deleted)
+ * simply don't appear, which the callers handle as a silent drop.
+ *
+ * @param {string[]} codes - supplier_product_code values
+ * @param {object} [options]
+ * @param {boolean} [options.includeRetired=false] - include is_retired=true rows
+ *   (CustomerDesigns passes true so saved-design history still renders — §51)
+ * @returns {Promise<Array>} raw supplier_products rows (empty array on error/empty input)
+ */
+export const getSupplierProductsByCodes = async (codes, { includeRetired = false } = {}) => {
+  if (isMockAuth) return [];
+  if (!Array.isArray(codes) || codes.length === 0) return [];
+
+  try {
+    const client = getSupabaseClient();
+    let query = client
+      .from('supplier_products')
+      .select(CARD_COLUMNS)
+      .in('supplier_product_code', codes);
+
+    if (!includeRetired) {
+      query = query.eq('is_retired', false);
+    }
+
+    const { data, error } = await query;
+    if (error) {
+      console.error('[getSupplierProductsByCodes] query failed:', error.message);
+      return [];
+    }
+    return data ?? [];
+  } catch (err) {
+    console.error('[getSupplierProductsByCodes] unexpected error:', err);
+    return [];
+  }
+};
+
+/**
  * Fetch the curated Laltex products for a category page, ordered by
  * `category_product_curation.position`.
  *
@@ -1095,32 +1168,32 @@ export const getCuratedCategoryProducts = async (categorySlug) => {
     }
     if (!Array.isArray(curationRows) || curationRows.length === 0) return [];
 
-    // Resolve each code in parallel. Order is reapplied AFTER resolution
-    // since Promise.all preserves array order but lookups may return null
-    // for retired/missing products which we drop.
-    const resolved = await Promise.all(
-      curationRows.map(async (row) => {
-        try {
-          const supplierRow = await getSupplierProductByCode(row.supplier_product_code);
-          if (!supplierRow) return null; // retired or missing — silently drop
-          const supplierSlug = supplierRow.supplier?.slug || 'laltex';
-          return {
-            code: row.supplier_product_code,
-            position: row.position,
-            supplier: supplierRow,
-            normalised: normaliseProduct(supplierRow, supplierSlug),
-          };
-        } catch (err) {
-          console.warn(
-            `[getCuratedCategoryProducts] resolve failed for ${row.supplier_product_code}:`,
-            err?.message,
-          );
-          return null;
-        }
-      }),
-    );
+    // Bulk fetch all curated products in ONE query (was an N+1 Promise.all
+    // over getSupplierProductByCode — CLAUDE.md §56 / N+1 fix). Default
+    // includeRetired=false so retired SKUs drop, same as before.
+    const codes = curationRows.map((r) => r.supplier_product_code);
+    const supplierRows = await getSupplierProductsByCodes(codes);
+    const rowByCode = new Map(supplierRows.map((r) => [r.supplier_product_code, r]));
 
-    return resolved.filter(Boolean);
+    // Re-map over the position-ordered curation rows so curation order is
+    // preserved (WHERE IN does not). Codes with no row (retired/absent) are
+    // silently dropped via filter(Boolean) — identical to the prior semantics.
+    const resolved = curationRows
+      .map((row) => {
+        const supplierRow = rowByCode.get(row.supplier_product_code);
+        if (!supplierRow) return null;
+        return {
+          code: row.supplier_product_code,
+          position: row.position,
+          supplier: supplierRow.supplier || null,
+          // explicit 'laltex' so normaliseProduct doesn't need raw_payload
+          // (excluded from CARD_COLUMNS for payload savings)
+          normalised: normaliseProduct(supplierRow, 'laltex'),
+        };
+      })
+      .filter(Boolean);
+
+    return resolved;
   } catch (err) {
     console.error('[getCuratedCategoryProducts] unexpected error:', err);
     return [];

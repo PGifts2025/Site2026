@@ -6,7 +6,7 @@ import { supabase, deleteUserDesign } from '../../services/supabaseService';
 import { createQuoteFromDesign } from '../../services/quoteService';
 import {
   getCatalogProductBySlug,
-  getSupplierProductByCode,
+  getSupplierProductsByCodes,
   normaliseProduct,
 } from '../../services/productCatalogService';
 import { prettyPrintArea } from '../../utils/printAreaFormat';
@@ -69,25 +69,21 @@ const CustomerDesigns = ({ user }) => {
           }
         }),
       );
-      const v2Entries = await Promise.all(
-        [...v2Codes].map(async (code) => {
-          try {
-            // includeRetired: a customer can have saved a design against
-            // a product that has since been retired. The card still
-            // needs to render with the product name/thumbnail so the
-            // saved work is recognisable — buying actions will surface
-            // the unavailability via the v2 designer's own 404 path
-            // (CLAUDE.md §51).
-            const row = await getSupplierProductByCode(code, { includeRetired: true });
-            if (!row) return [`v2:${code}`, null];
-            const supplierSlug = row.supplier?.slug || 'laltex';
-            return [`v2:${code}`, normaliseProduct(row, supplierSlug)];
-          } catch (err) {
-            console.warn('[CustomerDesigns] supplier lookup failed:', code, err);
-            return [`v2:${code}`, null];
-          }
-        }),
-      );
+      // Bulk fetch all v2 (Laltex) products in ONE query (was an N+1
+      // Promise.all over getSupplierProductByCode — N+1 fix). includeRetired:
+      // a customer can have saved a design against a product that has since
+      // been retired; the card still needs to render with the product
+      // name/thumbnail so the saved work is recognisable — buying actions
+      // surface the unavailability via the v2 designer's own 404 path
+      // (CLAUDE.md §51). Missing codes map to null (handled downstream via
+      // optional chaining in resolveProductLabel / resolveLaltexColourImage).
+      const v2CodeList = [...v2Codes];
+      const v2Rows = await getSupplierProductsByCodes(v2CodeList, { includeRetired: true });
+      const v2RowByCode = new Map(v2Rows.map((r) => [r.supplier_product_code, r]));
+      const v2Entries = v2CodeList.map((code) => {
+        const row = v2RowByCode.get(code);
+        return [`v2:${code}`, row ? normaliseProduct(row, 'laltex') : null];
+      });
 
       if (cancelled) return;
       setProductCache((prev) => ({
