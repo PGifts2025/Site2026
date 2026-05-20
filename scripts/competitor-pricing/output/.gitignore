@@ -1,0 +1,5 @@
+# Ignore every file in output/ (scraped data + generated CSVs are regenerable
+# and may contain a competitor's full price list — never commit them).
+# Keep this .gitignore itself so the directory exists in git.
+*
+!.gitignore
