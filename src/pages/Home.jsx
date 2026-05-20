@@ -342,7 +342,7 @@ const PromoGiftsApp = () => {
               <div className="flex-shrink-0">
                 <div className="w-20 h-20 sm:w-32 sm:h-32 rounded-full overflow-hidden ring-4 ring-indigo-100 shadow-md bg-white">
                   <img
-                    src="/images/ava.png"
+                    src="/images/ava.png?v=2"
                     alt="Ava — PGifts AI assistant"
                     className="w-full h-full object-cover"
                     width="128"

@@ -22,12 +22,19 @@
 // Re-opening from minimise scrolls to the bottom of the preserved
 // conversation. Re-opening from close shows the empty hint.
 
-import { useEffect, useRef, useState } from 'react';
+import { cloneElement, useEffect, useRef, useState } from 'react';
 
 import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../services/supabaseService';
 
 const PUBLIC_ENABLED = String(import.meta.env.VITE_AI_CHAT_PUBLIC_ENABLED ?? '').toLowerCase() === 'true';
+
+// Canonical Ava avatar path. The ?v=2 query string is a cache-bust so
+// returning visitors get the new image without a hard refresh (browsers
+// cache by URL). Bump to ?v=3 etc. on future image swaps — single edit
+// covers the launcher, panel header, and assistant message bubbles.
+// File is lowercase ava.png; Vercel is case-sensitive — do NOT capitalise.
+const AVA_AVATAR_SRC = '/images/ava.png?v=2';
 
 const PANEL_WIDTH = 380;
 const PANEL_HEIGHT = 560;
@@ -271,7 +278,12 @@ export default function AIChatWidget() {
           style={launcherStyle}
           aria-label={messages.length > 0 ? 'Resume AI conversation' : 'Open AI assistant'}
         >
-          AI
+          <img
+            src={AVA_AVATAR_SRC}
+            alt="Ava"
+            loading="eager"
+            style={launcherImgStyle}
+          />
           {messages.length > 0 && <span style={launcherBadgeStyle} aria-hidden="true" />}
         </button>
       )}
@@ -279,7 +291,10 @@ export default function AIChatWidget() {
       {open && (
         <div style={panelStyle} role="dialog" aria-label="PGifts AI assistant">
           <div style={headerStyle}>
-            <div>PGifts AI assistant <span style={{ opacity: 0.6, fontSize: 11 }}>(beta)</span></div>
+            <div style={headerTitleStyle}>
+              <img src={AVA_AVATAR_SRC} alt="Ava" style={headerAvatarStyle} />
+              <span>PGifts AI assistant <span style={{ opacity: 0.6, fontSize: 11 }}>(beta)</span></span>
+            </div>
             <div style={headerBtnGroupStyle}>
               <button
                 type="button"
@@ -312,13 +327,15 @@ export default function AIChatWidget() {
                 like X". I can search our full catalogue.
               </div>
             )}
-            {messages.map((m, i) => (
-              <div key={i} style={m.role === 'user' ? userBubbleStyle : asstBubbleStyle}>
+            {messages.map((m, i) => {
+              const isUser = m.role === 'user';
+              const bubble = (
+              <div style={isUser ? userBubbleStyle : asstBubbleStyle}>
                 <div style={{ fontSize: 11, opacity: 0.55, marginBottom: 2 }}>
-                  {m.role === 'user' ? 'You' : 'Assistant'}
+                  {isUser ? 'You' : 'Assistant'}
                 </div>
                 <div style={{ whiteSpace: 'pre-wrap' }}>
-                  {m.role === 'assistant'
+                  {!isUser
                     ? linkifyProductCodes(m.content, m.products)
                     : m.content}
                 </div>
@@ -350,8 +367,29 @@ export default function AIChatWidget() {
                   </div>
                 )}
               </div>
-            ))}
-            {sending && <div style={asstBubbleStyle}><em>thinking…</em></div>}
+              );
+              // User messages stay exactly as before: right-aligned bubble,
+              // no avatar (the bubble already carries userBubbleStyle, so
+              // render it directly as the flex child via cloneElement).
+              // Assistant messages get a 24px Ava avatar to the left in a
+              // flex row; the row owns column alignment, the bubble keeps
+              // its own background/padding.
+              if (isUser) return cloneElement(bubble, { key: i });
+              return (
+                <div key={i} style={asstRowStyle}>
+                  <img src={AVA_AVATAR_SRC} alt="Ava" loading="lazy" style={msgAvatarStyle} />
+                  {bubble}
+                </div>
+              );
+            })}
+            {/* Typing indicator is an assistant-style message; give it the
+                same Ava avatar + row treatment so it reads consistently. */}
+            {sending && (
+              <div style={asstRowStyle}>
+                <img src={AVA_AVATAR_SRC} alt="Ava" loading="lazy" style={msgAvatarStyle} />
+                <div style={asstBubbleStyle}><em>thinking…</em></div>
+              </div>
+            )}
             {error && <div style={errorStyle}>{error}</div>}
           </div>
 
@@ -549,7 +587,10 @@ const launcherStyle = {
   width: 56,
   height: 56,
   borderRadius: '50%',
-  background: '#1a1a1a',
+  // White (was #1a1a1a). ava.png has transparent alpha; black would
+  // show through and frame the face oddly. White matches the avatar
+  // wrappers on Home + AvaPromptCard.
+  background: '#ffffff',
   color: 'white',
   border: 'none',
   cursor: 'pointer',
@@ -557,6 +598,17 @@ const launcherStyle = {
   fontWeight: 700,
   fontSize: 16,
   boxShadow: '0 4px 12px rgba(0,0,0,0.25)',
+  padding: 0,
+  overflow: 'hidden',
+};
+// Ava image fills the 56x56 launcher circle, masked by the button's
+// borderRadius: 50% + overflow: hidden.
+const launcherImgStyle = {
+  width: '100%',
+  height: '100%',
+  objectFit: 'cover',
+  borderRadius: '50%',
+  display: 'block',
 };
 const panelStyle = {
   position: 'fixed',
@@ -581,6 +633,21 @@ const headerStyle = {
   justifyContent: 'space-between',
   alignItems: 'center',
   fontWeight: 600,
+};
+// Title block: 32px Ava avatar + the existing title text, in a flex row.
+const headerTitleStyle = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 9,
+  minWidth: 0,
+};
+const headerAvatarStyle = {
+  width: 32,
+  height: 32,
+  borderRadius: '50%',
+  objectFit: 'cover',
+  background: '#fff',
+  flexShrink: 0,
 };
 // Shared style for the minimise (−) and close (×) header buttons.
 // Was `closeBtnStyle` pre-Task-16; renamed for the two-button pattern.
@@ -633,12 +700,32 @@ const userBubbleStyle = {
   padding: '8px 10px',
   borderRadius: 6,
 };
+// Assistant bubble is now a flex child of asstRowStyle (avatar + bubble).
+// The row owns column alignment + max width; the bubble keeps its own
+// background/padding. minWidth:0 lets long content wrap inside the row.
 const asstBubbleStyle = {
-  alignSelf: 'flex-start',
-  maxWidth: '92%',
   background: '#f3f4f6',
   padding: '8px 10px',
   borderRadius: 6,
+  minWidth: 0,
+};
+// Row wrapper for assistant messages: 24px Ava avatar to the left of the
+// bubble. alignSelf positions the whole row left in the history column.
+const asstRowStyle = {
+  alignSelf: 'flex-start',
+  maxWidth: '92%',
+  display: 'flex',
+  alignItems: 'flex-start',
+  gap: 6,
+};
+const msgAvatarStyle = {
+  width: 24,
+  height: 24,
+  borderRadius: '50%',
+  objectFit: 'cover',
+  background: '#fff',
+  flexShrink: 0,
+  marginTop: 2,
 };
 const toolCallStyle = { marginTop: 6, fontSize: 11, color: '#6b7280' };
 const errorStyle = { color: '#b91c1c', fontSize: 12, padding: '6px 4px' };
