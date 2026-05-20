@@ -12,9 +12,13 @@ const Cart = () => {
   const cartVAT = (parseFloat(totals.subtotal) * 0.2).toFixed(2);
   const cartTotal = (parseFloat(totals.subtotal) + parseFloat(cartVAT)).toFixed(2);
 
+  // The standalone /checkout page was removed (it could start a Stripe
+  // payment with no backing order — see "remove orphaned checkout" PR).
+  // The live payment path is My Account → My Quotes → Pay Now, so point the
+  // customer there instead of a dead route.
   const handleCheckout = () => {
     closeCart();
-    navigate('/checkout');
+    navigate('/account/quotes');
   };
 
   if (!isCartOpen) return null;
@@ -162,12 +166,16 @@ const Cart = () => {
               </div>
             </div>
 
-            {/* Checkout Button */}
+            {/* To place an order, customers go through My Quotes → Pay Now
+                (the live, order-backed Stripe path). */}
+            <p className="text-xs text-center text-gray-500 mb-2">
+              Complete your order from My Quotes in your account.
+            </p>
             <button
               onClick={handleCheckout}
               className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition-colors flex items-center justify-center space-x-2"
             >
-              <span>Proceed to Checkout</span>
+              <span>Go to My Quotes</span>
               <ArrowRight className="w-5 h-5" />
             </button>
 
