@@ -902,6 +902,18 @@ const LaltexProductView = ({ product }) => {
                                   </span>
                                 )}
                               </div>
+                              {/* Discoverability hint — when this position is
+                                  NOT ticked but carries more than one method,
+                                  advertise the alternatives behind the
+                                  checkbox (the un-ticked label only shows the
+                                  default method). Mutually exclusive with the
+                                  dropdown below (which renders only when
+                                  enabled). */}
+                              {!pick.enabled && group.rows.length > 1 && (
+                                <div className="text-xs text-slate-500 mt-1 pl-6">
+                                  +{group.rows.length - 1} more method{group.rows.length - 1 === 1 ? '' : 's'} — tick to choose
+                                </div>
+                              )}
                               {/* Size/method dropdown — only when this
                                   position has multiple rows AND is enabled.
                                   Hidden for single-row positions to keep the
