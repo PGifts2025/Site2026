@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Search, Loader } from 'lucide-react';
 import AdminLayout from '../components/admin/AdminLayout';
 import { supabase } from '../services/supabaseService';
+import { invalidateProductCache } from '../services/productCatalogService';
 import { findTierAtQty } from '../lib/pricingTiers';
 
 /**
@@ -184,6 +185,11 @@ const AdminPricing = ({ user, adminRole }) => {
   };
 
   const finishSave = (code) => {
+    // Clear the customer-facing product cache so the new margin shows up
+    // immediately on the next category/product page view instead of after
+    // the 5-min TTL. (AdminPricing's own list reads supplier_products
+    // directly, so this is for the public pages, not this table.)
+    invalidateProductCache(code);
     setSavedFlash(code);
     setTimeout(() => setSavedFlash(null), 2000);
     closeEditor();

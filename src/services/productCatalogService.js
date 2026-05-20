@@ -15,6 +15,95 @@
 import { isMockAuth } from '../config/supabase';
 import { getSupabaseClient as getSharedClient } from './supabaseService';
 
+// =====================================================================
+// In-memory cache for cross-navigation reuse.
+// Wraps the high-level fetch functions (getCuratedCategoryProducts,
+// getProductByIdentifier, getCatalogProductBySlug, getSupplierProductByCode)
+// so SPA navigation doesn't re-fire identical queries. Lives only in the
+// loaded module — survives client-side navigation + history.back(), resets
+// on hard refresh / tab close. Confirmed need: /pens -> /bags -> /pens
+// previously re-fired three identical bulk fetches (Phase 1 audit).
+// =====================================================================
+
+export const PRODUCT_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const PRODUCT_CACHE_MAX_ENTRIES = 50;
+
+// Each entry: { promise?: Promise<value>, value?: any, expiresAt: number }
+const _productCache = new Map();
+
+/**
+ * Cache wrapper for an async fetcher.
+ * - Returns a structuredClone of cached values so consumer mutation can't
+ *   corrupt the cache (sidesteps a per-consumer immutability audit).
+ * - Deduplicates concurrent in-flight requests by key (shared Promise).
+ * - LRU: move-to-end on hit; evict oldest when over capacity.
+ * - Errors are NOT cached (entry deleted on throw so the next read retries).
+ */
+async function _cached(key, fetcher) {
+  const now = Date.now();
+  const entry = _productCache.get(key);
+
+  if (entry && entry.expiresAt > now) {
+    // LRU: move to end (most-recently-used)
+    _productCache.delete(key);
+    _productCache.set(key, entry);
+
+    if (entry.promise) {
+      // In-flight request — share it rather than firing a parallel fetch
+      return structuredClone(await entry.promise);
+    }
+    return structuredClone(entry.value);
+  }
+
+  // Cache miss or expired — fetch fresh
+  const promise = fetcher();
+  _productCache.set(key, { promise, expiresAt: now + PRODUCT_CACHE_TTL_MS });
+
+  try {
+    const value = await promise;
+    _productCache.set(key, { value, expiresAt: Date.now() + PRODUCT_CACHE_TTL_MS });
+
+    // Evict oldest if over capacity (new keys insert at the end)
+    if (_productCache.size > PRODUCT_CACHE_MAX_ENTRIES) {
+      const oldestKey = _productCache.keys().next().value;
+      _productCache.delete(oldestKey);
+    }
+
+    return structuredClone(value);
+  } catch (err) {
+    _productCache.delete(key); // don't cache errors
+    throw err;
+  }
+}
+
+/**
+ * Invalidate cache entries.
+ *
+ * @param {string} [code] - If provided, clears entries related to this
+ *   supplier_product_code: `supplier:CODE`, `identifier:CODE`, and ALL
+ *   `curated:*` entries (no reverse index from code -> categories, so the
+ *   curated grids are cleared wholesale). If omitted, clears everything.
+ *
+ * Called from AdminPricing after a successful margin override so the change
+ * is reflected immediately on the next category/product page view rather
+ * than after the 5-minute TTL.
+ */
+export function invalidateProductCache(code) {
+  if (!code) {
+    _productCache.clear();
+    return;
+  }
+
+  _productCache.delete(`supplier:${code}`);
+  _productCache.delete(`identifier:${code}`);
+
+  for (const key of _productCache.keys()) {
+    if (key.startsWith('curated:')) {
+      _productCache.delete(key);
+    }
+  }
+}
+
 /**
  * Get or initialize Supabase client (uses shared singleton from supabaseService)
  */
@@ -144,7 +233,7 @@ export const getCatalogProducts = async (filters = {}) => {
  * @param {string} slug - Product slug
  * @returns {Promise<Object|null>} Complete product with all relations, or null if not found
  */
-export const getCatalogProductBySlug = async (slug) => {
+const _getCatalogProductBySlugUncached = async (slug) => {
   if (isMockAuth) {
     return null;
   }
@@ -225,6 +314,9 @@ export const getCatalogProductBySlug = async (slug) => {
     throw error;
   }
 };
+
+export const getCatalogProductBySlug = async (slug) =>
+  _cached(`catalog:${slug}`, () => _getCatalogProductBySlugUncached(slug));
 
 /**
  * Get catalog products by category
@@ -960,7 +1052,7 @@ export const getDesignerUrl = (productKey, color = null, view = null) => {
  * @param {boolean} [options.includeRetired=false] - return retired rows too
  * @returns {Promise<Object|null>} supplier_products row + supplier join, or null
  */
-export const getSupplierProductByCode = async (code, options = {}) => {
+const _getSupplierProductByCodeUncached = async (code, options = {}) => {
   if (isMockAuth) return null;
   if (!code) return null;
   const { includeRetired = false } = options;
@@ -997,6 +1089,17 @@ export const getSupplierProductByCode = async (code, options = {}) => {
   }
 };
 
+export const getSupplierProductByCode = async (code, options = {}) => {
+  // includeRetired:true is the rare path (saved-design history). Don't cache
+  // it under the same `supplier:CODE` key as the common is_retired=false read
+  // — that would let a retired-included row serve a non-retired call (or vice
+  // versa). Bypass the cache so the key only ever holds the default result.
+  if (options.includeRetired) {
+    return _getSupplierProductByCodeUncached(code, options);
+  }
+  return _cached(`supplier:${code}`, () => _getSupplierProductByCodeUncached(code, options));
+};
+
 /**
  * Try-catalog-first product loader for the generic /products/:identifier
  * route. Returns the unified `{ source, raw, normalised }` shape so
@@ -1019,7 +1122,7 @@ export const getSupplierProductByCode = async (code, options = {}) => {
  * @param {boolean} [options.includeRetired=false] - resolve retired supplier rows too
  * @returns {Promise<{source:'catalog'|'supplier', raw:Object, normalised:Object}|null>}
  */
-export const getProductByIdentifier = async (identifier, options = {}) => {
+const _getProductByIdentifierUncached = async (identifier, options = {}) => {
   if (!identifier) return null;
   const { includeRetired = false } = options;
 
@@ -1051,6 +1154,15 @@ export const getProductByIdentifier = async (identifier, options = {}) => {
   }
 
   return null;
+};
+
+export const getProductByIdentifier = async (identifier, options = {}) => {
+  // Bypass the cache for includeRetired:true (same reasoning as
+  // getSupplierProductByCode) so `identifier:ID` only holds the default read.
+  if (options.includeRetired) {
+    return _getProductByIdentifierUncached(identifier, options);
+  }
+  return _cached(`identifier:${identifier}`, () => _getProductByIdentifierUncached(identifier, options));
 };
 
 /**
@@ -1148,7 +1260,7 @@ export const getSupplierProductsByCodes = async (codes, { includeRetired = false
  *   Empty array on error or empty curation. Never throws — the page must
  *   degrade gracefully when the table doesn't exist yet (pre-migration deploys).
  */
-export const getCuratedCategoryProducts = async (categorySlug) => {
+const _getCuratedCategoryProductsUncached = async (categorySlug) => {
   if (isMockAuth) return [];
   if (!categorySlug) return [];
 
@@ -1199,6 +1311,9 @@ export const getCuratedCategoryProducts = async (categorySlug) => {
     return [];
   }
 };
+
+export const getCuratedCategoryProducts = async (categorySlug) =>
+  _cached(`curated:${categorySlug}`, () => _getCuratedCategoryProductsUncached(categorySlug));
 
 // ---------------------------------------------------------------------------
 // Unified product shape — normalises catalog_products vs supplier_products
