@@ -4,6 +4,8 @@ import { FileText, Trash2, ShoppingCart, Loader, AlertCircle, Check, X, CreditCa
 import CustomerLayout from '../../components/customer/CustomerLayout';
 import { supabase } from '../../services/supabaseService';
 import { supabaseConfig } from '../../config/supabase';
+import DeliveryAddressForm from '../../components/DeliveryAddressForm';
+import { buildAccountSnapshot, accountHasAddress } from '../../lib/deliveryValidation';
 
 /**
  * Render `quote_items.print_areas` (jsonb) as a short descriptor for
@@ -45,6 +47,10 @@ const CustomerQuotes = ({ user }) => {
   const [payingQuoteId, setPayingQuoteId] = useState(null);
   const [payError, setPayError] = useState(null); // { quoteId, message }
   const [isAdmin, setIsAdmin] = useState(false);
+  // Delivery (PR B): the customer's account address (for the snapshot
+  // fallback) + per-quote delivery form status ({mode, dirty}).
+  const [accountProfile, setAccountProfile] = useState(null);
+  const [deliveryStatus, setDeliveryStatus] = useState({}); // { [quoteId]: { mode, dirty, hasAccountAddress } }
   // "Combine quotes" feature: selection + confirmation state. Only draft quotes
   // are selectable; the combine merges all selected into the earliest-created.
   const [selectedQuoteIds, setSelectedQuoteIds] = useState(() => new Set());
@@ -74,8 +80,41 @@ const CustomerQuotes = ({ user }) => {
             setIsAdmin(true);
           }
         });
+      // Account address — used as the snapshot fallback when the customer
+      // delivers to their own address (PR B). customer_profiles.id === auth uid.
+      supabase
+        .from('customer_profiles')
+        .select('*')
+        .eq('id', user.id)
+        .maybeSingle()
+        .then(({ data }) => setAccountProfile(data || null));
     }
   }, [user]);
+
+  // Persist delivery details onto a quote (jsonb shipping_address + po_number).
+  const saveQuoteDelivery = async (quoteId, address, poNumber) => {
+    const { error } = await supabase
+      .from('quotes')
+      .update({ shipping_address: address, po_number: poNumber || null })
+      .eq('id', quoteId);
+    if (error) throw error;
+    setQuotes((prev) =>
+      prev.map((q) =>
+        q.id === quoteId ? { ...q, shipping_address: address, po_number: poNumber || null } : q,
+      ),
+    );
+  };
+
+  const handleDeliveryStatus = (quoteId, status) => {
+    setDeliveryStatus((prev) => {
+      const existing = prev[quoteId];
+      if (existing && existing.mode === status.mode && existing.dirty === status.dirty
+          && existing.hasAccountAddress === status.hasAccountAddress) {
+        return prev; // no change — avoid needless re-render
+      }
+      return { ...prev, [quoteId]: status };
+    });
+  };
 
   const fetchQuotes = async () => {
     try {
@@ -327,6 +366,51 @@ const CustomerQuotes = ({ user }) => {
 
   const handlePayNow = async (quote) => {
     setPayError(null);
+
+    // ---- Delivery gate + snapshot (PR B) ----
+    // Resolve the form's reported status (defaults derived from the quote +
+    // account when the form hasn't reported yet, e.g. immediately on load).
+    const hasAcct = accountHasAddress(accountProfile);
+    const status = deliveryStatus[quote.id] || {
+      mode: quote.shipping_address ? 'custom' : (hasAcct ? 'account' : 'custom'),
+      dirty: false,
+      hasAccountAddress: hasAcct,
+    };
+
+    let workingQuote = quote;
+
+    // Custom address with unsaved edits → make them save first.
+    if (status.mode === 'custom' && status.dirty) {
+      setPayError({ quoteId: quote.id, message: 'Please save delivery details first.' });
+      return;
+    }
+
+    // Account address → snapshot it onto the quote if not already set.
+    if (status.mode === 'account') {
+      if (!hasAcct) {
+        setPayError({ quoteId: quote.id, message: 'Please add a delivery address before paying.' });
+        return;
+      }
+      if (!quote.shipping_address) {
+        try {
+          const snap = buildAccountSnapshot(accountProfile);
+          await saveQuoteDelivery(quote.id, snap, quote.po_number || '');
+          workingQuote = { ...quote, shipping_address: snap };
+        } catch (err) {
+          console.error('[handlePayNow] snapshot save failed:', err);
+          setPayError({ quoteId: quote.id, message: 'Could not save delivery address. Please try again.' });
+          return;
+        }
+      }
+    }
+
+    // Final guard: a deliverable address (hard-required fields) must exist.
+    const addr = workingQuote.shipping_address || {};
+    if (!addr.line1 || !addr.city || !addr.postcode || !addr.country) {
+      setPayError({ quoteId: quote.id, message: 'Please add and save your delivery address before paying.' });
+      return;
+    }
+
     setPayingQuoteId(quote.id);
 
     try {
@@ -602,6 +686,20 @@ const CustomerQuotes = ({ user }) => {
               {quote.notes && (
                 <div className="px-5 py-3 bg-yellow-50 border-t border-yellow-100">
                   <p className="text-sm text-yellow-800"><strong>Notes:</strong> {quote.notes}</p>
+                </div>
+              )}
+
+              {/* Delivery details (PR B) — captured on the quote, snapshotted
+                  to the order at Pay Now. Hidden once converted/paid. */}
+              {quote.status !== 'converted' && (
+                <div className="px-5 py-4 border-t border-gray-100">
+                  <DeliveryAddressForm
+                    entity={quote}
+                    accountProfile={accountProfile}
+                    showAccountToggle
+                    onSave={(address, poNumber) => saveQuoteDelivery(quote.id, address, poNumber)}
+                    onStatusChange={(s) => handleDeliveryStatus(quote.id, s)}
+                  />
                 </div>
               )}
 

@@ -1,14 +1,20 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft, Package, Loader } from 'lucide-react';
+import { ArrowLeft, Package, Loader, MapPin } from 'lucide-react';
 import CustomerLayout from '../../components/customer/CustomerLayout';
 import { supabase } from '../../services/supabaseService';
+import DeliveryAddressForm from '../../components/DeliveryAddressForm';
+
+// Delivery address can no longer be edited by the customer once the order has
+// advanced to (or past) approval — at that point production is committed.
+const DELIVERY_LOCKED_STATUSES = new Set(['approved', 'in_production', 'shipped', 'delivered']);
 
 const CustomerOrderDetail = ({ user }) => {
   const { id } = useParams();
   const [loading, setLoading] = useState(true);
   const [order, setOrder] = useState(null);
   const [orderItems, setOrderItems] = useState([]);
+  const [editingDelivery, setEditingDelivery] = useState(false);
 
   useEffect(() => {
     fetchOrderDetail();
@@ -41,6 +47,17 @@ const CustomerOrderDetail = ({ user }) => {
     } finally {
       setLoading(false);
     }
+  };
+
+  const saveOrderDelivery = async (address, poNumber) => {
+    const { error } = await supabase
+      .from('orders')
+      .update({ shipping_address: address, po_number: poNumber || null })
+      .eq('id', id)
+      .eq('customer_id', user.id);
+    if (error) throw error;
+    setOrder((prev) => ({ ...prev, shipping_address: address, po_number: poNumber || null }));
+    setEditingDelivery(false);
   };
 
   const formatCurrency = (amount) => {
@@ -146,6 +163,54 @@ const CustomerOrderDetail = ({ user }) => {
             <span>{formatCurrency(order.total_amount)}</span>
           </div>
         </div>
+      </div>
+
+      {/* Delivery details (PR B) — editable until the order reaches approval */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-bold text-gray-900 flex items-center space-x-2">
+            <MapPin className="h-5 w-5" />
+            <span>Delivery details</span>
+          </h2>
+          {!DELIVERY_LOCKED_STATUSES.has(order.artwork_status) && !editingDelivery && (
+            <button
+              onClick={() => setEditingDelivery(true)}
+              className="text-sm text-blue-600 hover:text-blue-700 font-semibold"
+            >
+              {order.shipping_address ? 'Edit' : 'Add delivery address'}
+            </button>
+          )}
+        </div>
+
+        {editingDelivery ? (
+          <DeliveryAddressForm
+            entity={order}
+            showAccountToggle={false}
+            onSave={saveOrderDelivery}
+          />
+        ) : order.shipping_address ? (
+          <div className="text-sm text-gray-600 leading-relaxed">
+            {order.shipping_address.company && <div>{order.shipping_address.company}</div>}
+            {order.shipping_address.fao && <div>FAO: {order.shipping_address.fao}</div>}
+            <div>{order.shipping_address.line1}</div>
+            {order.shipping_address.line2 && <div>{order.shipping_address.line2}</div>}
+            <div>{[order.shipping_address.city, order.shipping_address.postcode].filter(Boolean).join(', ')}</div>
+            <div>{order.shipping_address.country}</div>
+            {order.shipping_address.phone && <div>Phone: {order.shipping_address.phone}</div>}
+            {order.shipping_address.instructions && (
+              <div className="italic mt-1">Instructions: {order.shipping_address.instructions}</div>
+            )}
+            {order.po_number && <div className="mt-1">PO: {order.po_number}</div>}
+          </div>
+        ) : (
+          <p className="text-sm text-gray-500">No delivery address on file yet.</p>
+        )}
+
+        {DELIVERY_LOCKED_STATUSES.has(order.artwork_status) && (
+          <p className="text-xs text-gray-400 mt-3">
+            Cannot edit after approval — please contact us if the address needs to change.
+          </p>
+        )}
       </div>
     </CustomerLayout>
   );

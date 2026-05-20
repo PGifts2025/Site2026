@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { ArrowLeft, Loader, Package, User, MapPin, CreditCard, Image as ImageIcon, Download, FileImage, StickyNote } from 'lucide-react';
+import { ArrowLeft, Loader, Package, User, MapPin, CreditCard, Image as ImageIcon, Download, FileImage, StickyNote, AlertTriangle } from 'lucide-react';
 import AdminLayout from '../../components/admin/AdminLayout';
 import { supabase, getArtworkSignedUrl, downloadArtworkFile } from '../../services/supabaseService';
 import { supabaseConfig } from '../../config/supabase';
+import { validateDeliveryForApproval, DELIVERY_FIELD_LABELS } from '../../lib/deliveryValidation';
 
 // Artwork helpers (mirrors AdminOrders.jsx — kept local to avoid a shared
 // module we don't have a home for yet).
@@ -66,6 +67,7 @@ const AdminOrderDetail = ({ user, adminRole }) => {
   const [savingNotes, setSavingNotes] = useState(false);
   const [notesSaved, setNotesSaved] = useState(false);
   const [downloadingId, setDownloadingId] = useState(null);
+  const [approvalError, setApprovalError] = useState(null); // delivery gate (PR B)
 
   useEffect(() => {
     fetchOrderDetail();
@@ -142,6 +144,20 @@ const AdminOrderDetail = ({ user, adminRole }) => {
 
   const handleAdvanceStatus = async () => {
     if (!pendingStatus) return;
+    // Delivery gate (PR B): cannot advance to 'approved' without the required
+    // delivery fields. Advancing to any OTHER status is not gated.
+    if (pendingStatus === 'approved') {
+      const { valid, missing } = validateDeliveryForApproval(order);
+      if (!valid) {
+        setApprovalError(
+          'Cannot approve — missing required delivery details: ' +
+            missing.map((m) => DELIVERY_FIELD_LABELS[m] || m).join(', '),
+        );
+        setShowStatusConfirm(false);
+        return;
+      }
+    }
+    setApprovalError(null);
     setAdvancingStatus(true);
     // Capture prior status for first-transition email detection below.
     const priorStatus = order?.artwork_status;
@@ -284,6 +300,35 @@ const AdminOrderDetail = ({ user, adminRole }) => {
         <ArrowLeft className="h-4 w-4" />
         <span>Back to Orders</span>
       </button>
+
+      {/* Delivery-incomplete banner (PR B) — FAO + phone (and address) are
+          required before the order can be approved. */}
+      {(() => {
+        const { valid, missing } = validateDeliveryForApproval(order);
+        if (valid) return null;
+        const customerEmail = order.customer_profiles?.email;
+        return (
+          <div className="mb-6 flex items-start gap-3 p-4 bg-red-50 border border-red-200 rounded-xl">
+            <AlertTriangle className="h-5 w-5 text-red-600 flex-shrink-0 mt-0.5" />
+            <div className="text-sm">
+              <p className="font-semibold text-red-800">
+                Delivery details incomplete — required before approval
+              </p>
+              <p className="text-red-700 mt-0.5">
+                Missing: {missing.map((m) => DELIVERY_FIELD_LABELS[m] || m).join(', ')}
+              </p>
+              {customerEmail && (
+                <a
+                  href={`mailto:${customerEmail}?subject=${encodeURIComponent(`Delivery details for order ${order.order_number || ''}`)}`}
+                  className="text-red-700 underline mt-1 inline-block"
+                >
+                  Contact customer
+                </a>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Order Header */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-6">
@@ -478,6 +523,9 @@ const AdminOrderDetail = ({ user, adminRole }) => {
           return (
             <div className="mb-6 p-4 border border-gray-200 rounded-lg">
               <h3 className="text-sm font-semibold text-gray-700 mb-3">Advance artwork status</h3>
+              {approvalError && (
+                <p className="mb-3 text-sm text-red-600">{approvalError}</p>
+              )}
               {showStatusConfirm ? (
                 <div className="flex items-center flex-wrap gap-3">
                   <span className="text-sm text-gray-700">
