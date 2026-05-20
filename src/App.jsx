@@ -16,7 +16,6 @@ import Designer from './pages/Designer';
 import DesignerV2 from './pages/DesignerV2';
 import ProductManager from './pages/ProductManager';
 import AdminSeedData from './pages/AdminSeedData';
-import Checkout from './pages/Checkout';
 import OrderConfirmation from './pages/OrderConfirmation';
 import ResetPassword from './pages/ResetPassword';
 import HeaderBar from './components/HeaderBar';
@@ -146,8 +145,7 @@ function App() {
             <Route path="/admin/settings" element={<AdminGuard><AdminSettings /></AdminGuard>} />
             <Route path="/admin/seed-data" element={<AdminSeedData />} />
 
-            {/* Checkout */}
-            <Route path="/checkout" element={<Checkout />} />
+            {/* Stripe success redirect (live payment path is Quotes → Pay Now) */}
             <Route path="/order-confirmation" element={<OrderConfirmation />} />
 
             {/* Password reset — public, outside any auth guard. A user with
