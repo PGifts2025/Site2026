@@ -826,9 +826,14 @@ const LaltexProductView = ({ product }) => {
                         <Plus className="h-4 w-4" />
                       </button>
                     </div>
-                    <p className="text-xs text-gray-500 mt-2 text-center">
+                    {/* MOQ hint removed (see audit-configure-quote-moq.md): the Quantity
+                        input already defaults to the product's real MOQ (minQty, L154-155)
+                        and floors at it, so this line was redundant. Commented (not deleted)
+                        so a future UX review can restore the explicit hint. The Details-panel
+                        spec row (~L735) keeps the value as a product attribute. */}
+                    {/* <p className="text-xs text-gray-500 mt-2 text-center">
                       Minimum order: {minQty} units
-                    </p>
+                    </p> */}
                   </div>
 
                   {/* Print positions — one row per UNIQUE position, with
