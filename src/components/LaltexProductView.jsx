@@ -981,6 +981,12 @@ const LaltexProductView = ({ product }) => {
                               {formatGBP(totalPrice || 0)}
                             </span>
                           </div>
+                          {/* TEMP: price breakdown (Product / print position /
+                              UK delivery) hidden pre-launch — Total stays
+                              visible. The calc (basePrice, positionContributions,
+                              deliveryUnitWithMargin) is untouched; only the
+                              render is suppressed. Uncomment to restore. */}
+                          {/*
                           {(positionContributions.length > 0 || deliveryUnitWithMargin > 0) && (
                             <div className="mt-2 text-xs text-gray-500 space-y-0.5">
                               {basePrice != null && (
@@ -1007,6 +1013,7 @@ const LaltexProductView = ({ product }) => {
                               )}
                             </div>
                           )}
+                          */}
                         </div>
                       </>
                     )}
