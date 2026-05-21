@@ -5337,3 +5337,60 @@ exists and is populated.
   cells (the original PR #36 visual bug — fixed in PR #37). Both
   pools share the `grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8`
   wrapper.
+
+---
+
+## 57. MARGIN SCHEDULE (v2, May 2026)
+
+Default Laltex margin schedule, applied to
+`supplier_products.product_pricing[].sell_price` and
+`print_details[].print_price[].sell_price` at sync time and on recompute.
+Lives in [`scripts/lib/laltex-margin.js`](../scripts/lib/laltex-margin.js)
+(`DEFAULT_SCHEDULE` + `scheduleMarginForTier`).
+
+| Tier (by tier `min_qty`) | Margin |
+|---|---|
+| qty < 100 | 35% |
+| qty 100–249 | 30% |
+| qty 250–499 | 25% |
+| qty 500–999 | 22.5% (`0.225`) |
+| qty 1000+ | 20% |
+
+`DEFAULT_SCHEDULE_VERSION = 2` (v1 was 22/20/18% across 3 tiers).
+
+Raised from v1 in May 2026 after margin analysis showed v1 produced sub-10%
+net margin on commodity products like the RC1015 Bamboo Nail File after the
+~3% card-processing fee, making the business non-viable. v2 also added two
+high-volume margin bands (500–999, 1000+) to reward bulk orders — the setup +
+carriage amortisation at those volumes keeps the lower stated margins healthy
+in real terms.
+
+The margin is applied **per pricing tier by `tier.min_qty`**, not by the
+customer's actual order quantity (CLAUDE.md §46.3). A product only gets the
+22.5% / 20% bands if its Laltex quantity breaks actually include a tier with
+`min_qty ≥ 500` / `≥ 1000`; the schedule adds margin *bands*, not new price
+rows.
+
+**Override behaviour unchanged:** `supplier_products.margin_pct_override`
+(numeric, `[0,1)`) takes precedence over the schedule when set. Overrides are
+flat across all tiers — a `0.25` override means 25% margin at every quantity.
+Current override count: zero.
+
+**PGifts Direct (25 rows) is unaffected** — it prices off
+`catalog_pricing_tiers` / `catalog_print_pricing`, not this schedule.
+
+### 57.1 Invariants — DO NOT BREAK
+
+- **Any schedule change MUST bump `DEFAULT_SCHEDULE_VERSION`** and then run
+  `node scripts/recompute-laltex-margins.js` (all rows) or `--stale-only`.
+  Without the recompute, stored `sell_price` values drift out of sync with
+  the live formula and the version stamp lies.
+- **Use exact decimals** — 22.5% is `0.225`, never `0.22`/`0.23`.
+- **Do NOT include `margin_pct_override` in any sync/migrate UPSERT body**
+  (CLAUDE.md §46.5) — it is admin-owned state.
+- **The recompute writes `sell_price` only** (product + print, margin baked);
+  delivery stays a read-time concern (§46, decision B1-A). Do NOT bake
+  delivery into `sell_price`.
+- **After a recompute, the product cache must be cleared** — redeploy Vercel
+  (the module-level cache from PR #44 holds prices up to ~5 min and can't be
+  reached from a server-side script).

@@ -1,10 +1,13 @@
 /**
  * Default Laltex margin schedule + applyMarginsInPlace.
  *
- * Schedule (matches CLAUDE.md §6.2 — PGifts Direct rule):
- *   1-99   units → 22%
- *   100-249 units → 20%
- *   250+    units → 18%
+ * Schedule v2 (CLAUDE.md §57 — raised May 2026 for business viability;
+ * v1 was 22/20/18% across 3 tiers):
+ *   1-99    units → 35%
+ *   100-249 units → 30%
+ *   250-499 units → 25%
+ *   500-999 units → 22.5%
+ *   1000+   units → 20%
  *
  * Applied per pricing-tier by tier.min_qty, NOT by the actual order
  * quantity. So a tier covering min_qty=25, max_qty=49 always gets 22%
@@ -29,12 +32,14 @@
  * is a single SELECT.
  */
 
-export const DEFAULT_SCHEDULE_VERSION = 1;
+export const DEFAULT_SCHEDULE_VERSION = 2;
 
 const DEFAULT_SCHEDULE = [
-  { min_qty: 0,   margin_pct: 0.22 },  // 1-99
-  { min_qty: 100, margin_pct: 0.20 },  // 100-249
-  { min_qty: 250, margin_pct: 0.18 },  // 250+
+  { min_qty: 0,    margin_pct: 0.35 },   // 1-99
+  { min_qty: 100,  margin_pct: 0.30 },   // 100-249
+  { min_qty: 250,  margin_pct: 0.25 },   // 250-499
+  { min_qty: 500,  margin_pct: 0.225 },  // 500-999
+  { min_qty: 1000, margin_pct: 0.20 },   // 1000+
 ];
 
 export function defaultMarginForTierMinQty(minQty) {
