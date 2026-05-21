@@ -92,12 +92,12 @@ available print method/size at qty 100, 1 colour, 1 position** — mirroring TM'
 
 All land in `output/` (git-ignored). Open in Excel / Google Sheets.
 
-### `comparison-<ts>.csv` — the main file (38 columns)
+### `comparison-<ts>.csv` — the main file (39 columns)
 
 PGifts **Laltex** products that matched a TM product. Identity + diagnostic
 columns: `pgifts_code, pgifts_name, pgifts_print_method, pgifts_print_size,
-match_confidence, tm_code, tm_name, tm_url`. Then, for each of the six quantity
-tiers, five columns:
+pgifts_print_was_filtered, match_confidence, tm_code, tm_name, tm_url`. Then, for
+each of the six quantity tiers, five columns:
 
 - `pgifts_qty{N}_exvat` — PGifts all-in price ex-VAT
 - `pgifts_qty{N}_incvat` — PGifts all-in × 1.20
@@ -107,7 +107,10 @@ tiers, five columns:
   **Positive = we're more expensive. Negative = we're cheaper.**
 
 `pgifts_print_method` / `pgifts_print_size` reflect the qty-100 anchor (the same
-basis as `gap_qty100_pct`). A blank PGifts price at a tier means no all-in could
+basis as `gap_qty100_pct`). `pgifts_print_was_filtered` is `true` when one or
+more non-decoration line items (backing cards, packaging, etc.) were skipped
+while choosing that anchor — a quick flag for whether anchor filtering affected
+the row during a spot-check. A blank PGifts price at a tier means no all-in could
 be computed for that qty (POA, or missing print/delivery data).
 
 **To find where we're badly positioned:** sort by `gap_qty100_pct` descending.
@@ -147,19 +150,29 @@ print/delivery pricing also lives in `catalog_print_pricing` /
 
 A 0–100 score (Dice coefficient on normalised names). Names are lowercased,
 stripped of punctuation, and have marketing words removed
-("promotional/branded/printed/custom/personalised"). The code default is 85;
-Dave runs `--threshold 0.75`. It reliably catches identical / near-identical
-names (e.g. PGifts `MG0114` ↔ TM `254941`, both "Renoir 400ml Travel Mug").
+("promotional/branded/printed/custom/personalised"). It reliably catches
+identical / near-identical names (e.g. PGifts `MG0114` ↔ TM `254941`, both
+"Renoir 400ml Travel Mug").
 
-- Too many false matches? Raise `--threshold 0.9`.
-- Missing obvious matches? Lower `--threshold 0.7` and eyeball `no-tm-match`.
+**The default threshold is `0.85`** — chosen for precision over recall. Generic
+nouns ("Shoe Laces", "Notebook", "Power Bank") fuzzy-match physically different
+TM products at lower thresholds, so 0.85 keeps the automatic matches trustworthy
+at the cost of fewer of them.
+
+- **Broader exploration:** `--threshold 0.75` roughly doubles the match count but
+  introduces more false positives that need manual review — useful for finding
+  candidate matches the strict cut-off missed, then eyeballing `no-tm-match`.
+- **Even stricter:** `--threshold 0.9` for near-exact names only.
 
 ## Caveats — read before quoting these numbers
 
-- **Print anchor is the cheapest method.** Occasionally the cheapest 1-colour /
-  1-position "print" line is a non-decoration item (e.g. a backing card). It's
-  correct per the cheapest-anchor rule but can make a few all-in prices look
-  high — worth an eye when spot-checking the worst-positioned list.
+- **Print anchor is the cheapest real decoration.** Non-decoration line items
+  (backing cards, packaging, gift boxes, swing tags, "no print", ...) are
+  excluded so they can't be picked as the anchor, and a £0 line is accepted only
+  when it's clearly a decoration ("included free"). Rows where such a line was
+  skipped are flagged `pgifts_print_was_filtered = true`. The exclusion list
+  lives in `compare-with-pgifts.js` (`NON_DECORATION_KEYWORDS`); extend it if a
+  new packaging line slips through.
 - **Name-match quality.** A confident name match isn't a guaranteed
   like-for-like product. Spot-check the worst-positioned rows against the
   `tm_url` before acting on a gap (this is the Step 2 review).
