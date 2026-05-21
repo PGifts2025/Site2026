@@ -2,8 +2,8 @@
 
 On-demand tool to scrape [Total Merchandise](https://www.totalmerchandise.co.uk)'s
 public product catalogue, fuzzy-match it against PGifts' products by name, and
-emit side-by-side price comparison CSVs at six quantity tiers (25, 50, 100, 250,
-500, 1000) in both ex-VAT and inc-VAT.
+emit side-by-side **all-in** (product + print + delivery) price comparison CSVs
+at six quantity tiers (25, 50, 100, 250, 500, 1000) in both ex-VAT and inc-VAT.
 
 It exists so we can see where PGifts sits price-wise across the catalogue, and
 re-run the check whenever we want. **Nothing is scheduled — you run each script
@@ -28,7 +28,7 @@ npm install
 
 node scrape-tm-sitemap.js          # ~1 min   → output/sitemap-<ts>.json
 node scrape-tm-prices.js           # ~4-5 hrs → output/tm-products-<ts>.json   (run overnight)
-node compare-with-pgifts.js        # ~5 min   → 3 CSVs in output/
+node compare-with-pgifts.js        # ~5 min   → 4 CSVs in output/
 ```
 
 Each step writes a timestamped file into `output/`; the next step automatically
@@ -64,26 +64,60 @@ a clean finish.
 | `compare-with-pgifts.js` | `--threshold N` | Match confidence 0..1 (default 0.85). |
 | `compare-with-pgifts.js` | `--input <path>` | Use a specific tm-products JSON. |
 
+## Pricing basis — both sides are ALL-IN ex-VAT
+
+Both the PGifts and TM prices in the comparison are **all-in, ex-VAT**
+(product + print + delivery) — the same number a customer sees on each site:
+
+- **TM:** the scraped per-unit price already bundles product + print +
+  delivery. It is shown **ex-VAT by default** (the "Everything included" wording
+  means print + delivery, not VAT — the page has a separate VAT toggle). The
+  scraper takes the displayed ex-VAT value as the source of truth and derives
+  inc-VAT as ×1.20.
+- **PGifts:** `compare-with-pgifts.js` computes the all-in price the same way
+  [`LaltexProductView.jsx`](../../src/components/LaltexProductView.jsx) renders
+  it at quote time — `product sell_price + cheapest print per-unit + UK-standard
+  delivery share × (1 + margin)`. (Earlier versions read `product_pricing[].sell_price`
+  alone, which omitted print + delivery and made PGifts look artificially cheap.)
+
+### Print anchor
+
+PGifts products have several print positions/methods; TM shows one all-in price.
+For an apples-to-apples comparison, the PGifts price uses the **cheapest
+available print method/size at qty 100, 1 colour, 1 position** — mirroring TM's
+"from £X everything included" framing. The chosen method/size is recorded in the
+`pgifts_print_method` / `pgifts_print_size` columns for transparency.
+
 ## The output CSVs
 
 All land in `output/` (git-ignored). Open in Excel / Google Sheets.
 
-### `comparison-<ts>.csv` — the main file (37 columns)
+### `comparison-<ts>.csv` — the main file (38 columns)
 
-PGifts products that matched a TM product. For each of the six quantity tiers
-there are five columns:
+PGifts **Laltex** products that matched a TM product. Identity + diagnostic
+columns: `pgifts_code, pgifts_name, pgifts_print_method, pgifts_print_size,
+match_confidence, tm_code, tm_name, tm_url`. Then, for each of the six quantity
+tiers, five columns:
 
-- `pgifts_qty{N}_exvat` — PGifts price ex-VAT
-- `pgifts_qty{N}_incvat` — PGifts price × 1.20
-- `tm_qty{N}_incvat` — TM price inc-VAT
-- `tm_qty{N}_exvat` — TM price ex-VAT
+- `pgifts_qty{N}_exvat` — PGifts all-in price ex-VAT
+- `pgifts_qty{N}_incvat` — PGifts all-in × 1.20
+- `tm_qty{N}_incvat` — TM all-in inc-VAT
+- `tm_qty{N}_exvat` — TM all-in ex-VAT
 - `gap_qty{N}_pct` — `((pgifts_exvat − tm_exvat) / tm_exvat) × 100`.
   **Positive = we're more expensive. Negative = we're cheaper.**
 
-Plus 7 identity columns: `pgifts_code, pgifts_name, supplier, match_confidence,
-tm_code, tm_name, tm_url`.
+`pgifts_print_method` / `pgifts_print_size` reflect the qty-100 anchor (the same
+basis as `gap_qty100_pct`). A blank PGifts price at a tier means no all-in could
+be computed for that qty (POA, or missing print/delivery data).
 
 **To find where we're badly positioned:** sort by `gap_qty100_pct` descending.
+
+### `pgifts-direct-<ts>.csv` — reference only
+
+The 25 PGifts Direct products are **excluded from the matcher** (see below) and
+listed here for reference: `pgifts_code, pgifts_name, from_price_indicator,
+note`. `from_price_indicator` is the cheapest `catalog_pricing_tiers` per-unit
+price if available, else "see admin dashboard". No matching, no gap.
 
 ### `tm-not-in-pgifts-<ts>.csv`
 
@@ -93,36 +127,44 @@ the `tm-products-<ts>.json`).
 
 ### `no-tm-match-<ts>.csv`
 
-PGifts products with no confident TM match, **including the closest candidate
-below threshold** (`best_candidate_tm_name`, `best_candidate_confidence`) so you
-can spot-check matches the fuzzy matcher just missed.
+PGifts Laltex products with no confident TM match, **including the closest
+candidate below threshold** (`best_candidate_tm_name`,
+`best_candidate_confidence`) so you can spot-check matches the fuzzy matcher just
+missed.
+
+## Why PGifts Direct is excluded from the matcher
+
+The 25 PGifts Direct products (lowercase slug codes like `chi-cup`,
+`a6-pocket-notebook`) are **unique-to-PGifts** items with no real Total
+Merchandise equivalent. Matching them by name produces false signals — a generic
+name like "T-Shirts" or "Water Bottle" fuzzy-matches a *physically different* TM
+product. They are filtered out of the matcher upstream (only `supplier = laltex`
+rows are compared) and emitted to `pgifts-direct-<ts>.csv` for reference. Their
+print/delivery pricing also lives in `catalog_print_pricing` /
+`catalog_pricing_tiers` (a different render path), not in `supplier_products`.
 
 ## `match_confidence`
 
 A 0–100 score (Dice coefficient on normalised names). Names are lowercased,
 stripped of punctuation, and have marketing words removed
-("promotional/branded/printed/custom/personalised"). 85 is the default cut-off
-and reliably catches like-for-like products (e.g. PGifts `CF1004` ↔ TM `253759`,
-both "Essential Sandwich Peak Cotton Cap").
+("promotional/branded/printed/custom/personalised"). The code default is 85;
+Dave runs `--threshold 0.75`. It reliably catches identical / near-identical
+names (e.g. PGifts `MG0114` ↔ TM `254941`, both "Renoir 400ml Travel Mug").
 
 - Too many false matches? Raise `--threshold 0.9`.
-- Missing obvious matches? Lower `--threshold 0.8` and eyeball `no-tm-match`.
+- Missing obvious matches? Lower `--threshold 0.7` and eyeball `no-tm-match`.
 
 ## Caveats — read before quoting these numbers
 
-- **VAT direction.** TM's site shows ex-VAT by default (the "Everything
-  included" wording means print + delivery are bundled, not VAT — the page has a
-  separate VAT toggle). The scraper reads the displayed ex-VAT value as the
-  source of truth and derives inc-VAT as ×1.20. (The original brief had this
-  backwards; see `lib/parse-tm-page.js`.)
-- **Not fully like-for-like.** TM's unit price includes print + delivery.
-  PGifts' `sell_price` is the product/garment sell price **excluding** the
-  read-time UK-delivery share and any on-top print pricing (CLAUDE.md §46). So
-  the gap is an **indicative base-positioning** signal that, if anything,
-  flatters PGifts. Treat large negative gaps with that in mind. A future v2
-  could load PGifts delivery + print to make it strictly like-for-like.
-- **Default decoration only.** TM lists several decoration methods per product;
-  we capture the one shown by default (what a customer sees first).
+- **Print anchor is the cheapest method.** Occasionally the cheapest 1-colour /
+  1-position "print" line is a non-decoration item (e.g. a backing card). It's
+  correct per the cheapest-anchor rule but can make a few all-in prices look
+  high — worth an eye when spot-checking the worst-positioned list.
+- **Name-match quality.** A confident name match isn't a guaranteed
+  like-for-like product. Spot-check the worst-positioned rows against the
+  `tm_url` before acting on a gap (this is the Step 2 review).
+- **Delivery is UK-standard.** The PGifts delivery share uses the UK-standard
+  service at the order quantity; non-UK delivery is handled separately.
 
 ## Politeness / legal
 
