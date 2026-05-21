@@ -50,13 +50,13 @@ const PromoGiftsApp = () => {
       image: "https://cbcevjhvgmxrxeeyldza.supabase.co/storage/v1/object/public/product-templates/hero-banners/left-slider-1.png",
       heading: "BRANDED WATER BOTTLES",
       buttonText: "View Products",
-      buttonHref: "/water-bottles/water-bottle"
+      buttonHref: "/water-bottles"
     },
     {
       image: "https://cbcevjhvgmxrxeeyldza.supabase.co/storage/v1/object/public/product-templates/hero-banners/left-slider-2.png",
       heading: "BRANDED CUPS",
       buttonText: "View Products",
-      buttonHref: "/cups/chi-cup"
+      buttonHref: "/cups"
     }
   ];
 
