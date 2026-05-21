@@ -22,6 +22,7 @@ const PromoGiftsApp = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [isSliderPaused, setIsSliderPaused] = useState(false);
   const [heroSlide, setHeroSlide] = useState(0);
+  const [rightSlide, setRightSlide] = useState(1);
   const [productsPerSlide, setProductsPerSlide] = useState(4);
   // Tracks the phrase Ava is currently TYPING (advanced by
   // AvaTypewriter's onActivePhraseChange). Click handler reads this
@@ -43,42 +44,38 @@ const PromoGiftsApp = () => {
   const [loadingFeatured, setLoadingFeatured] = useState(true);
   const [loadingHot, setLoadingHot] = useState(true);
 
-  // Hero slider content
+  // Hero slider content (left panel). Shape: { image, heading, buttonText, buttonHref }
   const heroSliderContent = [
     {
-      id: 1,
-      title: "BRANDED WATER BOTTLES",
-      subtitle: "from just 85p",
-      buttonText: "ORDER NOW",
-      bgColor: "bg-blue-500",
-      textColor: "text-white",
-      imageUrl: "https://cbcevjhvgmxrxeeyldza.supabase.co/storage/v1/object/public/product-templates/hero-banners/left-slider-1.png",
-      link: "/water-bottles/water-bottle"
+      image: "https://cbcevjhvgmxrxeeyldza.supabase.co/storage/v1/object/public/product-templates/hero-banners/left-slider-1.png",
+      heading: "BRANDED WATER BOTTLES",
+      buttonText: "View Products",
+      buttonHref: "/water-bottles/water-bottle"
     },
     {
-      id: 2,
-      title: "BRANDED CUPS",
-      subtitle: "from just £1.20",
-      buttonText: "ORDER NOW",
-      bgColor: "bg-green-600",
-      textColor: "text-white",
-      imageUrl: "https://cbcevjhvgmxrxeeyldza.supabase.co/storage/v1/object/public/product-templates/hero-banners/left-slider-2.png",
-      link: "/cups/chi-cup"
+      image: "https://cbcevjhvgmxrxeeyldza.supabase.co/storage/v1/object/public/product-templates/hero-banners/left-slider-2.png",
+      heading: "BRANDED CUPS",
+      buttonText: "View Products",
+      buttonHref: "/cups/chi-cup"
     }
   ];
 
-  // Static right hero block
-  const rightHeroBlock = {
-    id: 3,
-    title: "GRS RECYCLED TOTE BAGS",
-    subtitle: "FROM JUST 58p A UNIT, WITH YOUR LOGO",
-    description: "We've secured the UK's lowest prices for our best-selling promotional totes. Bag a bargain for your business today!",
-    buttonText: "View Product",
-    bgColor: "bg-gray-100",
-    textColor: "text-gray-900",
-    imageUrl: "https://cbcevjhvgmxrxeeyldza.supabase.co/storage/v1/object/public/product-templates/hero-banners/right-bags.png",
-    link: "/bags"
-  };
+  // Hero slider content (right panel). Same shape as the left; separate array
+  // driving its own state, by design.
+  const rightHeroSliderContent = [
+    {
+      image: "/images/octopus_mini.png",
+      heading: "CONNECTORS",
+      buttonText: "View Products",
+      buttonHref: "/cables"
+    },
+    {
+      image: "/images/luggie.png",
+      heading: "TRAVEL ADAPTOR",
+      buttonText: "View Products",
+      buttonHref: "/power"
+    }
+  ];
 
   // Product categories
   const categories = [
@@ -134,6 +131,15 @@ const PromoGiftsApp = () => {
     }, 5000);
     return () => clearInterval(timer);
   }, [heroSliderContent.length]);
+
+  // Auto-slider for right hero section (mirrors the left; rightSlide starts at 1
+  // so the panels show different slides)
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setRightSlide((prev) => (prev + 1) % rightHeroSliderContent.length);
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [rightHeroSliderContent.length]);
 
   const nextBestSellers = () => {
     setBestSellersSlide((prev) => (prev + 1) % Math.ceil(displayBestSellers.length / productsPerSlide));
@@ -253,15 +259,15 @@ const PromoGiftsApp = () => {
           <div className="relative overflow-hidden rounded-lg h-64">
             {heroSliderContent.map((block, index) => (
               <div
-                key={block.id}
+                key={index}
                 className={`absolute inset-0 transition-opacity duration-1000 ${
                   index === heroSlide ? 'opacity-100' : 'opacity-0'
                 }`}
               >
                 {/* Background Image */}
                 <img
-                  src={block.imageUrl}
-                  alt={block.title}
+                  src={block.image}
+                  alt={block.heading}
                   className="absolute inset-0 w-full h-full object-cover object-center"
                 />
 
@@ -269,11 +275,10 @@ const PromoGiftsApp = () => {
                 <div className="absolute inset-0 bg-black/5"></div>
 
                 {/* Content */}
-                <div className={`absolute inset-0 ${block.textColor} p-4 sm:p-8 flex items-center justify-between`}>
+                <div className="absolute inset-0 text-white p-4 sm:p-8 flex items-center justify-between">
                   <div className="z-10">
-                    <h2 className="text-xl sm:text-2xl md:text-3xl font-bold mb-2 drop-shadow-lg">{block.title}</h2>
-                    <p className="text-base sm:text-xl text-yellow-300 font-bold mb-4 drop-shadow-lg">{block.subtitle}</p>
-                    <Link to={block.link} className="inline-block bg-white text-gray-900 px-4 py-2 sm:px-6 sm:py-3 rounded font-semibold hover:bg-gray-100 transition-colors text-sm sm:text-base shadow-lg">
+                    <h2 className="text-xl sm:text-2xl md:text-3xl font-bold mb-2 drop-shadow-lg">{block.heading}</h2>
+                    <Link to={block.buttonHref} className="inline-block bg-white text-gray-900 px-4 py-2 sm:px-6 sm:py-3 rounded font-semibold hover:bg-gray-100 transition-colors text-sm sm:text-base shadow-lg">
                       {block.buttonText}
                     </Link>
                   </div>
@@ -295,28 +300,48 @@ const PromoGiftsApp = () => {
             </div>
           </div>
 
-          {/* Right - Static Bags Block */}
-          <div className="rounded-lg relative overflow-hidden h-64">
-            {/* Background Image */}
-            <img
-              src={rightHeroBlock.imageUrl}
-              alt={rightHeroBlock.title}
-              className="absolute inset-0 w-full h-full object-cover object-center"
-            />
+          {/* Right - Hero Slider */}
+          <div className="relative overflow-hidden rounded-lg h-64">
+            {rightHeroSliderContent.map((block, index) => (
+              <div
+                key={index}
+                className={`absolute inset-0 transition-opacity duration-1000 ${
+                  index === rightSlide ? 'opacity-100' : 'opacity-0'
+                }`}
+              >
+                {/* Background Image */}
+                <img
+                  src={block.image}
+                  alt={block.heading}
+                  className="absolute inset-0 w-full h-full object-cover object-center"
+                />
 
-            {/* Dark overlay for text readability */}
-            <div className="absolute inset-0 bg-black/5"></div>
+                {/* Dark overlay for text readability */}
+                <div className="absolute inset-0 bg-black/5"></div>
 
-            {/* Content */}
-            <div className="absolute inset-0 p-4 sm:p-8 flex items-center justify-between">
-              <div className="z-10">
-                <h2 className="text-xl sm:text-2xl md:text-3xl font-bold mb-2 drop-shadow-lg text-white">{rightHeroBlock.title}</h2>
-                <p className="text-base sm:text-xl text-red-500 font-bold mb-4 drop-shadow-lg">{rightHeroBlock.subtitle}</p>
-                <p className="text-xs sm:text-sm mb-6 max-w-md drop-shadow-lg text-white/90">{rightHeroBlock.description}</p>
-                <Link to={rightHeroBlock.link} className="inline-block bg-gray-800 text-white px-4 py-2 sm:px-6 sm:py-3 rounded font-semibold hover:bg-gray-700 transition-colors text-sm sm:text-base shadow-lg">
-                  {rightHeroBlock.buttonText}
-                </Link>
+                {/* Content */}
+                <div className="absolute inset-0 text-white p-4 sm:p-8 flex items-center justify-between">
+                  <div className="z-10">
+                    <h2 className="text-xl sm:text-2xl md:text-3xl font-bold mb-2 drop-shadow-lg">{block.heading}</h2>
+                    <Link to={block.buttonHref} className="inline-block bg-white text-gray-900 px-4 py-2 sm:px-6 sm:py-3 rounded font-semibold hover:bg-gray-100 transition-colors text-sm sm:text-base shadow-lg">
+                      {block.buttonText}
+                    </Link>
+                  </div>
+                </div>
               </div>
+            ))}
+
+            {/* Slide indicators */}
+            <div className="absolute bottom-4 left-8 flex space-x-2 z-20">
+              {rightHeroSliderContent.map((_, index) => (
+                <button
+                  key={index}
+                  onClick={() => setRightSlide(index)}
+                  className={`w-2 h-2 rounded-full transition-all duration-300 ${
+                    index === rightSlide ? 'bg-white w-6' : 'bg-white/50'
+                  }`}
+                />
+              ))}
             </div>
           </div>
         </div>
