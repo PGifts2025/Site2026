@@ -941,21 +941,21 @@ const PromoGiftsApp = () => {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <ul className="space-y-2 text-sm text-gray-300">
-                    <li className="hover:text-white cursor-pointer">Cups</li>
-                    <li className="hover:text-white cursor-pointer">Water Bottles</li>
-                    <li className="hover:text-white cursor-pointer">Bags</li>
-                    <li className="hover:text-white cursor-pointer">Clothing</li>
-                    <li className="hover:text-white cursor-pointer">Hi Vis</li>
-                    <li className="hover:text-white cursor-pointer">Cables</li>
+                    <li><Link to="/cups" className="hover:text-white cursor-pointer">Cups</Link></li>
+                    <li><Link to="/water-bottles" className="hover:text-white cursor-pointer">Water Bottles</Link></li>
+                    <li><Link to="/bags" className="hover:text-white cursor-pointer">Bags</Link></li>
+                    <li><Link to="/clothing" className="hover:text-white cursor-pointer">Clothing</Link></li>
+                    <li><Link to="/hi-vis" className="hover:text-white cursor-pointer">Hi Vis</Link></li>
+                    <li><Link to="/cables" className="hover:text-white cursor-pointer">Cables</Link></li>
                   </ul>
                 </div>
                 <div>
                   <ul className="space-y-2 text-sm text-gray-300">
-                    <li className="hover:text-white cursor-pointer">Power</li>
-                    <li className="hover:text-white cursor-pointer">Speakers</li>
-                    <li className="hover:text-white cursor-pointer">Pens & Writing</li>
-                    <li className="hover:text-white cursor-pointer">Notebooks</li>
-                    <li className="hover:text-white cursor-pointer">Tea Towels</li>
+                    <li><Link to="/power" className="hover:text-white cursor-pointer">Power</Link></li>
+                    <li><Link to="/speakers" className="hover:text-white cursor-pointer">Speakers</Link></li>
+                    <li><Link to="/pens" className="hover:text-white cursor-pointer">Pens & Writing</Link></li>
+                    <li><Link to="/notebooks" className="hover:text-white cursor-pointer">Notebooks</Link></li>
+                    <li><Link to="/tea-towels" className="hover:text-white cursor-pointer">Tea Towels</Link></li>
                   </ul>
                 </div>
               </div>
@@ -964,6 +964,10 @@ const PromoGiftsApp = () => {
             <div>
               <h4 className="font-bold text-lg mb-6">Our Services</h4>
               <div className="space-y-4">
+                {/* TEMP: hidden pre-launch — 24hr Express service is pending
+                    Laltex PriorityService activation (Dave validating with
+                    Laltex). Uncomment the block below to restore. */}
+                {/*
                 <div className="flex items-start space-x-3">
                   <div className="w-6 h-6 bg-red-500 rounded-full flex items-center justify-center text-xs font-bold mt-0.5">24</div>
                   <div>
@@ -971,7 +975,8 @@ const PromoGiftsApp = () => {
                     <p className="text-sm text-gray-300">Fast turnaround for urgent orders</p>
                   </div>
                 </div>
-                
+                */}
+
                 <div className="flex items-start space-x-3">
                   <div className="w-6 h-6 bg-blue-600 rounded-sm flex items-center justify-center text-xs font-bold mt-0.5">UK</div>
                   <div>
