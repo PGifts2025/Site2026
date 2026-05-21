@@ -160,6 +160,37 @@ async function fetchCatalogFromPrices({ url, key }) {
 
 // --- All-in price calculation (mirrors LaltexProductView.jsx) --------------
 
+// Print "method" names / classes that are NOT real decoration — optional
+// packaging / accessory line items that live in print_details alongside genuine
+// print methods. They must not be picked as the "cheapest print" anchor, or the
+// all-in price is distorted (a backing-card line replaces the real decoration).
+//
+// NOTE on the brief's list: 'sleeve' was dropped — "Left/Right Sleeve" is a
+// legitimate apparel print position (CLAUDE.md §53.2). Matching is word-boundary
+// (not raw substring) so e.g. 'tag' does not match inside "vintage".
+const NON_DECORATION_KEYWORDS = [
+  'backing card', 'backing', 'packaging', 'gift box', 'carton', 'insert',
+  'wrapping', 'tag', 'label only', 'no print', 'plain', 'unprinted',
+];
+
+// Words that positively identify a real decoration. Used to rescue £0 lines:
+// a £0 price means "decoration included in the product price" (common, e.g.
+// ZP1026 "Both Sides Full Colour" @ £0), which is valid and selectable — but
+// only when the line clearly IS a decoration. A £0 line with no decoration
+// wording is treated as suspicious and skipped. (Expanded beyond the brief's
+// list so "Full Colour", "Spot", "Pad" etc. register as decoration.)
+const DECORATION_KEYWORDS = [
+  'print', 'printed', 'embroid', 'engrav', 'doming', 'dome', 'transfer',
+  'screen', 'laser', 'etch', 'deboss', 'emboss', 'foil', 'colour', 'color',
+  'spot', 'pad', 'vinyl', 'sublimation', 'uv', 'digital', 'litho', 'dtf',
+];
+
+const toWordRe = (kw) =>
+  new RegExp('\\b' + kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'i');
+const NON_DECORATION_RE = NON_DECORATION_KEYWORDS.map(toWordRe);
+const DECORATION_RE = DECORATION_KEYWORDS.map(toWordRe);
+const matchesAny = (blob, regexes) => regexes.some((re) => re.test(blob));
+
 function productTierForQty(pricing, qty) {
   if (!Array.isArray(pricing)) return null;
   for (const t of pricing) {
@@ -170,14 +201,34 @@ function productTierForQty(pricing, qty) {
   return null;
 }
 
-// Cheapest print across all positions/methods at this qty, for 1 colour /
-// 1 position. The per-unit cost is the tier's sell_price (margined, setup
-// amortisation already baked in — CLAUDE.md §46; do NOT add setup_charge).
+// Cheapest REAL decoration across all positions/methods at this qty, for
+// 1 colour / 1 position. The per-unit cost is the tier's sell_price (margined,
+// setup amortisation already baked in — CLAUDE.md §46; do NOT add setup_charge).
 // all_in_unit_price / price are no-margin legacy fallbacks for un-recomputed rows.
+//
+// Non-decoration line items (backing cards, packaging, ...) are excluded so they
+// can't masquerade as the cheapest print. A £0 price is accepted ONLY for a line
+// that clearly is a decoration (= "included free"), otherwise it's skipped as
+// suspicious.
+//
+// Returns { best: {unit, method, size} | null, wasFiltered }, where wasFiltered
+// is true if any print_details entry was excluded by the non-decoration list.
 function cheapestPrintAtQty(printDetails, qty) {
-  if (!Array.isArray(printDetails) || printDetails.length === 0) return null;
   let best = null;
+  let wasFiltered = false;
+  if (!Array.isArray(printDetails) || printDetails.length === 0) {
+    return { best, wasFiltered };
+  }
   for (const pd of printDetails) {
+    const nameBlob = [
+      pd.print_type, pd.PrintType, pd.print_class, pd.PrintClass,
+      pd.print_position, pd.PrintPosition,
+    ].filter(Boolean).join(' ');
+    if (matchesAny(nameBlob, NON_DECORATION_RE)) {
+      wasFiltered = true;
+      continue; // packaging / accessory line — not a real decoration
+    }
+    const isDecoration = matchesAny(nameBlob, DECORATION_RE);
     const tiers = pd.print_price || pd.PrintPrice || [];
     for (const t of tiers) {
       if (t.is_poa) continue;
@@ -192,7 +243,13 @@ function cheapestPrintAtQty(printDetails, qty) {
         t.sell_price != null ? Number(t.sell_price)
         : t.all_in_unit_price != null ? Number(t.all_in_unit_price)
         : t.price != null ? Number(t.price) : null;
-      if (unit == null || !Number.isFinite(unit) || unit <= 0) continue;
+      if (unit == null || !Number.isFinite(unit) || unit < 0) continue;
+      // £0 = decoration included in product price — valid only if the line is
+      // clearly a decoration; otherwise a suspicious £0 non-decoration line.
+      if (unit === 0 && !isDecoration) {
+        wasFiltered = true;
+        continue;
+      }
       if (best == null || unit < best.unit) {
         best = {
           unit,
@@ -202,7 +259,7 @@ function cheapestPrintAtQty(printDetails, qty) {
       }
     }
   }
-  return best;
+  return { best, wasFiltered };
 }
 
 /**
@@ -215,20 +272,22 @@ function cheapestPrintAtQty(printDetails, qty) {
  */
 export function computeAllInPrice(row, qty) {
   const ptier = productTierForQty(row.product_pricing, qty);
-  if (!ptier || ptier.is_poa) return { allIn: null, basis: 'missing:product-tier' };
+  if (!ptier || ptier.is_poa) return { allIn: null, wasFiltered: false, basis: 'missing:product-tier' };
   const productOnly =
     ptier.sell_price != null ? Number(ptier.sell_price)
     : ptier.price != null ? Number(ptier.price) : null;
-  if (productOnly == null || !(productOnly > 0)) return { allIn: null, basis: 'missing:product-price' };
+  if (productOnly == null || !(productOnly > 0)) {
+    return { allIn: null, productOnly, wasFiltered: false, basis: 'missing:product-price' };
+  }
 
-  const print = cheapestPrintAtQty(row.print_details, qty);
-  if (!print) return { allIn: null, productOnly, basis: 'missing:print' };
+  const { best: print, wasFiltered } = cheapestPrintAtQty(row.print_details, qty);
+  if (!print) return { allIn: null, productOnly, wasFiltered, basis: 'missing:print' };
 
   const delPU = deliveryPerUnit(row.shipping_charges, row.carton_qty, qty, DELIVERY_SERVICE);
   if (!Number.isFinite(delPU) || delPU <= 0) {
     return {
       allIn: null, productOnly, printMethod: print.method, printSize: print.size,
-      printPerUnit: print.unit, basis: 'missing:delivery',
+      printPerUnit: print.unit, wasFiltered, basis: 'missing:delivery',
     };
   }
   const marginPct = scheduleMarginForTier(qty, row.margin_pct_override ?? null);
@@ -242,6 +301,7 @@ export function computeAllInPrice(row, qty) {
     printSize: print.size,
     printPerUnit: print.unit,
     deliveryPerUnit: deliveryUnitWithMargin,
+    wasFiltered,
     basis: 'all-in',
   };
 }
@@ -253,6 +313,7 @@ const BASE_HEADERS = [
   'pgifts_name',
   'pgifts_print_method',
   'pgifts_print_size',
+  'pgifts_print_was_filtered',
   'match_confidence',
   'tm_code',
   'tm_name',
@@ -326,6 +387,7 @@ function main() {
           pgifts_name: pg.name,
           pgifts_print_method: anchor.printMethod || '',
           pgifts_print_size: anchor.printSize || '',
+          pgifts_print_was_filtered: anchor.wasFiltered ? 'true' : 'false',
           match_confidence: Math.round(best.confidence * 100),
           tm_code: tm.tmCode,
           tm_name: tm.tmName,
