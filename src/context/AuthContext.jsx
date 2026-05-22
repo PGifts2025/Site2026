@@ -87,6 +87,12 @@ export const AuthProvider = ({ children }) => {
         email,
         password,
         options: {
+          // Land the verification link on our callback page rather than the
+          // bare Site URL. Implicit flow: the Supabase client parses the
+          // #access_token hash there, AuthCallback confirms and forwards to
+          // /account. window.location.origin keeps this correct on localhost,
+          // Vercel previews, and production. See audit-email-verification-flow.md.
+          emailRedirectTo: `${window.location.origin}/auth/callback`,
           data: {
             first_name: firstName,
             last_name: lastName
