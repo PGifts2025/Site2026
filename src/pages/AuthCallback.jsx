@@ -1,66 +1,76 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Loader, CheckCircle, AlertCircle, Mail } from 'lucide-react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Loader, CheckCircle, AlertCircle, Mail, ShieldCheck } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../services/supabaseService';
 
-// Landing page for the Supabase signup verification email.
+// Click-to-verify email confirmation landing.
 //
-// Flow is IMPLICIT with detectSessionInUrl:true (see
-// audit-email-verification-flow.md), so the Supabase client auto-parses the
-// `#access_token=...&type=signup` hash on page load and establishes the
-// session — no exchangeCodeForSession needed. The session surfaces through
-// AuthContext's onAuthStateChange listener, so we just watch user/loading
-// here, confirm success, and forward to /account. Implicit needs no PKCE
-// verifier in localStorage, so the link still works across devices/browsers.
+// WHY A BUTTON, NOT AUTO-VERIFY:
+// Email security scanners (Outlook / Microsoft Defender, Mimecast, Proofpoint,
+// and many corporate gateways) PRE-FETCH every URL in an incoming email to
+// inspect it. Supabase verification tokens are SINGLE-USE, so an
+// auto-verify-on-load page has its token consumed by the scanner before the
+// human ever clicks — the real click then hits a spent token. (This is exactly
+// why the previous auto-verify flow failed for Outlook/Hotmail users.)
 //
-// TODO(auth-callback): magic-link (type=magiclink) and email-change
-// (type=email_change) also arrive as implicit hashes and could be served here
-// by branching on the URL `type`. They have no callers today, so no
-// discrimination logic is added yet. Password recovery deliberately stays on
-// its own /reset-password route (it needs a password-set form, not an
-// auto-redirect) — do not merge it here.
+// Defense: do NOT verify on page load. The email link carries `token_hash` +
+// `type` as QUERY params (via the {{ .TokenHash }} email template). A token is
+// NOT consumed by appearing in a URL — only by `verifyOtp` being called. We
+// render a button and call verifyOtp only on the click, a gesture scanners do
+// not perform. The token survives the pre-fetch.
+//
+// DO NOT call verifyOtp automatically (useEffect, hover, timer, etc.) — the
+// button click is the entire defense. Auto-calling it anywhere reopens the bug.
+//
+// `type` is read from the URL (the template sends `email`); per Supabase docs
+// the token_hash flow uses type 'email' ('signup' is deprecated).
+//
+// TODO(click-to-verify recovery): password reset (/reset-password) shares this
+// scanner vulnerability and should adopt the same click-to-verify pattern in a
+// follow-up PR. Out of scope here.
 export default function AuthCallback() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { user, loading } = useAuth();
 
-  // Capture whether we arrived with verification tokens BEFORE the client
-  // strips the hash (detectSessionInUrl clears it after parsing). Read once at
-  // first render so the signal survives the parse.
-  const [hadAuthHash] = useState(
-    () => typeof window !== 'undefined' && window.location.hash.includes('access_token'),
-  );
-  const [status, setStatus] = useState('verifying'); // 'verifying' | 'success' | 'error'
+  const tokenHash = searchParams.get('token_hash');
+  const type = searchParams.get('type') || 'email';
+  const next = searchParams.get('next') || '/account';
+
+  // 'awaiting' (button shown) | 'verifying' | 'success' | 'error'
+  const [status, setStatus] = useState('awaiting');
 
   // Resend-verification mini-form (error state only).
   const [resendEmail, setResendEmail] = useState('');
   const [resendState, setResendState] = useState('idle'); // 'idle' | 'sending' | 'sent'
 
+  // Already-signed-in with no token in the URL (e.g. link clicked in a tab
+  // that's already authed, or a stray visit) → go straight to the account.
   useEffect(() => {
-    // Wait for AuthContext to finish resolving the URL hash / initial session.
-    if (loading) return;
-
-    if (user) {
-      if (hadAuthHash) {
-        // Genuine verification landing — show confirmation, then forward.
-        setStatus('success');
-        const t = setTimeout(() => navigate('/account', { replace: true }), 1800);
-        return () => clearTimeout(t);
-      }
-      // Already signed in with no verification tokens (e.g. the link was
-      // clicked in a tab that's already authed) — skip the success screen and
-      // go straight to the account, no "verifying…" flash.
-      navigate('/account', { replace: true });
-      return;
+    if (!tokenHash && !loading && user) {
+      navigate(next, { replace: true });
     }
+  }, [tokenHash, loading, user, next, navigate]);
 
-    // Not loading, no user. If a token hash was present the client may still
-    // be racing to establish the session — a landing `user` change re-runs
-    // this effect and cancels the timer. Otherwise it's a direct visit, or an
-    // expired / already-used link.
-    const t = setTimeout(() => setStatus('error'), hadAuthHash ? 2500 : 1200);
-    return () => clearTimeout(t);
-  }, [user, loading, hadAuthHash, navigate]);
+  const handleVerify = async () => {
+    if (!tokenHash || status === 'verifying') return;
+    setStatus('verifying');
+    try {
+      // The ONLY place the token is consumed — a real user gesture.
+      const { error } = await supabase.auth.verifyOtp({ token_hash: tokenHash, type });
+      if (error) {
+        setStatus('error');
+        return;
+      }
+      // verifyOtp sets the session (persistSession:true) and fires SIGNED_IN
+      // through AuthContext's listener. Show success briefly, then forward.
+      setStatus('success');
+      setTimeout(() => navigate(next, { replace: true }), 1500);
+    } catch {
+      setStatus('error');
+    }
+  };
 
   const handleResend = async (e) => {
     e.preventDefault();
@@ -73,40 +83,98 @@ export default function AuthCallback() {
         options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
       });
     } catch {
-      // Swallow — we show the same neutral message regardless so we don't leak
-      // whether an address is registered.
+      // Swallow — same neutral message regardless, so we don't leak whether an
+      // address is registered.
     } finally {
       setResendState('sent');
     }
   };
 
+  const Card = ({ children }) => (
+    <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8 max-w-md w-full text-center">
+        {children}
+      </div>
+    </div>
+  );
+
+  // No token in the URL: either we're about to redirect a signed-in user, or
+  // it's a direct/no-token visit. Show a neutral spinner while auth resolves,
+  // then the error card. (No verifyOtp here — there is nothing to verify.)
+  if (!tokenHash) {
+    if (loading || user) {
+      return (
+        <Card>
+          <Loader className="h-12 w-12 text-blue-600 animate-spin mx-auto mb-4" />
+          <h1 className="text-xl font-bold text-gray-900 mb-2">One moment…</h1>
+        </Card>
+      );
+    }
+    return <ErrorCard
+      resendEmail={resendEmail}
+      setResendEmail={setResendEmail}
+      resendState={resendState}
+      onResend={handleResend}
+      onSignIn={() => navigate('/')}
+    />;
+  }
+
+  if (status === 'awaiting') {
+    return (
+      <Card>
+        <ShieldCheck className="h-12 w-12 text-blue-600 mx-auto mb-4" />
+        <h1 className="text-xl font-bold text-gray-900 mb-2">One more step</h1>
+        <p className="text-sm text-gray-600 mb-6">
+          Click below to verify your email and sign in to your account.
+        </p>
+        <button
+          onClick={handleVerify}
+          className="w-full px-6 py-3 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 transition-colors"
+        >
+          Verify and sign in
+        </button>
+        <p className="text-xs text-gray-400 mt-3">
+          This extra click protects your account against automated link scanners.
+        </p>
+      </Card>
+    );
+  }
+
   if (status === 'verifying') {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8 max-w-md w-full text-center">
-          <Loader className="h-12 w-12 text-blue-600 animate-spin mx-auto mb-4" />
-          <h1 className="text-xl font-bold text-gray-900 mb-2">Verifying your email…</h1>
-          <p className="text-sm text-gray-600">This will only take a moment.</p>
-        </div>
-      </div>
+      <Card>
+        <Loader className="h-12 w-12 text-blue-600 animate-spin mx-auto mb-4" />
+        <h1 className="text-xl font-bold text-gray-900 mb-2">Verifying your email…</h1>
+        <p className="text-sm text-gray-600">This will only take a moment.</p>
+      </Card>
     );
   }
 
   if (status === 'success') {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8 max-w-md w-full text-center">
-          <CheckCircle className="h-12 w-12 text-green-600 mx-auto mb-4" />
-          <h1 className="text-xl font-bold text-gray-900 mb-2">Email verified</h1>
-          <p className="text-sm text-gray-600">
-            You&apos;re signed in. Taking you to your account…
-          </p>
-        </div>
-      </div>
+      <Card>
+        <CheckCircle className="h-12 w-12 text-green-600 mx-auto mb-4" />
+        <h1 className="text-xl font-bold text-gray-900 mb-2">Email verified</h1>
+        <p className="text-sm text-gray-600">
+          You&apos;re signed in. Taking you to your account…
+        </p>
+      </Card>
     );
   }
 
-  // error
+  // status === 'error'
+  return <ErrorCard
+    resendEmail={resendEmail}
+    setResendEmail={setResendEmail}
+    resendState={resendState}
+    onResend={handleResend}
+    onSignIn={() => navigate('/')}
+  />;
+}
+
+// Error card (shared by the no-token and failed-verify paths). Carries over the
+// PR #59 "couldn't verify" UI with the sign-in + resend-verification actions.
+function ErrorCard({ resendEmail, setResendEmail, resendState, onResend, onSignIn }) {
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8 max-w-md w-full text-center">
@@ -118,7 +186,7 @@ export default function AuthCallback() {
         </p>
 
         <button
-          onClick={() => navigate('/')}
+          onClick={onSignIn}
           className="w-full mb-4 px-6 py-3 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 transition-colors"
         >
           Go to sign in
@@ -130,7 +198,7 @@ export default function AuthCallback() {
             If that address needs verifying, a new link is on its way.
           </p>
         ) : (
-          <form onSubmit={handleResend} className="space-y-2 text-left">
+          <form onSubmit={onResend} className="space-y-2 text-left">
             <label className="block text-sm font-medium text-gray-700">Resend verification</label>
             <div className="relative">
               <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
