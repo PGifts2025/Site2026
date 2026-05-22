@@ -64,24 +64,8 @@ async function getSupabaseAccessToken() {
   }
 }
 
-async function fetchProfileFlag(userId) {
-  // RLS lets the user read their own profile row; if no row exists yet
-  // the flag is treated as false (the default).
-  try {
-    const { data } = await supabase
-      .from('profiles')
-      .select('ai_chat_enabled')
-      .eq('id', userId)
-      .maybeSingle();
-    return Boolean(data?.ai_chat_enabled);
-  } catch {
-    return false;
-  }
-}
-
 export default function AIChatWidget() {
   const { user, loading } = useAuth();
-  const [profileEnabled, setProfileEnabled] = useState(false);
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState([]); // [{ role, content, tool_calls? }]
   const [input, setInput] = useState('');
@@ -126,14 +110,6 @@ export default function AIChatWidget() {
     return () => window.removeEventListener('pgifts:open-chat', handler);
   }, []);
 
-  // Auth flag lookup whenever user changes.
-  useEffect(() => {
-    let cancelled = false;
-    if (!user) { setProfileEnabled(false); return; }
-    fetchProfileFlag(user.id).then((on) => { if (!cancelled) setProfileEnabled(on); });
-    return () => { cancelled = true; };
-  }, [user]);
-
   // Auto-scroll to bottom when:
   //   (a) a new message arrives, OR
   //   (b) the panel re-opens with preserved messages. The conditional
@@ -147,9 +123,15 @@ export default function AIChatWidget() {
     }
   }, [open, messages]);
 
-  // Visibility gate.
+  // Visibility gate. Signed-in customers always get AVA, on every route
+  // (the widget is mounted globally in App.jsx, so it persists across
+  // navigation). Anonymous visitors stay behind the env flag (the documented
+  // soft-launch gate, CLAUDE.md §32.3) until public launch. The previous
+  // per-profile `ai_chat_enabled` gate for signed-in users was the tester-only
+  // soft-launch limiter and is intentionally retired now that AVA is open to
+  // all logged-in customers.
   if (loading) return null;
-  const visible = user ? profileEnabled : PUBLIC_ENABLED;
+  const visible = user ? true : PUBLIC_ENABLED;
   if (!visible) return null;
 
   // Minimise: collapse the panel, preserve everything. Re-opening
@@ -404,7 +386,10 @@ export default function AIChatWidget() {
             {quotaExhausted && (
               <div style={signInPromptStyle}>
                 You've used your free searches today.{' '}
-                <a href="/account" style={{ color: '#1d4ed8' }}>Sign in</a> for unlimited.
+                {/* These users are anonymous (no account yet), so "Create account"
+                    is the accurate CTA. ?auth=signup opens the AuthModal on the
+                    Create Account tab via CustomerGuard. */}
+                <a href="/account?auth=signup" style={{ color: '#1d4ed8' }}>Create account</a> for unlimited.
               </div>
             )}
             <div style={inputRowStyle}>

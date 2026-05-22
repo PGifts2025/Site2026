@@ -5,10 +5,13 @@ import { useAuth } from '../../context/AuthContext';
 // `onSuccess` is invoked with the signed-in user object on a successful sign-in
 // (not sign-up — Supabase email confirmation takes the user out of the app). Used
 // by flows that must auto-continue after auth, e.g. Designer's Buy Now.
-const AuthModal = ({ isOpen, onClose, onSuccess }) => {
+const AuthModal = ({ isOpen, onClose, onSuccess, initialMode = 'signin' }) => {
   const { signIn, signUp, resetPassword } = useAuth();
 
-  const [mode, setMode] = useState('signin'); // 'signin' or 'signup'
+  // initialMode seeds the starting tab; 'signup' lets an affordance (e.g. AVA's
+  // "Create account" CTA via /account?auth=signup) open straight on the Create
+  // Account form. User tab clicks still switch freely via switchMode.
+  const [mode, setMode] = useState(initialMode === 'signup' ? 'signup' : 'signin'); // 'signin' or 'signup'
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);

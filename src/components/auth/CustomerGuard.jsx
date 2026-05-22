@@ -1,5 +1,5 @@
 import React from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Loader } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import AuthModal from './AuthModal';
@@ -11,6 +11,7 @@ import AuthModal from './AuthModal';
 const CustomerGuard = ({ children }) => {
   const { user, loading, isAuthenticated } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
 
   if (loading) {
     return (
@@ -31,7 +32,11 @@ const CustomerGuard = ({ children }) => {
     // the user home; on successful sign-in `user` becomes truthy, this guard
     // re-renders, and `children` render below.
     return (
-      <AuthModal isOpen onClose={() => navigate('/')} />
+      <AuthModal
+        isOpen
+        onClose={() => navigate('/')}
+        initialMode={searchParams.get('auth') === 'signup' ? 'signup' : 'signin'}
+      />
     );
   }
 
