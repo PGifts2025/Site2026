@@ -51,6 +51,7 @@ import { useAuth } from '../context/AuthContext';
 import { deliveryPerUnit } from '../../scripts/lib/laltex-delivery.js';
 import { scheduleMarginForTier } from '../../scripts/lib/laltex-margin.js';
 import { isBucketADesignable } from '../utils/laltexPositionHeuristics';
+import AboveCeilingNotice from './AboveCeilingNotice';
 
 // ---------------------------------------------------------------------------
 // Pricing helpers
@@ -335,6 +336,26 @@ const LaltexProductView = ({ product }) => {
     ? null
     : Number((basePrice + printPerUnitTotal + deliveryUnitWithMargin).toFixed(2));
   const totalPrice = unitPrice == null ? null : Number((unitPrice * quantity).toFixed(2));
+
+  // Above-ceiling "call us" notice (audit-pricing-tier-ceiling.md). The top
+  // tier is the one with an open-ended max_qty (parser marks it null); there
+  // should be exactly one. Fall back to the highest min_qty and warn if not.
+  const topTierMinQty = useMemo(() => {
+    const tiers = product?.pricingTiers || [];
+    if (tiers.length === 0) return null;
+    const openEnded = tiers.filter((t) => t.maxQty == null);
+    if (openEnded.length === 1) return openEnded[0].minQty;
+    console.warn(
+      `[AboveCeilingNotice] ${product?.code}: expected exactly one open-ended (maxQty==null) tier, found ${openEnded.length}; falling back to max min_qty.`,
+    );
+    return Math.max(...tiers.map((t) => t.minQty ?? 0));
+  }, [product?.code, product?.pricingTiers]);
+  // tiers.length > 1 guard excludes single-tier products (flat by design);
+  // strict > so the notice never shows at exactly the top tier qty.
+  const isAboveCeiling =
+    (product?.pricingTiers?.length || 0) > 1 &&
+    topTierMinQty != null &&
+    quantity > topTierMinQty;
 
   const isOrderValid = () => {
     if (quantity < minQty) return false;
@@ -1019,6 +1040,9 @@ const LaltexProductView = ({ product }) => {
                             </div>
                           )}
                           */}
+                          {isAboveCeiling && (
+                            <AboveCeilingNotice topTierQty={topTierMinQty} />
+                          )}
                         </div>
                       </>
                     )}
