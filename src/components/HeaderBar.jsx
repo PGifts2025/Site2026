@@ -8,7 +8,6 @@ import { supabase } from '../services/supabaseService';
 import AuthModal from './auth/AuthModal';
 
 const categories = [
-  { name: 'Design Tool', path: '/designer' },
   { name: 'Cups', path: '/cups' },
   { name: 'Water Bottles', path: '/water-bottles' },
   { name: 'Bags', path: '/bags' },
