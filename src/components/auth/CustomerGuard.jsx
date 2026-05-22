@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Navigate } from 'react-router-dom';
+import React from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Loader } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import AuthModal from './AuthModal';
@@ -10,7 +10,7 @@ import AuthModal from './AuthModal';
  */
 const CustomerGuard = ({ children }) => {
   const { user, loading, isAuthenticated } = useAuth();
-  const [showAuthModal, setShowAuthModal] = useState(false);
+  const navigate = useNavigate();
 
   if (loading) {
     return (
@@ -24,12 +24,14 @@ const CustomerGuard = ({ children }) => {
   }
 
   if (!isAuthenticated || !user) {
-    // Show auth modal or redirect to home
+    // Render the auth modal in place. This used to also render a sibling
+    // <Navigate to="/">, which unmounted the guard subtree (and the modal)
+    // on commit — the modal flashed for ~one frame then vanished (see
+    // audit-ava-signup-popup-bug.md). Render the modal ONLY: on dismiss send
+    // the user home; on successful sign-in `user` becomes truthy, this guard
+    // re-renders, and `children` render below.
     return (
-      <>
-        <Navigate to="/" replace state={{ message: 'Please sign in to access your account' }} />
-        <AuthModal isOpen={true} onClose={() => setShowAuthModal(false)} />
-      </>
+      <AuthModal isOpen onClose={() => navigate('/')} />
     );
   }
 
