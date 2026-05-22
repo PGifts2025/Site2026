@@ -18,6 +18,7 @@ import ProductManager from './pages/ProductManager';
 import AdminSeedData from './pages/AdminSeedData';
 import OrderConfirmation from './pages/OrderConfirmation';
 import ResetPassword from './pages/ResetPassword';
+import AuthCallback from './pages/AuthCallback';
 import HeaderBar from './components/HeaderBar';
 import ScrollToTop from './components/ScrollToTop';
 import { AuthProvider } from './context/AuthContext';
@@ -151,6 +152,11 @@ function App() {
             {/* Password reset — public, outside any auth guard. A user with
                 a recovery session is by definition not yet signed in normally. */}
             <Route path="/reset-password" element={<ResetPassword />} />
+
+            {/* Email verification landing — public, outside any guard. Implicit
+                flow: the client parses the #access_token hash, AuthCallback
+                confirms and forwards to /account. See audit-email-verification-flow.md. */}
+            <Route path="/auth/callback" element={<AuthCallback />} />
           </Routes>
           <Cart />
           <AIChatWidget />
