@@ -5394,3 +5394,78 @@ Current override count: zero.
 - **After a recompute, the product cache must be cleared** — redeploy Vercel
   (the module-level cache from PR #44 holds prices up to ~5 min and can't be
   reached from a server-side script).
+
+---
+
+## 58. BRANCH HYGIENE AND POST-MERGE VERIFICATION
+
+Two lessons from the PR #60 incident, where signup verification shipped broken
+to production even though the PR showed "Merged" and its local tests passed.
+Both close the gap between "PR merged" and "code actually live on `main` and
+deployed."
+
+### 58.1 Branch base rule — branch off `main`, never stack
+
+Any PR that must reach `main` MUST be branched off `main`. Do NOT stack a fix
+branch on another open feature branch for "review clarity." GitHub's
+**squash-merge of the parent strands the child**: the parent's squash commit
+captures only the parent's own changes, the child's commits stay on the
+now-defunct parent branch, and the child PR can even read as "Merged" (merged
+*into the parent branch*, not `main`) without a single line reaching `main`.
+
+That is exactly how PR #60's click-to-verify `AuthCallback.jsx` was lost: it
+was opened with `--base feat/email-verification-callback` (#59's branch),
+merged into that branch, and vanished when #59 was squash-merged to `main`.
+Production kept running #59's incompatible version. See
+[`audit-authcallback-live-failure.md`](../audit-authcallback-live-failure.md).
+
+**If a stacked PR is genuinely unavoidable**, it is NOT done when GitHub says
+"Merged." After the parent merges, confirm the child's code reached `main`:
+
+```
+git fetch origin && git checkout main && git pull --ff-only
+git grep -n "<distinctive_symbol_from_child_PR>" -- <file_path>
+```
+
+If the grep returns nothing, the child code is NOT on `main` and must be
+re-applied on a fresh `main`-based branch. Recover stranded file contents
+cleanly with `git show <merge_sha>:<path> > <path>` — do NOT `git cherry-pick`
+a merge commit (its parent topology can drag in unintended changes).
+
+### 58.2 Post-merge production verification rule — "merged" ≠ "live"
+
+Local pre-merge tests passing, and a PR being merged, do NOT prove the change
+is running in production. For any change that fixes a user-visible bug or ships
+new behaviour, the verification matrix MUST include at least one check run
+**after the Vercel deploy completes**, confirming the change is observable on
+`https://promo-gifts-co.uk`. The failure mode this prevents: local dev runs the
+new code while production runs something else (a stranded branch, an
+unfinished deploy, a cache).
+
+Minimum post-merge check:
+- `git grep` a distinctive symbol on `main` to confirm the code landed.
+- One deterministic browser check on production (a URL that should now render
+  the new UI / behaviour).
+
+This complements §34 (browser-rendered features need human visual
+verification) and §52 (migration-first deploy): those cover *what* to verify;
+this covers *where* (production, post-deploy) and *when* (after merge, not only
+in dev).
+
+### 58.3 Invariants — DO NOT BREAK
+
+- **A fix that must reach `main` is branched off `main`.** Stacking is the
+  exception, not the default, and carries a mandatory post-merge `git grep`
+  confirmation on `main`.
+- **"Merged" is not "done."** Done = code confirmed on `main` AND observed
+  live in production, for any user-visible change.
+- **Recover stranded file contents with `git show <sha>:<path> > <path>`**, not
+  a `git cherry-pick` of a merge commit.
+
+### 58.4 Origin
+
+Codified after PR #60 (May 2026): the click-to-verify `AuthCallback` was merged
+into a stacked base branch, lost in #59's squash-merge, and shipped broken to
+production because no post-merge production check was run. Diagnosed in
+[`audit-authcallback-live-failure.md`](../audit-authcallback-live-failure.md),
+recovered by PR #63.
