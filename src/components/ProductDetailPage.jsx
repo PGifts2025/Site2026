@@ -12,6 +12,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import AboveCeilingNotice from './AboveCeilingNotice';
 import {
   Heart,
   Share2,
@@ -873,6 +874,18 @@ const ProductDetailPage = ({ productSlug, identifier }) => {
     : quantity;
   const totalPrice = currentPrice ? currentPrice.total.toFixed(2) : (currentTier.price_per_unit * totalQuantity).toFixed(2);
   const isCustomizable = product ? checkProductCustomizable(product) : false;
+
+  // Above-ceiling "call us" notice (audit-pricing-tier-ceiling.md). Ceiling =
+  // highest min_quantity across the product's tiers. tiers.length > 1 guard
+  // future-proofs against single-tier products; strict > so the notice never
+  // shows at exactly the top tier qty.
+  const topTierMinQty = (pricingTiers || []).length > 0
+    ? Math.max(...pricingTiers.map((t) => t.min_quantity))
+    : null;
+  const isAboveCeiling =
+    (pricingTiers || []).length > 1 &&
+    topTierMinQty != null &&
+    totalQuantity > topTierMinQty;
 
   // ==================== ADD TO QUOTE ====================
   const handleAddToQuote = async () => {
@@ -1775,6 +1788,9 @@ const ProductDetailPage = ({ productSlug, identifier }) => {
                           ? <p className="text-xs text-gray-500 mt-1 text-center">{parts.join(' + ')}</p>
                           : null;
                       })()}
+                      {isAboveCeiling && (
+                        <AboveCeilingNotice topTierQty={topTierMinQty} />
+                      )}
                     </div>
                   </div>
 
