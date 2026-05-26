@@ -4198,6 +4198,29 @@ const Designer = () => {
     await supabase.auth.signOut();
   };
 
+  // Returns the centre of the currently rendered print-area guide in
+  // canvas pixel coordinates, accounting for imageScale and template offset.
+  // Falls back to canvas centre when no guide is rendered. Returning a
+  // canvas-pixel point keeps spawn correct on both desktop and mobile, where
+  // raw print-area coords would land off-screen (template image is scaled
+  // and offset away from origin).
+  const getActivePrintAreaCentre = () => {
+    if (!canvas) return null;
+    const guide = canvas.getObjects().find(obj =>
+      obj.isPrintAreaGuide &&
+      typeof obj.name === 'string' &&
+      obj.name.startsWith('print-area-guide-')
+    );
+    if (guide && typeof guide.getCenterPoint === 'function') {
+      const c = guide.getCenterPoint();
+      return { x: c.x, y: c.y };
+    }
+    if (canvas.width && canvas.height) {
+      return { x: canvas.width / 2, y: canvas.height / 2 };
+    }
+    return null;
+  };
+
   const addText = () => {
     console.log('[Designer] addText called:', {
       hasCanvas: !!canvas,
@@ -4211,9 +4234,13 @@ const Designer = () => {
       return;
     }
 
+    const centre = getActivePrintAreaCentre();
+    const spawnLeft = centre ? centre.x : currentPrintArea.x + currentPrintArea.width / 2;
+    const spawnTop = centre ? centre.y : currentPrintArea.y + currentPrintArea.height / 2;
+
     const text = new fabric.IText('Your Text Here', {
-      left: currentPrintArea.x + currentPrintArea.width / 2,
-      top: currentPrintArea.y + currentPrintArea.height / 2,
+      left: spawnLeft,
+      top: spawnTop,
       fontFamily: textFont,
       fontSize: 24,
       fill: textColor,
@@ -4299,10 +4326,12 @@ const Designer = () => {
 
         img.scale(scale);
 
-        // Position in center of canvas
+        // Position at centre of the active print guide so the image lands
+        // inside the visible print area on both desktop and mobile.
+        const imgCentre = getActivePrintAreaCentre();
         img.set({
-          left: canvas.width / 2,
-          top: canvas.height / 2,
+          left: imgCentre ? imgCentre.x : canvas.width / 2,
+          top: imgCentre ? imgCentre.y : canvas.height / 2,
           originX: 'center',
           originY: 'center',
           selectable: true,
