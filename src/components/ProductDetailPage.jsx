@@ -274,6 +274,12 @@ const ProductDetailPage = ({ productSlug, identifier }) => {
 
     setLoading(true);
     setError(null);
+    // Defensive: clear any stale supplier-product state from a previous
+    // identifier before fetching. The loading-spinner cover above hides
+    // the stale state today, but resetting it makes the catalog-vs-supplier
+    // render branch (see line 1166) robust to any future change in load
+    // ordering.
+    setSupplierProduct(null);
 
     try {
       const resolved = await getProductByIdentifier(effectiveId);
