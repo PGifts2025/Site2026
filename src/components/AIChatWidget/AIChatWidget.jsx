@@ -23,6 +23,7 @@
 // conversation. Re-opening from close shows the empty hint.
 
 import { cloneElement, useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../services/supabaseService';
@@ -66,6 +67,7 @@ async function getSupabaseAccessToken() {
 
 export default function AIChatWidget() {
   const { user, loading } = useAuth();
+  const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState([]); // [{ role, content, tool_calls? }]
   const [input, setInput] = useState('');
@@ -318,7 +320,7 @@ export default function AIChatWidget() {
                 </div>
                 <div style={{ whiteSpace: 'pre-wrap' }}>
                   {!isUser
-                    ? linkifyProductCodes(m.content, m.products)
+                    ? linkifyProductCodes(m.content, m.products, navigate)
                     : m.content}
                 </div>
                 {Array.isArray(m.products) && m.products.length > 0 && (
@@ -435,6 +437,7 @@ export default function AIChatWidget() {
 // -----------------------------------------------------------------
 
 function ProductCard({ product }) {
+  const navigate = useNavigate();
   const href = `/products/${encodeURIComponent(product.supplier_product_code)}`;
   // MOQ-aware "From" tier: prefer the lowest tier whose min_qty meets the
   // product's commercial MOQ. Falls back to pricing[0] for products
@@ -460,11 +463,14 @@ function ProductCard({ product }) {
       href={href}
       style={cardStyle}
       onClick={(e) => {
-        // Soft-navigate via location to keep the widget mount alive.
-        // BrowserRouter picks up the change.
+        // useNavigate goes through React Router's history adapter directly.
+        // The widget mount is preserved either way because <AIChatWidget />
+        // lives outside <Routes> in App.jsx, so route changes don't unmount
+        // it. A previous synthetic-popstate workaround here failed on iPhone
+        // Safari when navigating between two URLs sharing the same route
+        // pattern; see audit-ava-product-stale-state-iphone.md.
         e.preventDefault();
-        window.history.pushState({}, '', href);
-        window.dispatchEvent(new PopStateEvent('popstate'));
+        navigate(href);
       }}
     >
       <div style={cardImgWrap}>
@@ -520,8 +526,14 @@ function ShowMoreCard({ remainingCount, onClick }) {
  *
  * We do a literal substring scan rather than regex so we don't
  * accidentally match unrelated alphanumeric strings.
+ *
+ * `navigate` is the React Router `useNavigate` callback, threaded
+ * down from the parent component because this is a plain function
+ * (cannot call hooks here). Going through useNavigate is required
+ * for iPhone Safari same-route param navigation to update the
+ * router location — see audit-ava-product-stale-state-iphone.md.
  */
-function linkifyProductCodes(text, products) {
+function linkifyProductCodes(text, products, navigate) {
   if (!text || !Array.isArray(products) || products.length === 0) return text;
   const codes = products
     .map((p) => p?.supplier_product_code)
@@ -545,8 +557,7 @@ function linkifyProductCodes(text, products) {
           href={href}
           onClick={(e) => {
             e.preventDefault();
-            window.history.pushState({}, '', href);
-            window.dispatchEvent(new PopStateEvent('popstate'));
+            navigate(href);
           }}
           style={inlineLinkStyle}
         >
