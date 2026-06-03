@@ -77,7 +77,15 @@ function validateBody(body) {
 // Verify the source product exists (and has an embedding) before
 // calling the RPC. The RPC returns 0 rows on "not found" OR on "no
 // neighbours passed filters" — we want to distinguish 404 from 200-empty.
-async function lookupSourceProduct({ supabaseUrl, serviceRoleKey, code }) {
+//
+// supplier_product_code is stored case-sensitively in Postgres (CLAUDE.md
+// §33): Laltex SKUs UPPERCASE, PGifts Direct slugs lowercase. PostgREST
+// `eq.` is case-sensitive. Callers (including the AI model) may send the
+// code in any case. Mirror the codebase idiom in getSupplierProductByCode
+// (productCatalogService.js): try as-given, fall back to uppercase. The
+// returned row carries the canonical stored code so the downstream RPC
+// (which uses case-sensitive `=` internally) receives the correct case.
+async function fetchSourceByExactCase({ supabaseUrl, serviceRoleKey, code }) {
   const url =
     `${supabaseUrl}/rest/v1/supplier_products` +
     `?supplier_product_code=eq.${encodeURIComponent(code)}` +
@@ -95,6 +103,14 @@ async function lookupSourceProduct({ supabaseUrl, serviceRoleKey, code }) {
   const rows = JSON.parse(text);
   if (!Array.isArray(rows) || rows.length === 0) return null;
   return rows[0];
+}
+
+async function lookupSourceProduct({ supabaseUrl, serviceRoleKey, code }) {
+  const asGiven = await fetchSourceByExactCase({ supabaseUrl, serviceRoleKey, code });
+  if (asGiven) return asGiven;
+  const upper = code.toUpperCase();
+  if (upper === code) return null;
+  return await fetchSourceByExactCase({ supabaseUrl, serviceRoleKey, code: upper });
 }
 
 export default async function handler(req, res) {
@@ -150,7 +166,11 @@ export default async function handler(req, res) {
     });
   }
 
-  // 2. Call RPC.
+  // 2. Call RPC. Pass the CANONICAL stored code from the resolved source
+  //    row, not the user-provided case. The RPC's internal WHERE clause
+  //    uses case-sensitive `=` (CLAUDE.md §33); passing the wrong case
+  //    here would silently return zero neighbours.
+  const canonicalCode = source.supplier_product_code;
   let rows;
   try {
     rows = await callRpc({
@@ -158,7 +178,7 @@ export default async function handler(req, res) {
       serviceRoleKey,
       fn: 'rpc_find_alternatives',
       body: {
-        p_supplier_product_code: v.supplier_product_code,
+        p_supplier_product_code: canonicalCode,
         p_exclude_out_of_stock: v.excludeOutOfStock,
         p_limit: v.limit,
       },
@@ -174,7 +194,7 @@ export default async function handler(req, res) {
 
   const tTotal = Date.now() - t0;
   console.log(
-    `[find-alternatives] code=${v.supplier_product_code} alts=${rows?.length ?? 0} total=${tTotal}ms`,
+    `[find-alternatives] code=${v.supplier_product_code} canonical=${canonicalCode} alts=${rows?.length ?? 0} total=${tTotal}ms`,
   );
 
   return res.status(200).json({
