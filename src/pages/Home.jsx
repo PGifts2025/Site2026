@@ -915,7 +915,7 @@ const PromoGiftsApp = () => {
                     <p className="font-medium">Lines open 8:30-17:00, Monday-Friday</p>
                     <div className="flex items-center space-x-2">
                       <Phone className="h-4 w-4 text-red-500" />
-                      <span>01844 600900</span>
+                      <span>01844 398333</span>
                     </div>
                     <div className="flex items-center space-x-2">
                       <Mail className="h-4 w-4 text-red-500" />

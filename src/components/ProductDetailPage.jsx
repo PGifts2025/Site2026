@@ -1834,8 +1834,8 @@ const ProductDetailPage = ({ productSlug, identifier }) => {
               {/* Contact — compact inline link */}
               <p className="mt-3 text-center text-xs text-gray-600">
                 Questions?{' '}
-                <a href="tel:01844600900" className="font-semibold text-blue-600 hover:text-blue-700">
-                  Call 01844 600900
+                <a href="tel:01844398333" className="font-semibold text-blue-600 hover:text-blue-700">
+                  Call 01844 398333
                 </a>
               </p>
             </div>

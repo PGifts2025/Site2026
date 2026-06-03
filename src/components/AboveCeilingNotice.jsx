@@ -17,7 +17,7 @@ import React from 'react';
  * @param {number} topTierQty - top tier's min quantity, shown in the message
  * @param {string} [phone]    - phone number; spaces kept in text, stripped in tel:
  */
-const AboveCeilingNotice = ({ topTierQty, phone = '01844 600900' }) => {
+const AboveCeilingNotice = ({ topTierQty, phone = '01844 398333' }) => {
   const telHref = `tel:${String(phone).replace(/\s+/g, '')}`;
   return (
     <div className="mt-3 p-3 rounded-lg border-l-4 border-amber-400 bg-amber-50 text-amber-900 text-sm leading-snug">

@@ -89,7 +89,7 @@ function HeaderBar() {
               <p className="text-xs md:text-sm text-gray-600 hidden sm:block">YOUR PROMOTIONAL PARTNER</p>
               <div className="items-center mt-1 hidden md:flex">
                 <Phone className="h-4 w-4 text-red-500 mr-2" />
-                <span className="text-sm font-semibold text-gray-700">01844 600900</span>
+                <span className="text-sm font-semibold text-gray-700">01844 398333</span>
               </div>
             </div>
           </Link>
