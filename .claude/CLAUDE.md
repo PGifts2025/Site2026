@@ -419,7 +419,7 @@ All three route to `/account/quotes` on success, with a flash banner `"Quote cre
 - Guests trying to export see the **shared AuthModal** (not just a toast) → deliberate auth gate, no watermark fallback (§8.4, §20)
 - Star rating / reviews section missing from product pages → removed 23-Apr-26; database columns `rating` and `review_count` intentionally retained for Home's Best Sellers carousel and future reuse (§24)
 - 🚚 Free Delivery / ⭐ 5-Star Rated badges missing from Configure & Quote card → deliberately removed 23-Apr-26 to tighten the card (§24)
-- "Questions? Call 01844 600900" as a plain one-liner instead of a dark card → deliberate compact treatment, not missing content
+- "Questions? Call 01844 398333" as a plain one-liner instead of a dark card → deliberate compact treatment, not missing content
 - Sign-up email confirmation does NOT auto-continue Buy Now / PNG / PDF flows — shows a toast on return instead. Same-session sign-in via AuthModal onSuccess DOES auto-continue (§20)
 - `catalog_products.review_count`, `hex_value` on `catalog_product_colors` = `CHAR` (not VARCHAR), `products`/`product_configurations`/`product_template_print_areas` empty tables → legacy quirks, see pre-Laltex investigation doc
 - Feature-bar icon strip at top of pages (Best Sellers / Express Delivery / Made in UK / Eco / Real-Time Proof / New Products) is gone — deliberately removed (§18, §4.5 handover)
@@ -890,7 +890,7 @@ Rolled out 23-Apr-26 after a pilot on `mr-bio` + `gamma-lite`. The former `PILOT
 - Customize card `p-4`, button `py-2` (was `p-6`, `py-3`)
 - Key Features block in main flow → **removed**; features render as a bulleted list inside the Product Details tab
 - Three full-width info boxes in Details tab (Premium / Eco / Free Delivery) → **collapsed** to a single horizontal icon strip (same three messages, compact)
-- "Need Help?" dark gradient card → **replaced** with a single-line `"Questions? Call 01844 600900"` link at the bottom of the pricing panel
+- "Need Help?" dark gradient card → **replaced** with a single-line `"Questions? Call 01844 398333"` link at the bottom of the pricing panel
 - Pricing panel header `p-4` (was `p-6`); Request Sample button `py-2 text-sm` (was `py-4`)
 - **Star rating + "(N reviews)"** display → **removed** from product title block. Database columns `catalog_products.rating` and `review_count` retained (still used by Home's Best Sellers carousel and for future reuse); only the visible render is gone
 - **🚚 Free Delivery / ⭐ 5-Star Rated** trust-badges strip inside Configure & Quote card → **removed**. The "Questions?" line at the bottom is preserved.

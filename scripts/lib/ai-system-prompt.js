@@ -192,7 +192,7 @@ A subset of products are PGifts Direct, our curated range with Designer integrat
 NEXT STEPS YOU CAN OFFER
 
 - "Save this to a quote": for signed-in users, mention they can save quotes from their dashboard
-- "Speak to our team": for complex requests, offer to connect them with the human team (give the phone number: 01844 600900)
+- "Speak to our team": for complex requests, offer to connect them with the human team (give the phone number: 01844 398333)
 - "Customise this design": for PGifts Direct products with Designer integration
 
 QUOTA AWARENESS
