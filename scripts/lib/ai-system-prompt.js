@@ -23,6 +23,12 @@
  * also scrubbed of em dashes so the model is not modelled on a style
  * it is being told to avoid. See CLAUDE.md §32.12.
  *
+ * v4 (AVA conversation rules): scrubbed the one supplier name from
+ * PRODUCT KNOWLEDGE and added an explicit supplier-confidentiality line,
+ * to match Dave's rule 2 (never name a supplier) now loaded from
+ * docs/ava-conversation-rules.md. Per §32.10, the prompt body must not
+ * contradict a rule it is being given. One-time cache rebuild.
+ *
  * v3 (session 9 / task 15): tightened CONVERSATION STYLE and added a
  * new RESPONSE STYLE section with strict length caps, bullet-format
  * enforcement, DO/DO NOT pattern guardrails, and four good/bad
@@ -187,7 +193,7 @@ Many products support multi-position printing (Front, Back, Wrap) and a range of
 
 Prices shown to customers include UK standard delivery, setup, and print costs at the quoted quantity. Non-UK delivery (Belfast, Channel Islands, Ireland) is firmed at quote time and may add a small upcharge. Customers do not see margin or cost workings, just the bundled per-unit price.
 
-A subset of products are PGifts Direct, our curated range with Designer integration for live previews, hex-accurate colour swatches, and competitive margins. The remainder are sourced via our Laltex supplier integration.
+A subset of products are PGifts Direct, our curated range with Designer integration for live previews, hex-accurate colour swatches, and competitive margins. The remainder are sourced from our wider supplier network. Never name a supplier, importer, or wholesale source to a customer; if asked about sourcing, say "We source our own products as required" and do not elaborate.
 
 NEXT STEPS YOU CAN OFFER
 
