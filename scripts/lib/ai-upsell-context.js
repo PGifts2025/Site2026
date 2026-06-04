@@ -30,15 +30,18 @@ const SELECT_COLS =
 
 function formatRows(rows) {
   if (!Array.isArray(rows) || rows.length === 0) return '';
+  // A field still holding the '<NEEDS DAVE INPUT ...>' placeholder is unreviewed
+  // copy and must never be presented to the model. Skip those lines.
+  const present = (v) => typeof v === 'string' && v.length > 0 && !/NEEDS DAVE INPUT/i.test(v);
   const lines = rows.map((r) => {
     const uses = Array.isArray(r.use_cases) ? r.use_cases.join(', ') : '';
     const triggers = Array.isArray(r.upsell_triggers) ? r.upsell_triggers.join(', ') : '';
     return [
       `- ${r.product_name} (${r.slug}) [${r.price_tier}]`,
       uses ? `  Use cases: ${uses}` : null,
-      r.differentiators ? `  Differentiators: ${r.differentiators}` : null,
+      present(r.differentiators) ? `  Differentiators: ${r.differentiators}` : null,
       triggers ? `  Suggest when the query relates to: ${triggers}` : null,
-      r.upsell_framing_example ? `  Framing: ${r.upsell_framing_example}` : null,
+      present(r.upsell_framing_example) ? `  Framing: ${r.upsell_framing_example}` : null,
     ].filter(Boolean).join('\n');
   });
   return [

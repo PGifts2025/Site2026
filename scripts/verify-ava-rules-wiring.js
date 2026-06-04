@@ -12,7 +12,7 @@
  */
 import { SYSTEM_PROMPT } from './lib/ai-system-prompt.js';
 import { loadConversationRules } from './lib/ai-conversation-rules.js';
-import { loadUpsellContext, _resetUpsellContextCache } from './lib/ai-upsell-context.js';
+import { loadUpsellContext, _resetUpsellContextCache, _formatRows } from './lib/ai-upsell-context.js';
 
 let failures = 0;
 // Collapse whitespace so checks are insensitive to markdown line-wrapping
@@ -66,6 +66,15 @@ check('upsell: header present', upsell.includes('PGIFTS DIRECT UPSELL CONTEXT'))
 check('upsell: Luggie framing present', upsell.includes('worth considering if the client wants a premium gift'));
 check('upsell: price tier rendered', upsell.includes('[premium]') && upsell.includes('[mid]'));
 check('upsell: triggers rendered', /Suggest when the query relates to: travel, adapter/.test(upsell));
+
+// 2a-ii. A '<NEEDS DAVE INPUT ...>' framing must be omitted, not shown
+const guarded = _formatRows([{
+  slug: 'hoodie', product_name: 'Hoodie', use_cases: ['team kit'], price_tier: 'mid',
+  differentiators: 'Pullover with front pouch pocket.',
+  upsell_triggers: ['hoodie'],
+  upsell_framing_example: '<NEEDS DAVE INPUT: genuine why-us hook for the hoodie.>',
+}]);
+check('upsell: NEEDS DAVE INPUT framing is omitted', guarded.includes('Hoodie (hoodie)') && !guarded.includes('Framing:') && !/NEEDS DAVE INPUT/.test(guarded));
 
 // 2b. Loader degrades gracefully on a missing table (HTTP 404)
 _resetUpsellContextCache();
