@@ -20,12 +20,16 @@
 -- a URL path. Matches how catalog_products keys products and is simpler to edit
 -- in Studio (Dave's rule, PR #72 review).
 --
--- Hoodie and Sweatshirt framings are intentionally '<NEEDS DAVE INPUT: ...>':
--- the source data carries no honest competitor differentiator for them (the
--- catalog_product_specifications rows are identical generic boilerplate across
--- all four clothing products and contradict the descriptions). Better an empty
--- flag than fabricated marketing copy. The loader skips any framing containing
--- that marker so it never reaches a customer.
+-- Hoodie and Sweatshirt framings anchor on UK-stocked Gildan blanks + the
+-- 5-day Express turnaround. IMPORTANT: those three facts come from Dave's
+-- direct confirmation (PR #72 review), NOT from catalog_products, which carries
+-- no Gildan model number (the hoodie/sweatshirt descriptions do not even
+-- mention Gildan; only the t-shirt does), no lead_time field, and a generic
+-- catalog_product_specifications boilerplate ("Manufactured to order"). The
+-- framings are honest because the business owner confirmed them; the catalogue
+-- data just does not back them yet. A future data-quality pass should populate
+-- a brand/model + lead_time/stock field on these rows.
+-- The loader still skips any framing holding a '<NEEDS DAVE INPUT>' marker.
 --
 -- DEPLOY (CLAUDE.md §52): apply via Supabase SQL Editor BEFORE merging the PR.
 -- Verify with the SELECT at the bottom, then merge.
@@ -90,16 +94,16 @@ VALUES
   ('hoodie', 'Hoodie',
    ARRAY['event staff','sports clubs','brand merchandise','team kit'],
    'mid',
-   'Pullover hooded sweatshirt with front pouch pocket and drawstring hood, a substantial layer for adult workwear and team kit, screen printed across white and coloured variants.',
-   ARRAY['hoodie','hoodies','hooded sweatshirt','team kit','sports club','brand merch','winter wear'],
-   '<NEEDS DAVE INPUT: genuine why-us hook for the hoodie. Source data has only generic garment features (pouch pocket, drawstring); no brand, stock, lead-time, or quality differentiator to ground a competitor hook honestly.>'),
+   'UK-stocked Gildan branded hoodie suitable for the 5-day Express turnaround service. A recognised blank that buyers can specify with confidence; UK stock removes import lead-time risk on time-sensitive campaigns.',
+   ARRAY['hoodie','hoodies','hooded sweatshirt','team kit','sports club','brand merch','winter wear','express','fast turnaround','tight deadline','uk stock'],
+   'The PGifts Direct Hoodie is worth suggesting when the customer needs branded hoodies on a tight turnaround: UK-stocked Gildan with 5-day Express delivery from artwork approval.'),
 
   ('sweatshirts', 'Sweatshirts',
    ARRAY['corporate uniforms','university merchandise','winter event kits'],
    'mid',
-   'Crew-neck sweatshirt for corporate uniforms, university merchandise, and winter event kits, screen printed across white and coloured variants.',
-   ARRAY['sweatshirt','sweatshirts','crew neck','university merch','winter kit','jumper'],
-   '<NEEDS DAVE INPUT: genuine why-us hook for the sweatshirt. Source description claims a heavyweight blend but the spec record says 200g (mid-weight) and is generic boilerplate; no brand, stock, or lead-time field to ground a competitor hook honestly.>'),
+   'UK-stocked Gildan sweatshirt suitable for the 5-day Express turnaround service. Same supply-chain confidence as the Gildan hoodie line; reliable for time-sensitive corporate kits.',
+   ARRAY['sweatshirt','sweatshirts','crew neck','university merch','winter kit','jumper','express','fast turnaround','deadline','uk stock'],
+   'The PGifts Direct Sweatshirt is worth suggesting for winter or corporate kits on a deadline: UK-stocked Gildan with 5-day Express delivery from artwork approval.'),
 
   ('octopus-mini', 'Octopus Mini',
    ARRAY['conference welcome packs','lower-cost tech giveaways','delegate bags'],
