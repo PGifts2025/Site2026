@@ -5602,7 +5602,7 @@ const Designer = () => {
           </div>
 
           {/* Canvas Area - Mobile order-3, Desktop center (flex-1) */}
-          <div className="w-full lg:flex-1 order-3 lg:order-2">
+          <div className="w-full lg:flex-1 lg:min-w-0 order-3 lg:order-2">
             <div className="bg-gray-100 rounded-lg p-2 sm:p-4 lg:p-8">
               <div className="bg-white shadow-lg rounded-lg p-2 sm:p-4 w-full h-full">
                 {/* Card Header with Title and Action Buttons */}
