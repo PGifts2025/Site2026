@@ -45,6 +45,8 @@ import { createHash } from 'node:crypto';
 
 import { SYSTEM_PROMPT } from '../../scripts/lib/ai-system-prompt.js';
 import { ALL_TOOLS, ANTHROPIC_CONFIG } from '../../scripts/lib/ai-tools.js';
+import { loadConversationRules } from '../../scripts/lib/ai-conversation-rules.js';
+import { loadUpsellContext } from '../../scripts/lib/ai-upsell-context.js';
 import { deliveryPerUnit } from '../../scripts/lib/laltex-delivery.js';
 import { scheduleMarginForTier } from '../../scripts/lib/laltex-margin.js';
 import {
@@ -371,7 +373,32 @@ export default async function handler(req, res) {
   if (quotaReminder) userTurnContent.push({ type: 'text', text: quotaReminder });
   messages.push({ role: 'user', content: userTurnContent });
 
-  // 6. Agentic loop.
+  // 6. Build the cached system blocks ONCE per request, then reuse across
+  //    every agentic-loop iteration. Building once (not per-iteration) keeps
+  //    the blocks byte-identical within the turn so prompt caching holds.
+  //
+  //    Render order is tools -> system blocks -> messages (CLAUDE.md §32.4).
+  //    Block layout, most-stable first so a change to a later block doesn't
+  //    bust the earlier cached prefixes:
+  //      1. SYSTEM_PROMPT          (frozen constant; cache breakpoint covers tools+this)
+  //      2. conversation rules     (docs/ava-conversation-rules.md; changes on deploy)
+  //      3. upsell context         (ava_direct_product_context; changes via Studio)
+  //    The final cache breakpoint sits on the last present block, so blocks
+  //    2 and 3 are cached too. Empty blocks (loader degraded) are omitted so
+  //    a missing file/table never injects a stray empty block.
+  const rulesText = loadConversationRules();
+  const upsellText = await loadUpsellContext({ supabaseUrl, serviceRoleKey });
+  const systemBlocks = [{ type: 'text', text: SYSTEM_PROMPT }];
+  if (rulesText) {
+    systemBlocks.push({ type: 'text', text: `AVA CONVERSATION RULES\n\n${rulesText}` });
+  }
+  if (upsellText) {
+    systemBlocks.push({ type: 'text', text: upsellText });
+  }
+  // Cache breakpoint on the last block covers the whole system+tools prefix.
+  systemBlocks[systemBlocks.length - 1].cache_control = { type: 'ephemeral' };
+
+  // 6b. Agentic loop.
   const anthropic = new Anthropic({ apiKey: anthropicKey });
   const baseUrl = getSelfBaseUrl(req);
 
@@ -402,13 +429,7 @@ export default async function handler(req, res) {
       const response = await anthropic.messages.create({
         model: ANTHROPIC_CONFIG.model,
         max_tokens: ANTHROPIC_CONFIG.max_tokens,
-        system: [
-          {
-            type: 'text',
-            text: SYSTEM_PROMPT,
-            cache_control: { type: 'ephemeral' },
-          },
-        ],
+        system: systemBlocks,
         tools: ALL_TOOLS,
         messages,
       });

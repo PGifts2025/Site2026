@@ -3,6 +3,11 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "installCommand": "npm install",
+  "functions": {
+    "api/ai/chat.js": {
+      "includeFiles": "docs/ava-conversation-rules.md"
+    }
+  },
   "rewrites": [
     {
       "source": "/(.*)",
