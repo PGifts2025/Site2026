@@ -919,7 +919,7 @@ const PromoGiftsApp = () => {
                     </div>
                     <div className="flex items-center space-x-2">
                       <Mail className="h-4 w-4 text-red-500" />
-                      <span>helpdesk@promo-gifts.co.uk</span>
+                      <span>helpdesk@promo-gifts.co</span>
                     </div>
                   </div>
                 </div>
