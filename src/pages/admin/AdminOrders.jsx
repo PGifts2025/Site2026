@@ -80,18 +80,41 @@ const AdminOrders = ({ user, adminRole }) => {
       filtered = filtered.filter(order => order.artwork_status === artworkFilter);
     }
 
-    // Search filter
+    // Search filter — match against every field an admin might type:
+    // order number (visible header), full id (URL slug), PO number,
+    // Stripe payment_intent_id (reconciliation), tracking number, AND
+    // every separate customer field (company, first, last, email).
+    // Pre-§ the filter only matched order_number + a SINGLE priority-resolved
+    // display string, so the visible email subline silently never matched
+    // when the customer also had a company name. See audit §2 and §7.
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
-      filtered = filtered.filter(order => {
-        const orderNum = (order.order_number || '').toLowerCase();
-        const customerName = getCustomerDisplayName(order.customer_profiles).toLowerCase();
-        return orderNum.includes(query) || customerName.includes(query);
-      });
+      filtered = filtered.filter(order => buildSearchableText(order).includes(query));
     }
 
     setFilteredOrders(filtered);
     setCurrentPage(1);
+  };
+
+  // Build the lowercased "haystack" string for the search filter. Includes
+  // every visible identifier plus admin-relevant lookup fields. New fields
+  // can be added here without touching the filter loop.
+  const buildSearchableText = (order) => {
+    const p = order.customer_profiles || {};
+    return [
+      order.order_number,
+      order.id,
+      order.po_number,
+      order.payment_intent_id,
+      order.tracking_number,
+      p.company_name,
+      p.first_name,
+      p.last_name,
+      p.email,
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
   };
 
   // Chain: company_name → first+last → email → 'Unknown Customer'.
@@ -166,7 +189,7 @@ const AdminOrders = ({ user, adminRole }) => {
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
             <input
               type="text"
-              placeholder="Search by order # or customer..."
+              placeholder="Search by order #, customer name, email, PO..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
