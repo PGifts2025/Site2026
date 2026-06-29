@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { Search, Filter, Download, Loader, Eye } from 'lucide-react';
 import AdminLayout from '../../components/admin/AdminLayout';
@@ -15,6 +15,16 @@ const AdminOrders = ({ user, adminRole }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const ordersPerPage = 20;
+
+  // Per-row selection for CSV export. Set<orderId> for O(1) toggle/has.
+  // Persists across filter changes by design so admins can build a
+  // multi-filter selection (e.g. select 2 from "pending", switch filter
+  // to "approved", select 3 more, export all 5).
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+
+  // Master checkbox in the table header. Tri-state DOM is set imperatively
+  // because React only forwards `checked`, not `indeterminate`.
+  const masterCheckboxRef = useRef(null);
 
   useEffect(() => {
     fetchOrders();
@@ -179,6 +189,146 @@ const AdminOrders = ({ user, adminRole }) => {
   const startIndex = (currentPage - 1) * ordersPerPage;
   const paginatedOrders = filteredOrders.slice(startIndex, startIndex + ordersPerPage);
 
+  // ---- Row selection + CSV export ----
+
+  // Selection counted against the currently-filtered set only — orders
+  // selected then filtered out by status/date stay in `selectedIds` but
+  // don't count toward the "selected from view" totals. This keeps the
+  // header checkbox honest (it reflects what is currently visible) while
+  // preserving the multi-filter selection workflow.
+  const selectionInFilteredCount = useMemo(
+    () => filteredOrders.reduce((n, o) => (selectedIds.has(o.id) ? n + 1 : n), 0),
+    [filteredOrders, selectedIds],
+  );
+
+  // Tri-state master checkbox driven by the *currently filtered* page-set.
+  // "Visible" here means "passes the active filters", not "on this page" —
+  // the master clears/sets all matching rows in one click, which is what
+  // an admin wants when about to export the filtered view.
+  useEffect(() => {
+    if (!masterCheckboxRef.current) return;
+    const n = selectionInFilteredCount;
+    const total = filteredOrders.length;
+    masterCheckboxRef.current.checked = total > 0 && n === total;
+    masterCheckboxRef.current.indeterminate = n > 0 && n < total;
+  }, [selectionInFilteredCount, filteredOrders.length]);
+
+  const toggleRowSelection = (orderId) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(orderId)) next.delete(orderId);
+      else next.add(orderId);
+      return next;
+    });
+  };
+
+  const toggleMasterSelection = () => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      // If every currently-filtered row is already selected -> clear all
+      // matching IDs; otherwise -> add every matching ID.
+      const allSelected =
+        filteredOrders.length > 0 &&
+        filteredOrders.every((o) => next.has(o.id));
+      if (allSelected) {
+        filteredOrders.forEach((o) => next.delete(o.id));
+      } else {
+        filteredOrders.forEach((o) => next.add(o.id));
+      }
+      return next;
+    });
+  };
+
+  // Decide what export emits: selected when non-empty, else everything
+  // matching current filters. Filters always apply (search + status +
+  // artwork + date) so the export reflects what the admin sees.
+  const exportButtonLabel =
+    selectionInFilteredCount > 0
+      ? `Export ${selectionInFilteredCount} selected`
+      : 'Export';
+
+  // Quote a CSV field per RFC 4180 — wrap in double quotes when the value
+  // contains a comma, double-quote, CR, or LF; escape internal quotes by
+  // doubling them. Empty / null / undefined become an empty field.
+  const csvEscape = (value) => {
+    if (value === null || value === undefined) return '';
+    const s = String(value);
+    if (/[",\r\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+    return s;
+  };
+
+  const buildCsv = (rows) => {
+    const header = [
+      'Order Number',
+      'Customer Name',
+      'Customer Email',
+      'Customer Company',
+      'Created Date',
+      'Status',
+      'Artwork Status',
+      'Payment Status',
+      'Total',
+      'PO Number',
+      'Stripe Payment Intent ID',
+      'Tracking Number',
+    ];
+    const lines = [header.map(csvEscape).join(',')];
+    for (const o of rows) {
+      const p = o.customer_profiles || {};
+      const fullName = [p.first_name, p.last_name].filter(Boolean).join(' ').trim();
+      lines.push(
+        [
+          o.order_number,
+          fullName,
+          p.email,
+          p.company_name,
+          o.created_at, // ISO 8601 — spreadsheet imports parse this reliably
+          o.status,
+          o.artwork_status,
+          o.payment_status,
+          o.total_amount,
+          o.po_number,
+          o.payment_intent_id,
+          o.tracking_number,
+        ]
+          .map(csvEscape)
+          .join(','),
+      );
+    }
+    // RFC 4180 line terminator. \r\n keeps Excel on Windows happy.
+    return lines.join('\r\n') + '\r\n';
+  };
+
+  // pgifts-orders-YYYYMMDD-HHmmss.csv (UTC pad keeps filenames sortable).
+  const exportFilename = () => {
+    const d = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    const ymd = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`;
+    const hms = `${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+    return `pgifts-orders-${ymd}-${hms}.csv`;
+  };
+
+  const handleExport = () => {
+    const rowsToExport =
+      selectionInFilteredCount > 0
+        ? filteredOrders.filter((o) => selectedIds.has(o.id))
+        : filteredOrders;
+
+    if (rowsToExport.length === 0) return; // nothing to export
+
+    // BOM so Excel detects UTF-8 (otherwise £ glyphs render mojibake).
+    const csv = '﻿' + buildCsv(rowsToExport);
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = exportFilename();
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <AdminLayout user={user} adminRole={adminRole} pageTitle="Orders">
       {/* Header Actions */}
@@ -228,9 +378,18 @@ const AdminOrders = ({ user, adminRole }) => {
               <option value="in_production">In Production</option>
             </select>
 
-            <button className="flex items-center space-x-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors">
+            <button
+              onClick={handleExport}
+              disabled={filteredOrders.length === 0}
+              title={
+                selectionInFilteredCount > 0
+                  ? `Export ${selectionInFilteredCount} selected order${selectionInFilteredCount === 1 ? '' : 's'} as CSV`
+                  : `Export ${filteredOrders.length} filtered order${filteredOrders.length === 1 ? '' : 's'} as CSV`
+              }
+              className="flex items-center space-x-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
               <Download className="h-4 w-4" />
-              <span>Export</span>
+              <span>{exportButtonLabel}</span>
             </button>
           </div>
         </div>
@@ -238,6 +397,11 @@ const AdminOrders = ({ user, adminRole }) => {
         {/* Results count */}
         <p className="text-sm text-gray-600 mt-4">
           Showing {filteredOrders.length} {filteredOrders.length === 1 ? 'order' : 'orders'}
+          {selectionInFilteredCount > 0 && (
+            <span className="ml-2 text-blue-700 font-medium">
+              ({selectionInFilteredCount} selected)
+            </span>
+          )}
         </p>
       </div>
 
@@ -257,6 +421,15 @@ const AdminOrders = ({ user, adminRole }) => {
               <table className="w-full">
                 <thead>
                   <tr className="text-left text-sm text-gray-600 border-b border-gray-200 bg-gray-50">
+                    <th className="px-4 py-4 w-10">
+                      <input
+                        ref={masterCheckboxRef}
+                        type="checkbox"
+                        onChange={toggleMasterSelection}
+                        aria-label="Select all filtered orders"
+                        className="h-4 w-4 cursor-pointer accent-blue-600"
+                      />
+                    </th>
                     <th className="px-6 py-4 font-semibold">Order #</th>
                     <th className="px-6 py-4 font-semibold">Customer</th>
                     <th className="px-6 py-4 font-semibold">Date</th>
@@ -271,8 +444,19 @@ const AdminOrders = ({ user, adminRole }) => {
                   {paginatedOrders.map((order) => (
                     <tr
                       key={order.id}
-                      className="border-b border-gray-100 hover:bg-gray-50 transition-colors"
+                      className={`border-b border-gray-100 transition-colors ${
+                        selectedIds.has(order.id) ? 'bg-blue-50' : 'hover:bg-gray-50'
+                      }`}
                     >
+                      <td className="px-4 py-4">
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(order.id)}
+                          onChange={() => toggleRowSelection(order.id)}
+                          aria-label={`Select order ${order.order_number || order.id.slice(0, 8)}`}
+                          className="h-4 w-4 cursor-pointer accent-blue-600"
+                        />
+                      </td>
                       <td className="px-6 py-4 text-sm font-medium text-gray-900">
                         #{order.order_number || order.id.slice(0, 8)}
                       </td>
