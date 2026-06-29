@@ -41,12 +41,20 @@ Deno.serve(async (req: Request) => {
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
     // 1. Fetch order.
+    //
+    // Defensive filter on deleted_at IS NULL (audit-admin-orders-iteration.md
+    // §6.3, §8.3): if an admin soft-deletes an order between artwork
+    // upload and this email firing, the customer should not receive
+    // an "artwork received" message for an order they no longer have.
+    // Service-role bypasses RLS so the RLS amendment alone is not
+    // sufficient.
     const { data: order, error: orderError } = await supabase
       .from("orders")
       .select(
-        "id, order_number, customer_id, total_amount, artwork_received_email_sent_at, artwork_status",
+        "id, order_number, customer_id, total_amount, artwork_received_email_sent_at, artwork_status, deleted_at",
       )
       .eq("id", orderId)
+      .is("deleted_at", null)
       .maybeSingle();
 
     if (orderError) {
@@ -54,7 +62,7 @@ Deno.serve(async (req: Request) => {
       return jsonOk({ success: true, sent: false, reason: "order_not_found" });
     }
     if (!order) {
-      console.warn("[send-artwork-received-email] order not found:", orderId);
+      console.warn("[send-artwork-received-email] order not found (may be soft-deleted):", orderId);
       return jsonOk({ success: true, sent: false, reason: "order_not_found" });
     }
 

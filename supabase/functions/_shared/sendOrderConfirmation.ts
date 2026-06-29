@@ -56,17 +56,28 @@ export async function sendOrderConfirmation(
     return { sent: false, reason: "no_api_key" };
   }
 
+  // Defensive filter on deleted_at IS NULL (audit-admin-orders-iteration.md
+  // §6.3, §8.3): if an admin soft-deletes an order in the window between
+  // confirm_payment_atomic committing and this email helper running, the
+  // customer should not receive a confirmation for an order that no longer
+  // exists in their view. Service-role bypasses RLS so the RLS amendment
+  // alone is not sufficient — this filter is the second layer.
+  //
+  // Stripe webhook + confirm_payment_atomic itself continue to use
+  // unfiltered lookups; refunds, chargebacks, and post-payment
+  // reconciliation must still find soft-deleted orders by id.
   const { data: orderRow, error: orderFetchError } = await supabase
     .from("orders")
     .select(
-      "id, order_number, total_amount, customer_id, confirmation_email_sent_at, shipping_address, po_number",
+      "id, order_number, total_amount, customer_id, confirmation_email_sent_at, shipping_address, po_number, deleted_at",
     )
     .eq("id", orderId)
+    .is("deleted_at", null)
     .single();
 
   if (orderFetchError || !orderRow) {
     console.warn(
-      "[send-order-confirmation] Could not load order for email:",
+      "[send-order-confirmation] Could not load order for email (may be soft-deleted):",
       orderFetchError,
     );
     return { sent: false, reason: "order_not_found" };
