@@ -13,6 +13,11 @@ const AdminOrders = ({ user, adminRole }) => {
   const [statusFilter, setStatusFilter] = useState('all');
   const [artworkFilter, setArtworkFilter] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
+  // Date range filter — preset key + (when 'custom') a from/to pair.
+  // Match the existing client-side filter pattern: branch in applyFilters.
+  const [dateRange, setDateRange] = useState('all');
+  const [customFrom, setCustomFrom] = useState('');
+  const [customTo, setCustomTo] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const ordersPerPage = 20;
 
@@ -32,7 +37,7 @@ const AdminOrders = ({ user, adminRole }) => {
 
   useEffect(() => {
     applyFilters();
-  }, [orders, statusFilter, artworkFilter, searchQuery]);
+  }, [orders, statusFilter, artworkFilter, searchQuery, dateRange, customFrom, customTo]);
 
   const fetchOrders = async () => {
     try {
@@ -77,6 +82,75 @@ const AdminOrders = ({ user, adminRole }) => {
     }
   };
 
+  // Resolve the active date range to { start, end } JS Date objects (or
+  // nulls). Both are inclusive. `start` is normalised to 00:00:00 local,
+  // `end` to 23:59:59.999 local so a "Today" preset and a single-day
+  // Custom range both cover the full UK working day. Returns
+  // { start: null, end: null } when no filter is active.
+  const resolveDateRange = () => {
+    const startOfDay = (d) => {
+      const x = new Date(d);
+      x.setHours(0, 0, 0, 0);
+      return x;
+    };
+    const endOfDay = (d) => {
+      const x = new Date(d);
+      x.setHours(23, 59, 59, 999);
+      return x;
+    };
+    const now = new Date();
+    switch (dateRange) {
+      case 'today':
+        return { start: startOfDay(now), end: endOfDay(now) };
+      case 'last7': {
+        const s = startOfDay(now);
+        s.setDate(s.getDate() - 6); // inclusive of today
+        return { start: s, end: endOfDay(now) };
+      }
+      case 'last30': {
+        const s = startOfDay(now);
+        s.setDate(s.getDate() - 29);
+        return { start: s, end: endOfDay(now) };
+      }
+      case 'thisMonth':
+        return {
+          start: startOfDay(new Date(now.getFullYear(), now.getMonth(), 1)),
+          end: endOfDay(now),
+        };
+      case 'thisYear':
+        return {
+          start: startOfDay(new Date(now.getFullYear(), 0, 1)),
+          end: endOfDay(now),
+        };
+      case 'custom': {
+        // <input type="date"> returns 'YYYY-MM-DD' in local time. Parse
+        // explicitly to avoid the UTC-midnight trap (new Date('2026-06-01')
+        // would land at the previous evening for negative timezones).
+        const parseLocal = (s) => {
+          if (!s) return null;
+          const [y, m, d] = s.split('-').map(Number);
+          if (!y || !m || !d) return null;
+          return new Date(y, m - 1, d);
+        };
+        let start = parseLocal(customFrom);
+        let end = parseLocal(customTo);
+        // If only one bound provided, the other is open. If both provided
+        // but from > to, swap them so the admin never sees a silent empty
+        // result from a misordered range.
+        if (start && end && start > end) {
+          [start, end] = [end, start];
+        }
+        return {
+          start: start ? startOfDay(start) : null,
+          end: end ? endOfDay(end) : null,
+        };
+      }
+      case 'all':
+      default:
+        return { start: null, end: null };
+    }
+  };
+
   const applyFilters = () => {
     let filtered = [...orders];
 
@@ -88,6 +162,18 @@ const AdminOrders = ({ user, adminRole }) => {
     // Artwork-status filter
     if (artworkFilter !== 'all') {
       filtered = filtered.filter(order => order.artwork_status === artworkFilter);
+    }
+
+    // Date range filter
+    const { start, end } = resolveDateRange();
+    if (start || end) {
+      filtered = filtered.filter((order) => {
+        if (!order.created_at) return false;
+        const t = new Date(order.created_at).getTime();
+        if (start && t < start.getTime()) return false;
+        if (end && t > end.getTime()) return false;
+        return true;
+      });
     }
 
     // Search filter — match against every field an admin might type:
@@ -378,6 +464,21 @@ const AdminOrders = ({ user, adminRole }) => {
               <option value="in_production">In Production</option>
             </select>
 
+            <select
+              value={dateRange}
+              onChange={(e) => setDateRange(e.target.value)}
+              className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              aria-label="Date range filter"
+            >
+              <option value="all">All time</option>
+              <option value="today">Today</option>
+              <option value="last7">Last 7 days</option>
+              <option value="last30">Last 30 days</option>
+              <option value="thisMonth">This month</option>
+              <option value="thisYear">This year</option>
+              <option value="custom">Custom range…</option>
+            </select>
+
             <button
               onClick={handleExport}
               disabled={filteredOrders.length === 0}
@@ -393,6 +494,40 @@ const AdminOrders = ({ user, adminRole }) => {
             </button>
           </div>
         </div>
+
+        {/* Custom date range — revealed only when "Custom range…" is picked */}
+        {dateRange === 'custom' && (
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <label className="text-sm text-gray-700 flex items-center gap-2">
+              From
+              <input
+                type="date"
+                value={customFrom}
+                onChange={(e) => setCustomFrom(e.target.value)}
+                aria-label="Custom range from date"
+                className="px-3 py-1.5 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+              />
+            </label>
+            <label className="text-sm text-gray-700 flex items-center gap-2">
+              To
+              <input
+                type="date"
+                value={customTo}
+                onChange={(e) => setCustomTo(e.target.value)}
+                aria-label="Custom range to date"
+                className="px-3 py-1.5 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+              />
+            </label>
+            {(customFrom || customTo) && (
+              <button
+                onClick={() => { setCustomFrom(''); setCustomTo(''); }}
+                className="text-xs text-gray-500 hover:text-gray-700 underline"
+              >
+                Clear dates
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Results count */}
         <p className="text-sm text-gray-600 mt-4">
