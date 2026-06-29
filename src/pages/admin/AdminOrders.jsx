@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { Search, Filter, Download, Loader, Eye } from 'lucide-react';
+import { Search, Filter, Download, Loader, Eye, Trash2, X } from 'lucide-react';
 import AdminLayout from '../../components/admin/AdminLayout';
 import { supabase } from '../../services/supabaseService';
 
@@ -31,6 +31,15 @@ const AdminOrders = ({ user, adminRole }) => {
   // because React only forwards `checked`, not `indeterminate`.
   const masterCheckboxRef = useRef(null);
 
+  // Soft-delete confirmation modal. Holds the order being deleted (so
+  // the modal can display its order_number) or null when closed.
+  const [deleteCandidate, setDeleteCandidate] = useState(null);
+  const [deleteInFlight, setDeleteInFlight] = useState(false);
+  const [deleteError, setDeleteError] = useState(null);
+  // Transient confirmation toast — shows order_number of the most recently
+  // soft-deleted order for 4 seconds, then clears.
+  const [deleteFlash, setDeleteFlash] = useState(null);
+
   useEffect(() => {
     fetchOrders();
   }, []);
@@ -47,9 +56,15 @@ const AdminOrders = ({ user, adminRole }) => {
       // auth.users), so PostgREST can't auto-embed. Fetch orders and
       // customer_profiles separately and merge client-side so the existing
       // JSX can keep reading order.customer_profiles.*.
+      // Default-hide soft-deleted orders. The amended "Users view own
+      // orders" RLS policy hides them from the customer-facing path,
+      // but the "Admins manage orders" ALL policy continues to grant
+      // admin SELECT on every row — so we filter client-side here.
+      // A future "Show deleted" toggle would simply drop this clause.
       const { data: ordersData, error } = await supabase
         .from('orders')
         .select('*')
+        .is('deleted_at', null)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -394,6 +409,59 @@ const AdminOrders = ({ user, adminRole }) => {
     return `pgifts-orders-${ymd}-${hms}.csv`;
   };
 
+  // ---- Soft-delete ----
+
+  const openDeleteModal = (order) => {
+    setDeleteError(null);
+    setDeleteCandidate(order);
+  };
+
+  const closeDeleteModal = () => {
+    if (deleteInFlight) return; // do not allow dismiss mid-flight
+    setDeleteCandidate(null);
+    setDeleteError(null);
+  };
+
+  const confirmSoftDelete = async () => {
+    if (!deleteCandidate) return;
+    setDeleteInFlight(true);
+    setDeleteError(null);
+    try {
+      const { error } = await supabase
+        .from('orders')
+        .update({ deleted_at: new Date().toISOString() })
+        .eq('id', deleteCandidate.id);
+      if (error) throw error;
+
+      // Optimistic local update — drop the row from the in-memory list.
+      // applyFilters fires via the `orders` dep and the row disappears
+      // from filteredOrders. Selection set is cleaned up too.
+      setOrders((prev) => prev.filter((o) => o.id !== deleteCandidate.id));
+      setSelectedIds((prev) => {
+        if (!prev.has(deleteCandidate.id)) return prev;
+        const next = new Set(prev);
+        next.delete(deleteCandidate.id);
+        return next;
+      });
+
+      const displayNum = deleteCandidate.order_number || deleteCandidate.id.slice(0, 8);
+      setDeleteFlash(`Order #${displayNum} soft-deleted. Restore via SQL if needed.`);
+      setDeleteCandidate(null);
+    } catch (err) {
+      console.error('[AdminOrders] soft-delete failed:', err);
+      setDeleteError(err?.message || 'Soft-delete failed. Please try again.');
+    } finally {
+      setDeleteInFlight(false);
+    }
+  };
+
+  // Auto-clear the flash after 4 seconds.
+  useEffect(() => {
+    if (!deleteFlash) return;
+    const t = setTimeout(() => setDeleteFlash(null), 4000);
+    return () => clearTimeout(t);
+  }, [deleteFlash]);
+
   const handleExport = () => {
     const rowsToExport =
       selectionInFilteredCount > 0
@@ -646,13 +714,23 @@ const AdminOrders = ({ user, adminRole }) => {
                         {formatCurrency(order.total_amount)}
                       </td>
                       <td className="px-6 py-4">
-                        <Link
-                          to={`/admin/orders/${order.id}`}
-                          className="inline-flex items-center space-x-1 text-blue-600 hover:text-blue-700 font-semibold text-sm"
-                        >
-                          <Eye className="h-4 w-4" />
-                          <span>View</span>
-                        </Link>
+                        <div className="flex items-center space-x-3">
+                          <Link
+                            to={`/admin/orders/${order.id}`}
+                            className="inline-flex items-center space-x-1 text-blue-600 hover:text-blue-700 font-semibold text-sm"
+                          >
+                            <Eye className="h-4 w-4" />
+                            <span>View</span>
+                          </Link>
+                          <button
+                            onClick={() => openDeleteModal(order)}
+                            title="Soft-delete this order (hidden from list, retained in DB)"
+                            aria-label={`Soft-delete order ${order.order_number || order.id.slice(0, 8)}`}
+                            className="inline-flex items-center text-gray-400 hover:text-red-600 transition-colors"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -687,6 +765,87 @@ const AdminOrders = ({ user, adminRole }) => {
           </>
         )}
       </div>
+
+      {/* Soft-delete confirmation modal */}
+      {deleteCandidate && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="soft-delete-title"
+          onClick={closeDeleteModal}
+        >
+          <div
+            className="bg-white rounded-xl shadow-xl max-w-md w-full p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between mb-3">
+              <h3 id="soft-delete-title" className="text-lg font-semibold text-gray-900">
+                Soft-delete this order?
+              </h3>
+              <button
+                onClick={closeDeleteModal}
+                disabled={deleteInFlight}
+                aria-label="Close"
+                className="text-gray-400 hover:text-gray-600 disabled:opacity-50"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <p className="text-sm text-gray-700 leading-relaxed">
+              Order{' '}
+              <span className="font-semibold">
+                #{deleteCandidate.order_number || deleteCandidate.id.slice(0, 8)}
+              </span>{' '}
+              will be hidden from the admin order list. The record will be retained in the database
+              for accounting and Stripe reconciliation (HMRC requires 6-year retention). This can
+              be undone with SQL if needed. Continue?
+            </p>
+            {deleteError && (
+              <p className="mt-3 text-sm text-red-600 bg-red-50 border border-red-200 rounded p-2">
+                {deleteError}
+              </p>
+            )}
+            <div className="mt-5 flex justify-end space-x-3">
+              <button
+                onClick={closeDeleteModal}
+                disabled={deleteInFlight}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmSoftDelete}
+                disabled={deleteInFlight}
+                className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2"
+              >
+                {deleteInFlight ? (
+                  <>
+                    <Loader className="h-4 w-4 animate-spin" />
+                    <span>Deleting…</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="h-4 w-4" />
+                    <span>Delete</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Soft-delete success flash toast */}
+      {deleteFlash && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed bottom-6 right-6 z-50 max-w-sm bg-gray-900 text-white text-sm px-4 py-3 rounded-lg shadow-xl"
+        >
+          {deleteFlash}
+        </div>
+      )}
     </AdminLayout>
   );
 };
