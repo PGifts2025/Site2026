@@ -51,6 +51,7 @@ import { useAuth } from '../context/AuthContext';
 import { deliveryPerUnit } from '../../scripts/lib/laltex-delivery.js';
 import { scheduleMarginForTier } from '../../scripts/lib/laltex-margin.js';
 import { isBucketADesignable } from '../utils/laltexPositionHeuristics';
+import { taxableNetUnit } from '../utils/vat';
 import AboveCeilingNotice from './AboveCeilingNotice';
 
 // ---------------------------------------------------------------------------
@@ -462,6 +463,15 @@ const LaltexProductView = ({ product }) => {
           product_name: product.name,
           quantity,
           unit_price: +unitPrice.toFixed(4),
+          // VAT (PR A): for the 3 zero-rated children's products the garment
+          // portion is zero-rated, so only the services (print + delivery) are
+          // taxable. taxableNetUnit() returns that services-per-unit for a
+          // zero-rated code, else null (whole line taxable — the DB default).
+          // The DB generated line_vat column applies the 20%.
+          taxable_net_unit: taxableNetUnit(
+            product.code,
+            printPerUnitTotal + deliveryUnitWithMargin,
+          ),
           color: selectedColour?.name || null,
           print_areas: printAreasPayload,
           notes: `Supplier: ${product.supplier} | Code: ${product.code}`,
