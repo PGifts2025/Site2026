@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { FileText, Trash2, ShoppingCart, Loader, AlertCircle, Check, X, CreditCard } from 'lucide-react';
+import { Link, useLocation } from 'react-router-dom';
+import { FileText, Trash2, ShoppingCart, Loader, AlertCircle, Check, CreditCard } from 'lucide-react';
 import CustomerLayout from '../../components/customer/CustomerLayout';
 import { supabase } from '../../services/supabaseService';
 import { supabaseConfig } from '../../config/supabase';
@@ -34,19 +34,14 @@ function formatPrintAreas(value) {
 }
 
 const CustomerQuotes = ({ user }) => {
-  const navigate = useNavigate();
   const location = useLocation();
   const [flash, setFlash] = useState(location.state?.flash || null);
   const [loading, setLoading] = useState(true);
   const [quotes, setQuotes] = useState([]);
   const [deletingId, setDeletingId] = useState(null);
-  const [convertingQuote, setConvertingQuote] = useState(null); // quote object for confirmation modal
-  const [converting, setConverting] = useState(false);
-  const [orderSuccess, setOrderSuccess] = useState(null); // { orderId, orderNumber }
   const [productMinQtys, setProductMinQtys] = useState({});
   const [payingQuoteId, setPayingQuoteId] = useState(null);
   const [payError, setPayError] = useState(null); // { quoteId, message }
-  const [isAdmin, setIsAdmin] = useState(false);
   // Delivery (PR B): the customer's account address (for the snapshot
   // fallback) + per-quote delivery form status ({mode, dirty}).
   const [accountProfile, setAccountProfile] = useState(null);
@@ -68,18 +63,6 @@ const CustomerQuotes = ({ user }) => {
   useEffect(() => {
     if (user) {
       fetchQuotes();
-      // Check if user is admin (team_members with super_admin or staff role)
-      supabase
-        .from('team_members')
-        .select('role')
-        .eq('user_id', user.id)
-        .eq('is_active', true)
-        .maybeSingle()
-        .then(({ data }) => {
-          if (data && (data.role === 'super_admin' || data.role === 'staff')) {
-            setIsAdmin(true);
-          }
-        });
       // Account address — used as the snapshot fallback when the customer
       // delivers to their own address (PR B). customer_profiles.id === auth uid.
       supabase
@@ -284,83 +267,6 @@ const CustomerQuotes = ({ user }) => {
       setCombineError(error.message || 'Failed to combine quotes. Please try again.');
     } finally {
       setCombining(false);
-    }
-  };
-
-  const handleConvertToOrder = async () => {
-    if (!convertingQuote) return;
-
-    const quote = convertingQuote;
-    const items = quote.quote_items || [];
-    const quoteTotal = getQuoteTotal(items);
-
-    setConverting(true);
-
-    try {
-      // Generate order number
-      const orderNumber = `ORD-${Date.now().toString(36).toUpperCase()}`;
-      console.log('[ConvertToOrder] Creating order:', orderNumber, 'from quote:', quote.quote_number);
-
-      // Step 1: Insert order
-      const { data: order, error: orderError } = await supabase
-        .from('orders')
-        .insert({
-          order_number: orderNumber,
-          customer_id: user.id,
-          status: 'pending',
-          artwork_status: 'pending_artwork',
-          total_amount: quoteTotal
-        })
-        .select()
-        .single();
-
-      if (orderError) throw orderError;
-      console.log('[ConvertToOrder] ✅ Order created:', order.id);
-
-      // Step 2: Insert order_items from quote_items
-      const orderItems = items.map(item => ({
-        order_id: order.id,
-        product_id: item.product_id,
-        product_name: item.product_name,
-        quantity: item.quantity,
-        unit_price: item.unit_price,
-        line_total: Math.round((item.quantity || 0) * (item.unit_price || 0) * 100) / 100,
-        color: item.color || null
-      }));
-
-      const { error: itemsError } = await supabase
-        .from('order_items')
-        .insert(orderItems);
-
-      if (itemsError) throw itemsError;
-      console.log('[ConvertToOrder] ✅ Order items created:', orderItems.length);
-
-      // Step 3: Update quote status to converted
-      const { error: updateError } = await supabase
-        .from('quotes')
-        .update({ status: 'converted' })
-        .eq('id', quote.id);
-
-      if (updateError) throw updateError;
-      console.log('[ConvertToOrder] ✅ Quote marked as converted');
-
-      // Update local state
-      setQuotes(quotes.map(q =>
-        q.id === quote.id ? { ...q, status: 'converted' } : q
-      ));
-
-      // Notify header
-      window.dispatchEvent(new Event('quoteCountChanged'));
-
-      // Show success
-      setConvertingQuote(null);
-      setOrderSuccess({ orderId: order.id, orderNumber });
-
-    } catch (error) {
-      console.error('[ConvertToOrder] ❌ Error:', error);
-      alert(`Error converting to order: ${error.message}`);
-    } finally {
-      setConverting(false);
     }
   };
 
@@ -726,15 +632,6 @@ const CustomerQuotes = ({ user }) => {
                         </>
                       )}
                     </button>
-                    {isAdmin && (
-                      <button
-                        onClick={() => setConvertingQuote(quote)}
-                        disabled={payingQuoteId === quote.id}
-                        className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50"
-                      >
-                        Convert to Order
-                      </button>
-                    )}
                     <button
                       onClick={() => handleDelete(quote.id, quote.quote_number)}
                       disabled={deletingId === quote.id || payingQuoteId === quote.id}
@@ -759,76 +656,6 @@ const CustomerQuotes = ({ user }) => {
           );
         })}
       </div>
-
-      {/* Confirmation Modal */}
-      {convertingQuote && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full overflow-hidden">
-            <div className="flex items-center justify-between p-6 border-b border-gray-200">
-              <h2 className="text-xl font-bold text-gray-900">Convert to Order</h2>
-              <button
-                onClick={() => setConvertingQuote(null)}
-                className="text-gray-400 hover:text-gray-600"
-              >
-                <X className="h-6 w-6" />
-              </button>
-            </div>
-
-            <div className="p-6">
-              <p className="text-sm text-gray-600 mb-4">
-                Quote <strong>{convertingQuote.quote_number}</strong>
-              </p>
-
-              {/* Items summary */}
-              <div className="bg-gray-50 rounded-lg p-4 mb-4 space-y-2">
-                {(convertingQuote.quote_items || []).map(item => (
-                  <div key={item.id} className="flex justify-between text-sm">
-                    <span className="text-gray-700">
-                      {item.product_name} {item.color ? `(${item.color})` : ''} x{item.quantity}
-                    </span>
-                    <span className="font-semibold text-gray-900">
-                      {formatCurrency(item.quantity * item.unit_price)}
-                    </span>
-                  </div>
-                ))}
-                <div className="flex justify-between pt-2 border-t border-gray-200 font-bold">
-                  <span>Total</span>
-                  <span>{formatCurrency(getQuoteTotal(convertingQuote.quote_items || []))}</span>
-                </div>
-              </div>
-
-              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-6">
-                <p className="text-sm text-amber-800">
-                  Once converted, you will need to upload your artwork before we can proceed to print.
-                </p>
-              </div>
-
-              <div className="flex space-x-3">
-                <button
-                  onClick={() => setConvertingQuote(null)}
-                  className="flex-1 px-4 py-3 border-2 border-gray-300 text-gray-700 rounded-lg font-semibold hover:bg-gray-50 transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleConvertToOrder}
-                  disabled={converting}
-                  className="flex-1 px-4 py-3 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50 flex items-center justify-center space-x-2"
-                >
-                  {converting ? (
-                    <>
-                      <Loader className="h-4 w-4 animate-spin" />
-                      <span>Converting...</span>
-                    </>
-                  ) : (
-                    <span>Confirm Order</span>
-                  )}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Combine Confirmation Modal */}
       {combineConfirmOpen && (
@@ -869,39 +696,6 @@ const CustomerQuotes = ({ user }) => {
                 ) : (
                   <span>Confirm</span>
                 )}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Success Modal */}
-      {orderSuccess && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-8 text-center">
-            <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-              <Check className="h-8 w-8 text-green-600" />
-            </div>
-            <h3 className="text-2xl font-bold text-gray-900 mb-2">Order Placed!</h3>
-            <p className="text-gray-600 mb-1">Order reference</p>
-            <p className="text-lg font-bold text-blue-600 mb-4">{orderSuccess.orderNumber}</p>
-            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-6">
-              <p className="text-sm text-amber-800">
-                Please upload your artwork so we can begin production.
-              </p>
-            </div>
-            <div className="flex space-x-3">
-              <button
-                onClick={() => navigate(`/account/orders/${orderSuccess.orderId}`)}
-                className="flex-1 px-4 py-3 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 transition-colors"
-              >
-                View Order
-              </button>
-              <button
-                onClick={() => setOrderSuccess(null)}
-                className="flex-1 px-4 py-3 border-2 border-gray-300 text-gray-700 rounded-lg font-semibold hover:bg-gray-50 transition-colors"
-              >
-                Back to Quotes
               </button>
             </div>
           </div>
