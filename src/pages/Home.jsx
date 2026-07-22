@@ -3,6 +3,7 @@ import { Search, ShoppingCart, User, Phone, Mail, ChevronLeft, ChevronRight, Sta
 import { Link } from "react-router-dom";
 import { getSupabaseClient } from '../services/productCatalogService';
 import AvaTypewriter from '../components/AvaTypewriter';
+import { BUSINESS, registeredOfficeLine } from '../config/business';
 
 // Ava's cycling intent phrases. The first one is the default the click
 // handler pre-fills if Ava hasn't notified us of a phrase yet (rare —
@@ -927,10 +928,7 @@ const PromoGiftsApp = () => {
                 <div>
                   <h5 className="font-semibold text-white mb-2">Address</h5>
                   <div className="text-gray-300 text-sm leading-relaxed">
-                    <p>Unit 9,</p>
-                    <p>Clearfields Industrial Estate</p>
-                    <p>Wotton Underwood,</p>
-                    <p>Bucks HP18 0RS</p>
+                    {BUSINESS.tradingAddress.map((line, i) => <p key={i}>{line}</p>)}
                   </div>
                 </div>
               </div>
@@ -1009,6 +1007,9 @@ const PromoGiftsApp = () => {
 
           <div className="border-t border-gray-700 mt-8 pt-6 text-center text-sm text-gray-400">
             <p>&copy; 2025 Promo Gifts. All rights reserved. | Privacy Policy | Terms & Conditions</p>
+            <p className="mt-2 text-xs text-gray-500 leading-relaxed">
+              {BUSINESS.disclosure} Registered office: {registeredOfficeLine}. VAT No: {BUSINESS.vatNumber}.
+            </p>
           </div>
         </div>
       </footer>
