@@ -69,7 +69,7 @@ export async function sendOrderConfirmation(
   const { data: orderRow, error: orderFetchError } = await supabase
     .from("orders")
     .select(
-      "id, order_number, total_amount, customer_id, confirmation_email_sent_at, shipping_address, po_number, deleted_at",
+      "id, order_number, total_amount, subtotal, tax_amount, customer_id, confirmation_email_sent_at, shipping_address, po_number, deleted_at",
     )
     .eq("id", orderId)
     .is("deleted_at", null)
@@ -114,6 +114,16 @@ export async function sendOrderConfirmation(
   const items = itemsData || [];
 
   const totalAmount = Number(orderRow.total_amount) || 0;
+  const subtotal = Number(orderRow.subtotal) || 0;
+  const vatAmount = Number(orderRow.tax_amount) || 0;
+
+  // VAT-invoice identity. MIRRORS src/config/business.js — Deno can't import
+  // from src/, so keep these in sync if the constants module changes.
+  const BUSINESS_VAT_NUMBER = "GB 685 8348 77";
+  const BUSINESS_TRADING_ADDRESS =
+    "Unit 9, Clearfields Industrial Estate, Wotton Underwood, Buckinghamshire, HP18 0RS";
+  const BUSINESS_DISCLOSURE =
+    "Promo Gifts is a trading name of Alpha Omega Ltd. Registered in England & Wales.";
 
   // Format the v2 jsonb print_areas shape for the email body.
   // Falls back to plain string for legacy entries (CLAUDE.md §43).
@@ -201,13 +211,26 @@ export async function sendOrderConfirmation(
                 <tbody>${itemsHtml}
                 </tbody>
                 <tfoot>
+                  <tr>
+                    <td colspan="2" style="padding:12px 0 2px 0; font-size:14px; color:#4b5563;">Subtotal (ex VAT)</td>
+                    <td align="right" style="text-align:right; padding:12px 0 2px 0; font-size:14px; color:#4b5563;">£${subtotal.toFixed(2)}</td>
+                  </tr>
+                  <tr>
+                    <td colspan="2" style="padding:2px 0; font-size:14px; color:#4b5563;">VAT</td>
+                    <td align="right" style="text-align:right; padding:2px 0; font-size:14px; color:#4b5563;">£${vatAmount.toFixed(2)}</td>
+                  </tr>
                   <tr style="font-weight:bold;">
-                    <td colspan="2" style="padding:12px 0 8px 0; font-size:14px;">Total paid</td>
-                    <td align="right" style="text-align:right; padding:12px 0 8px 0; font-size:14px;">£${totalAmount.toFixed(2)}</td>
+                    <td colspan="2" style="padding:6px 0 8px 0; font-size:14px; border-top:1px solid #e5e5e5;">Total</td>
+                    <td align="right" style="text-align:right; padding:6px 0 8px 0; font-size:14px; border-top:1px solid #e5e5e5;">£${totalAmount.toFixed(2)}</td>
                   </tr>
                 </tfoot>
               </table>
 ${deliveryHtml}
+              <p style="margin:16px 0 0 0; font-size:12px; line-height:1.6; color:#6b7280;">
+                This is your VAT invoice. VAT No: ${BUSINESS_VAT_NUMBER}.<br>
+                ${BUSINESS_TRADING_ADDRESS}
+              </p>
+              <p style="margin:8px 0 0 0; font-size:12px; line-height:1.6; color:#9ca3af;">${BUSINESS_DISCLOSURE}</p>
               <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:20px 0 8px 0;">
                 <tr>
                   <td style="background:#f5f5f5; border-radius:8px; padding:20px;">
@@ -221,7 +244,13 @@ ${deliveryHtml}
 
 ${itemsText}
 
-Total paid: £${totalAmount.toFixed(2)}${deliveryText}
+Subtotal (ex VAT): £${subtotal.toFixed(2)}
+VAT: £${vatAmount.toFixed(2)}
+Total: £${totalAmount.toFixed(2)}${deliveryText}
+
+This is your VAT invoice. VAT No: ${BUSINESS_VAT_NUMBER}.
+${BUSINESS_TRADING_ADDRESS}
+${BUSINESS_DISCLOSURE}
 
 Next step — upload your artwork
 To move your order into production we need your artwork files — logo, design, or any print-ready artwork.`;

@@ -1005,18 +1005,19 @@ const LaltexProductView = ({ product }) => {
                     ) : (
                       <>
                         <div className="mb-2">
-                          <span className="text-sm text-gray-600">Price per unit</span>
+                          <span className="text-sm text-gray-600">Price per unit (ex VAT)</span>
                         </div>
                         <div className="text-3xl font-bold text-blue-600">
                           {formatGBP(unitPrice)}
                         </div>
                         <div className="mt-4 pt-4 border-t border-gray-200">
                           <div className="flex justify-between items-center">
-                            <span className="text-gray-600">Total:</span>
+                            <span className="text-gray-600">Total (ex VAT)</span>
                             <span className="text-2xl font-bold text-gray-900">
                               {formatGBP(totalPrice || 0)}
                             </span>
                           </div>
+                          <p className="text-xs text-gray-400 mt-1">Prices exclude VAT. VAT is added at checkout.</p>
                           {/* TEMP: price breakdown (Product / print position /
                               UK delivery) hidden pre-launch — Total stays
                               visible. The calc (basePrice, positionContributions,

@@ -397,22 +397,17 @@ const AdminOrderDetail = ({ user, adminRole }) => {
               </div>
             )}
 
-            {/* Order Totals */}
+            {/* Order Totals — delivery is bundled into item prices, so no
+                standalone shipping row. VAT always shown (PR B). */}
             <div className="mt-6 pt-6 border-t border-gray-200 space-y-2">
               <div className="flex justify-between text-sm">
-                <span className="text-gray-600">Subtotal</span>
+                <span className="text-gray-600">Subtotal (ex VAT)</span>
                 <span className="font-semibold">{formatCurrency(order.subtotal || 0)}</span>
               </div>
               <div className="flex justify-between text-sm">
-                <span className="text-gray-600">Shipping</span>
-                <span className="font-semibold">{formatCurrency(order.shipping_cost || 0)}</span>
+                <span className="text-gray-600">VAT</span>
+                <span className="font-semibold">{formatCurrency(order.tax_amount || 0)}</span>
               </div>
-              {order.tax_amount > 0 && (
-                <div className="flex justify-between text-sm">
-                  <span className="text-gray-600">Tax</span>
-                  <span className="font-semibold">{formatCurrency(order.tax_amount)}</span>
-                </div>
-              )}
               <div className="flex justify-between text-lg font-bold pt-2 border-t border-gray-200">
                 <span>Total</span>
                 <span>{formatCurrency(order.total_amount)}</span>

@@ -507,8 +507,8 @@ const CustomerQuotes = ({ user }) => {
                   </div>
                 </div>
                 <div className="text-right">
-                  <p className="text-lg font-bold text-gray-900">{formatCurrency(quoteTotal)}</p>
-                  <p className="text-xs text-gray-500">{items.length} item{items.length !== 1 ? 's' : ''}</p>
+                  <p className="text-lg font-bold text-gray-900">{formatCurrency(quote.total_amount ?? quoteTotal)}</p>
+                  <p className="text-xs text-gray-500">inc VAT · {items.length} item{items.length !== 1 ? 's' : ''}</p>
                 </div>
               </div>
 
@@ -606,6 +606,27 @@ const CustomerQuotes = ({ user }) => {
                     onSave={(address, poNumber) => saveQuoteDelivery(quote.id, address, poNumber)}
                     onStatusChange={(s) => handleDeliveryStatus(quote.id, s)}
                   />
+                </div>
+              )}
+
+              {/* VAT breakdown — stored values from recompute_quote_total.
+                  Shown before Pay Now so the customer sees the split (UK B2B). */}
+              {items.length > 0 && (
+                <div className="px-5 py-4 border-t border-gray-100">
+                  <div className="ml-auto w-full sm:w-64 space-y-1.5 text-sm">
+                    <div className="flex justify-between text-gray-600">
+                      <span>Subtotal (ex VAT)</span>
+                      <span>{formatCurrency(quote.subtotal)}</span>
+                    </div>
+                    <div className="flex justify-between text-gray-600">
+                      <span>VAT</span>
+                      <span>{formatCurrency(quote.tax_amount)}</span>
+                    </div>
+                    <div className="flex justify-between font-bold text-gray-900 pt-1.5 border-t border-gray-200">
+                      <span>Total</span>
+                      <span>{formatCurrency(quote.total_amount)}</span>
+                    </div>
+                  </div>
                 </div>
               )}
 
