@@ -86,7 +86,7 @@ Deno.serve(async (req: Request) => {
     );
     params.append(
       "line_items[0][price_data][product_data][name]",
-      `PGifts Order ${quote.quote_number}`
+      `Promo Gifts Order ${quote.quote_number}`
     );
     params.append(
       "success_url",
