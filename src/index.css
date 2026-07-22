@@ -47,3 +47,26 @@ body {
   0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
   40%           { transform: scale(1);   opacity: 1; }
 }
+
+/* ---------------------------------------------------------------------------
+ * Print — VAT invoice (CustomerOrderDetail "Print / Save as PDF").
+ * Isolates the .invoice-print-area so browser print-to-PDF renders only the
+ * invoice on A4, hiding all site chrome (nav, sidebar, chat widget, buttons).
+ * No PDF library — window.print() is enough.
+ * ------------------------------------------------------------------------- */
+@media print {
+  body * { visibility: hidden; }
+  .invoice-print-area,
+  .invoice-print-area * { visibility: visible; }
+  .invoice-print-area {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    box-shadow: none !important;
+    border: none !important;
+    margin: 0 !important;
+  }
+  .no-print { display: none !important; }
+  @page { margin: 16mm; }
+}
