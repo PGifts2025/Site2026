@@ -1771,16 +1771,17 @@ const ProductDetailPage = ({ productSlug, identifier }) => {
                   {/* Price Display */}
                   <div className="text-center p-6 bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl">
                     <div className="mb-2">
-                      <span className="text-sm text-gray-600">Price per unit</span>
+                      <span className="text-sm text-gray-600">Price per unit (ex VAT)</span>
                     </div>
                     <div className={`text-3xl font-bold text-blue-600 transition-all duration-300 ${animatePrice ? 'scale-110' : 'scale-100'}`}>
                       £{effectivePricePerUnit.toFixed(2)}
                     </div>
                     <div className="mt-4 pt-4 border-t border-gray-200">
                       <div className="flex justify-between items-center">
-                        <span className="text-gray-600">Total:</span>
+                        <span className="text-gray-600">Total (ex VAT)</span>
                         <span className="text-2xl font-bold text-gray-900">£{effectiveTotalPrice}</span>
                       </div>
+                      <p className="text-xs text-gray-400 mt-1 text-left">Prices exclude VAT. VAT is added at checkout.</p>
                       {/* Print breakdown for clothing model */}
                       {getPrintBreakdown() && (
                         <p className="text-xs text-gray-500 mt-2 text-center">{getPrintBreakdown()}</p>
