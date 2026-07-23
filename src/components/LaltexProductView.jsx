@@ -52,6 +52,7 @@ import { deliveryPerUnit } from '../../scripts/lib/laltex-delivery.js';
 import { scheduleMarginForTier } from '../../scripts/lib/laltex-margin.js';
 import { isBucketADesignable } from '../utils/laltexPositionHeuristics';
 import { taxableNetUnit } from '../utils/vat';
+import { getSwatchHex, isLightHex } from '../utils/colourSwatches';
 import AboveCeilingNotice from './AboveCeilingNotice';
 
 // ---------------------------------------------------------------------------
@@ -223,6 +224,16 @@ const LaltexProductView = ({ product }) => {
   const selectedColour = useMemo(
     () => (product?.colours || []).find((c) => c.id === selectedColourId) || null,
     [product?.colours, selectedColourId],
+  );
+
+  // The indicative hex map is a fallback ONLY for products with no per-colour
+  // photography at all (the ~53; audit-laltex-images-regression.md). Products
+  // that have photos (e.g. TF004K) render exactly as before: photo per colour,
+  // named chip for any colour that happens to lack one. Never mix map hexes in
+  // where real photos exist.
+  const useHexMap = useMemo(
+    () => !(product?.colours || []).some((c) => c.images?.[0]),
+    [product?.colours],
   );
 
   // ----- Sizes (clothing colour x size matrix) -----
@@ -703,7 +714,11 @@ const LaltexProductView = ({ product }) => {
               <p className="text-gray-700 leading-relaxed">{product.description}</p>
             )}
 
-            {/* Colour swatches (image-based — Laltex has no hex) */}
+            {/* Colour swatches. Resolve order: real per-colour photo, then an
+                indicative hex from our curated map (colourSwatches.js) for the
+                ~53 image-less products, then a named chip. The colour NAME is
+                always shown (selected label + tooltip) so an indicative hex
+                never misleads. */}
             {product.colours.length > 0 && (
               <div>
                 <div className="flex items-center justify-between mb-2">
@@ -711,11 +726,17 @@ const LaltexProductView = ({ product }) => {
                     Available Colours ({product.colours.length})
                   </h3>
                   {selectedColour && (
-                    <span className="text-xs text-gray-500">{selectedColour.name}</span>
+                    <span className="text-xs font-medium text-gray-700">{selectedColour.name}</span>
                   )}
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  {visibleColours.map((c) => (
+                  {visibleColours.map((c) => {
+                    // Prefer a real hex (PGifts-Direct only; Laltex has none),
+                    // else the curated indicative hex — but only on the fully
+                    // image-less products (useHexMap). null = named-chip fallback.
+                    const fillHex = c.hex || (useHexMap ? getSwatchHex(c.name) : null);
+                    const selected = c.id === selectedColourId;
+                    return (
                     <button
                       key={c.id}
                       onClick={() => {
@@ -723,11 +744,12 @@ const LaltexProductView = ({ product }) => {
                         setColourGalleryUrl(null);
                       }}
                       className={`w-14 h-14 rounded-lg border-2 overflow-hidden bg-white transition-all ${
-                        c.id === selectedColourId
-                          ? 'border-blue-500 shadow-md scale-105'
+                        selected
+                          ? 'border-blue-600 ring-2 ring-offset-1 ring-blue-500 shadow-md scale-105'
                           : 'border-gray-200 hover:border-gray-300'
                       }`}
                       title={c.name}
+                      aria-label={c.name}
                     >
                       {c.images?.[0] ? (
                         <img
@@ -736,23 +758,32 @@ const LaltexProductView = ({ product }) => {
                           className="w-full h-full object-cover"
                           loading="lazy"
                         />
-                      ) : c.hex ? (
+                      ) : fillHex ? (
+                        // Indicative filled swatch. Light colours (white,
+                        // natural, ...) get an inner border so they don't
+                        // vanish against the white card.
                         <span
                           className="block w-full h-full"
-                          style={{ backgroundColor: c.hex }}
+                          style={{
+                            backgroundColor: fillHex,
+                            boxShadow: isLightHex(fillHex) ? 'inset 0 0 0 1px #d1d5db' : undefined,
+                          }}
                         />
                       ) : (
-                        // No swatch image and no hex (Laltex supplies neither
-                        // for ~53 products; audit-laltex-images-regression.md).
-                        // Show a legible named chip rather than a blank box.
-                        // We never guess a hex from the colour name.
+                        // No image and no confident hex (heathers/marls and
+                        // bespoke names are deliberately unmapped —
+                        // colourSwatches.js). Named chip, never a guessed hex.
                         <span className="flex items-center justify-center w-full h-full bg-gray-50 px-1 text-center text-[9px] leading-tight font-medium text-gray-600">
                           {c.name}
                         </span>
                       )}
                     </button>
-                  ))}
+                    );
+                  })}
                 </div>
+                <p className="mt-2 text-xs text-gray-400">
+                  On-screen colours are indicative and may vary from the finished garment.
+                </p>
                 {product.colours.length > 8 && (
                   <button
                     onClick={() => setShowAllColours((v) => !v)}
