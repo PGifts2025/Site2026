@@ -157,6 +157,11 @@ const LaltexProductView = ({ product }) => {
   const [quantity, setQuantity] = useState(minQty);
   const [quantityInput, setQuantityInput] = useState(String(minQty));
 
+  // Per-size quantities for multi-size (clothing) products, keyed by the exact
+  // feed size name. For multi-size products the size inputs DRIVE the line
+  // quantity (quantity = sum), so a split/total mismatch is impossible.
+  const [sizeQtys, setSizeQtys] = useState({});
+
   // Picks keyed by unique position name (session 9 — CLAUDE.md §43).
   // Each pick has { enabled, selectedRowIndex, colours }. The dropdown
   // selects which row inside the position group is active; the tick
@@ -219,6 +224,38 @@ const LaltexProductView = ({ product }) => {
     () => (product?.colours || []).find((c) => c.id === selectedColourId) || null,
     [product?.colours, selectedColourId],
   );
+
+  // ----- Sizes (clothing colour x size matrix) -----
+  const isMultiSize = (product?.sizes?.length ?? 0) > 1;
+  // Sizes available in the selected colour (fall back to all product sizes).
+  const availableSizeNames = useMemo(() => {
+    const list = (selectedColour?.sizes?.length ? selectedColour.sizes : (product?.sizes || []).map((s) => s.name));
+    return new Set(list);
+  }, [selectedColour, product?.sizes]);
+  // Line quantity for multi-size = sum of the per-size quantities that are
+  // actually available in the selected colour.
+  const sizeTotal = useMemo(() => (
+    Object.entries(sizeQtys).reduce(
+      (sum, [name, q]) => sum + (availableSizeNames.has(name) ? (Number(q) || 0) : 0),
+      0,
+    )
+  ), [sizeQtys, availableSizeNames]);
+
+  // For multi-size products, the size inputs drive the (read-only) quantity.
+  useEffect(() => {
+    if (!isMultiSize) return;
+    setQuantity(sizeTotal);
+    setQuantityInput(String(sizeTotal));
+  }, [isMultiSize, sizeTotal]);
+
+  // Reset the size split when the product or the colour changes (an order line
+  // is per-colour, so sizes are entered fresh for each colour).
+  useEffect(() => { setSizeQtys({}); }, [product?.code, selectedColourId]);
+
+  const setSizeQty = (name, raw) => {
+    const n = Math.max(0, Math.floor(Number(raw) || 0));
+    setSizeQtys((prev) => ({ ...prev, [name]: n }));
+  };
 
   const heroImage = useMemo(() => {
     if (colourGalleryUrl) return colourGalleryUrl;
@@ -424,8 +461,28 @@ const LaltexProductView = ({ product }) => {
       alert('Quote cannot be created — pricing unavailable.');
       return;
     }
+    if (isMultiSize) {
+      if (sizeTotal <= 0) {
+        alert('Please enter a quantity for at least one size.');
+        return;
+      }
+      if (sizeTotal < minQty) {
+        alert(`Minimum order is ${minQty} units. Please add ${minQty - sizeTotal} more.`);
+        return;
+      }
+    }
     setAddingToQuote(true);
     try {
+      // Per-size split for multi-size clothing, in garment order (product.sizes
+      // is already ordered). Keys are the exact feed size names so the team can
+      // match them when placing the supplier PO. Null for single-size lines.
+      const sizeBreakdown = isMultiSize
+        ? product.sizes.reduce((acc, s) => {
+            const q = availableSizeNames.has(s.name) ? (Number(sizeQtys[s.name]) || 0) : 0;
+            if (q > 0) acc[s.name] = q;
+            return acc;
+          }, {})
+        : null;
       const quoteNumber = `QT-${Date.now().toString(36).toUpperCase()}`;
       // Structured payload for quote_items.print_areas (jsonb column).
       // Envelope-wrapped so future fields (total_setup_charge, version,
@@ -474,6 +531,7 @@ const LaltexProductView = ({ product }) => {
           ),
           color: selectedColour?.name || null,
           print_areas: printAreasPayload,
+          size_breakdown: sizeBreakdown,
           notes: `Supplier: ${product.supplier} | Code: ${product.code}`,
         })
         .select()
@@ -684,7 +742,13 @@ const LaltexProductView = ({ product }) => {
                           style={{ backgroundColor: c.hex }}
                         />
                       ) : (
-                        <span className="block w-full h-full bg-gray-200" />
+                        // No swatch image and no hex (Laltex supplies neither
+                        // for ~53 products; audit-laltex-images-regression.md).
+                        // Show a legible named chip rather than a blank box.
+                        // We never guess a hex from the colour name.
+                        <span className="flex items-center justify-center w-full h-full bg-gray-50 px-1 text-center text-[9px] leading-tight font-medium text-gray-600">
+                          {c.name}
+                        </span>
                       )}
                     </button>
                   ))}
@@ -832,40 +896,71 @@ const LaltexProductView = ({ product }) => {
                 </div>
 
                 <div className="p-4 space-y-4">
-                  {/* Quantity */}
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-3">Quantity</label>
-                    <div className="flex items-center justify-center gap-2">
-                      <button
-                        onClick={() => handleQuantityChange(quantity - 1)}
-                        className="w-9 h-9 flex items-center justify-center bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors border border-gray-200"
-                      >
-                        <Minus className="h-4 w-4" />
-                      </button>
-                      <input
-                        type="text"
-                        value={quantityInput}
-                        onChange={(e) => setQuantityInput(e.target.value)}
-                        onBlur={handleQuantityBlur}
-                        onKeyDown={(e) => e.key === 'Enter' && handleQuantityBlur()}
-                        className="w-20 h-9 text-center border border-gray-300 rounded-lg font-semibold text-base focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      />
-                      <button
-                        onClick={() => handleQuantityChange(quantity + 1)}
-                        className="w-9 h-9 flex items-center justify-center bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors border border-gray-200"
-                      >
-                        <Plus className="h-4 w-4" />
-                      </button>
+                  {isMultiSize ? (
+                    /* Sizes drive the quantity: one input per available size,
+                       the line quantity is the read-only sum (a split/total
+                       mismatch is structurally impossible). */
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Quantity per size{selectedColour ? `: ${selectedColour.name}` : ''}
+                      </label>
+                      <div className="grid grid-cols-3 gap-2">
+                        {product.sizes.map((s) => {
+                          const disabled = !availableSizeNames.has(s.name);
+                          return (
+                            <div key={s.name} className={`border rounded-lg p-2 text-center ${disabled ? 'bg-gray-50 opacity-50' : 'border-gray-200'}`}>
+                              <div className="text-xs font-semibold text-gray-700 mb-1" title={s.name}>{s.label}</div>
+                              <input
+                                type="number"
+                                min="0"
+                                inputMode="numeric"
+                                disabled={disabled}
+                                value={disabled ? '' : (sizeQtys[s.name] ?? 0)}
+                                onChange={(e) => setSizeQty(s.name, e.target.value)}
+                                className="w-full h-8 text-center border border-gray-300 rounded font-semibold text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-transparent"
+                              />
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <div className="mt-3 flex items-center justify-between">
+                        <span className="text-sm text-gray-600">Total</span>
+                        <span className="text-lg font-bold text-gray-900">{sizeTotal} units</span>
+                      </div>
+                      {sizeTotal > 0 && sizeTotal < minQty && (
+                        <p className="text-xs text-red-500 mt-1 text-right font-medium">
+                          Minimum order {minQty} units, add {minQty - sizeTotal} more
+                        </p>
+                      )}
                     </div>
-                    {/* MOQ hint removed (see audit-configure-quote-moq.md): the Quantity
-                        input already defaults to the product's real MOQ (minQty, L154-155)
-                        and floors at it, so this line was redundant. Commented (not deleted)
-                        so a future UX review can restore the explicit hint. The Details-panel
-                        spec row (~L735) keeps the value as a product attribute. */}
-                    {/* <p className="text-xs text-gray-500 mt-2 text-center">
-                      Minimum order: {minQty} units
-                    </p> */}
-                  </div>
+                  ) : (
+                    /* Single-size / non-clothing: unchanged plain quantity field. */
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-3">Quantity</label>
+                      <div className="flex items-center justify-center gap-2">
+                        <button
+                          onClick={() => handleQuantityChange(quantity - 1)}
+                          className="w-9 h-9 flex items-center justify-center bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors border border-gray-200"
+                        >
+                          <Minus className="h-4 w-4" />
+                        </button>
+                        <input
+                          type="text"
+                          value={quantityInput}
+                          onChange={(e) => setQuantityInput(e.target.value)}
+                          onBlur={handleQuantityBlur}
+                          onKeyDown={(e) => e.key === 'Enter' && handleQuantityBlur()}
+                          className="w-20 h-9 text-center border border-gray-300 rounded-lg font-semibold text-base focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        />
+                        <button
+                          onClick={() => handleQuantityChange(quantity + 1)}
+                          className="w-9 h-9 flex items-center justify-center bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors border border-gray-200"
+                        >
+                          <Plus className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Print positions — one row per UNIQUE position, with
                       a size/method dropdown to choose among sibling rows

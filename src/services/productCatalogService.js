@@ -14,6 +14,7 @@
 
 import { isMockAuth } from '../config/supabase';
 import { getSupabaseClient as getSharedClient } from './supabaseService';
+import { sortSizes, sizeLabel } from '../utils/laltexSizes';
 
 // =====================================================================
 // In-memory cache for cross-navigation reuse.
@@ -1417,6 +1418,51 @@ export const normaliseProduct = (row, supplier) => {
     ? (row.raw_payload?.pricing_model || 'flat')
     : 'laltex';
 
+  // Pivot the Laltex variant matrix (one SKU per colour x size pair) into a
+  // de-duplicated colour list + an ordered size list + a per-colour size
+  // availability list. Non-clothing has a single variant, so this yields one
+  // colour and <=1 size (the size selector only shows when sizes.length > 1).
+  const { pivotColours, pivotSizes } = (() => {
+    const byColour = new Map();
+    const sizeSet = new Set();
+    items.forEach((it, idx) => {
+      const colourName = it.item_colour || it.ItemColour || `Colour ${idx + 1}`;
+      const key = colourName.toLowerCase().trim();
+      const sz = it.item_size || it.ItemSize || null;
+      if (sz) sizeSet.add(sz);
+      if (!byColour.has(key)) {
+        byColour.set(key, {
+          id: colourName,
+          name: colourName,
+          code: it.item_code || it.ItemCode || colourName,
+          hex: it.HexValue || it.hex_value || null,
+          pms: it.pms || it.PMS || null,
+          images: [],
+          plainImages: [],
+          indicator: it.item_indicator || it.ItemIndicator || null,
+          _sizes: new Set(),
+        });
+      }
+      const c = byColour.get(key);
+      if (!c.images.length) {
+        const imgs = (it.item_images || it.ItemImages || []).filter(Boolean);
+        if (imgs.length) c.images = imgs;
+      }
+      if (!c.plainImages.length) {
+        const p = (it.plain_images || it.PlainImages || []).filter(Boolean);
+        if (p.length) c.plainImages = p;
+      }
+      if (!c.hex) c.hex = it.HexValue || it.hex_value || null;
+      if (sz) c._sizes.add(sz);
+    });
+    const colours = [...byColour.values()].map((c) => {
+      const { _sizes, ...rest } = c;
+      return { ...rest, sizes: sortSizes([..._sizes]) };
+    });
+    const sizes = sortSizes([...sizeSet]).map((name) => ({ name, label: sizeLabel(name) }));
+    return { pivotColours: colours, pivotSizes: sizes };
+  })();
+
   return {
     id: row.id,
     code: row.supplier_product_code,
@@ -1437,17 +1483,10 @@ export const normaliseProduct = (row, supplier) => {
     material: row.material || null,
     productDims: row.product_dims || null,
     countryOfOrigin: row.country_of_origin || null,
-    colours: items.map((it, idx) => ({
-      id: it.item_code || it.ItemCode || `colour-${idx}`,
-      name: it.item_colour || it.ItemColour || `Colour ${idx + 1}`,
-      code: it.item_code || it.ItemCode || it.item_colour || it.ItemColour || null,
-      hex: it.HexValue || it.hex_value || null,
-      pms: it.pms || it.PMS || null,
-      images: (it.item_images || it.ItemImages || []).filter(Boolean),
-      plainImages: (it.plain_images || it.PlainImages || []).filter(Boolean),
-      indicator: it.item_indicator || it.ItemIndicator || null,
-      size: it.item_size || it.ItemSize || null,
-    })),
+    colours: pivotColours,
+    // Distinct sizes in garment order (CLAUDE.md: Laltex colour x size matrix).
+    // Empty or single-entry for non-clothing; drives the size selector.
+    sizes: pivotSizes,
     images: images.map((url, i) => ({
       url,
       medium: url,

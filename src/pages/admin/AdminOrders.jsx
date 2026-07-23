@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { Search, Filter, Download, Loader, Eye, Trash2, X } from 'lucide-react';
 import AdminLayout from '../../components/admin/AdminLayout';
 import { supabase } from '../../services/supabaseService';
+import { formatSizeBreakdown } from '../../utils/laltexSizes';
 
 const AdminOrders = ({ user, adminRole }) => {
   const [loading, setLoading] = useState(true);
@@ -63,7 +64,7 @@ const AdminOrders = ({ user, adminRole }) => {
       // A future "Show deleted" toggle would simply drop this clause.
       const { data: ordersData, error } = await supabase
         .from('orders')
-        .select('*')
+        .select('*, order_items(product_name, color, size_breakdown)')
         .is('deleted_at', null)
         .order('created_at', { ascending: false });
 
@@ -371,6 +372,7 @@ const AdminOrders = ({ user, adminRole }) => {
       'Subtotal (ex VAT)',
       'VAT',
       'Total',
+      'Size Breakdown',
       'PO Number',
       'Stripe Payment Intent ID',
       'Tracking Number',
@@ -379,6 +381,16 @@ const AdminOrders = ({ user, adminRole }) => {
     for (const o of rows) {
       const p = o.customer_profiles || {};
       const fullName = [p.first_name, p.last_name].filter(Boolean).join(' ').trim();
+      // Per-order size summary: "Product (Colour) S: 5, M: 10 | ..." for lines
+      // that carry a split; empty when no clothing sizes on the order.
+      const sizeSummary = (o.order_items || [])
+        .map((it) => {
+          const s = formatSizeBreakdown(it.size_breakdown);
+          if (!s) return null;
+          return `${it.product_name}${it.color ? ` (${it.color})` : ''} ${s}`;
+        })
+        .filter(Boolean)
+        .join(' | ');
       lines.push(
         [
           o.order_number,
@@ -392,6 +404,7 @@ const AdminOrders = ({ user, adminRole }) => {
           o.subtotal,
           o.tax_amount,
           o.total_amount,
+          sizeSummary,
           o.po_number,
           o.payment_intent_id,
           o.tracking_number,

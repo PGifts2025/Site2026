@@ -5,6 +5,7 @@ import CustomerLayout from '../../components/customer/CustomerLayout';
 import { supabase } from '../../services/supabaseService';
 import DeliveryAddressForm from '../../components/DeliveryAddressForm';
 import { BUSINESS } from '../../config/business';
+import { formatSizeBreakdown } from '../../utils/laltexSizes';
 
 // Delivery address can no longer be edited by the customer once the order has
 // advanced to (or past) approval — at that point production is committed.
@@ -207,6 +208,9 @@ const CustomerOrderDetail = ({ user }) => {
                     <td className="py-3 pr-2">
                       <div className="font-medium text-gray-900">{item.product_name}</div>
                       {item.color && <div className="text-xs text-gray-500">Colour: {item.color}</div>}
+                      {formatSizeBreakdown(item.size_breakdown) && (
+                        <div className="text-xs text-gray-500">Sizes: {formatSizeBreakdown(item.size_breakdown)}</div>
+                      )}
                     </td>
                     <td className="py-3 text-center text-gray-700">{item.quantity}</td>
                     <td className="py-3 text-right text-gray-700">{formatCurrency(item.unit_price)}</td>

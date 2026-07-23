@@ -6,6 +6,7 @@ import { supabase } from '../../services/supabaseService';
 import { supabaseConfig } from '../../config/supabase';
 import DeliveryAddressForm from '../../components/DeliveryAddressForm';
 import { buildAccountSnapshot, accountHasAddress } from '../../lib/deliveryValidation';
+import { formatSizeBreakdown } from '../../utils/laltexSizes';
 
 /**
  * Render `quote_items.print_areas` (jsonb) as a short descriptor for
@@ -526,6 +527,11 @@ const CustomerQuotes = ({ user }) => {
                             <span className="text-xs bg-gray-100 px-2 py-0.5 rounded ml-2">
                               {formatPrintAreas(item.print_areas)}
                             </span>
+                          )}
+                          {formatSizeBreakdown(item.size_breakdown) && (
+                            <div className="text-xs text-gray-500 mt-1">
+                              Sizes: {formatSizeBreakdown(item.size_breakdown)}
+                            </div>
                           )}
                           <div className="flex items-center gap-2 mt-1">
                             <label className="text-sm text-gray-500">Qty:</label>
