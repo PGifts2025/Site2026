@@ -2,10 +2,9 @@
  * Vercel Cron entry point — Laltex live-stock refresh.
  *
  * SCHEDULE (the single editable value): site/vercel.json crons[] entry for
- * this path. Set to "0 6-22 * * *" = hourly, 17 runs/day. Vercel Cron fires in
- * UTC and cannot track DST, so this maps to 07:00-23:00 UK during BST (summer)
- * and 06:00-22:00 UK during GMT (winter). To change the cadence, edit ONLY that
- * one schedule string — the times are not hardcoded anywhere else.
+ * this path — currently "0 6,9,12,15,18,21 * * *" (every 3 hours, 6 runs/day).
+ * Vercel Cron fires in UTC and cannot track DST. To change the cadence, edit
+ * ONLY that one schedule string — the times are not hardcoded anywhere else.
  *
  * Auth:
  *   Authorization: Bearer ${CRON_SECRET}  — missing/wrong -> 401.
@@ -19,7 +18,12 @@
  *   - Env var missing         -> 500 { missing: [...] }
  *   - Infra failure           -> 500, job_runs row marked 'failed'. Next hour retries.
  *   - Individual product fail -> job_failures row, run continues, response 200.
- *     A failed product keeps its PREVIOUS stock (skipped UPSERT), never wiped.
+ *     A failed product keeps its PREVIOUS stock (skipped UPDATE), never wiped.
+ *     A code in the feed but not in supplier_products is logged as
+ *     'stock_product_not_found' (data mismatch, not a write failure).
+ *
+ * The stock write is a plain UPDATE (never an upsert): a stock refresh must not
+ * create products. See scripts/lib/laltex-stock.js updateStock().
  *
  * Independent of the nightly product sync (sync-laltex) by design (CLAUDE.md
  * §27): a stock-endpoint outage must not block product sync and vice-versa.

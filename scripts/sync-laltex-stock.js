@@ -75,6 +75,7 @@ async function main() {
   console.log(`  fetched      : ${result.fetched}`);
   console.log(`  updated      : ${result.updated}`);
   console.log(`  failed       : ${result.failed}`);
+  console.log(`  not_found    : ${result.notFound ?? 0}`);
   console.log(`  duration_ms  : ${result.durationMs}`);
   if (result.errorMessage) console.log(`  error_message: ${result.errorMessage}`);
   console.log('');

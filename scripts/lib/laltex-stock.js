@@ -243,19 +243,31 @@ export function buildStockMap(stockArray) {
   return { map, counts };
 }
 
-async function upsertStock({ supabaseUrl, serviceRoleKey, supplierId, code, map, nowIso }) {
-  const url = `${supabaseUrl}/rest/v1/supplier_products?on_conflict=supplier_id,supplier_product_code`;
-  await pgRest('POST', url, serviceRoleKey, {
-    // Only these four keys: the two stock columns + the conflict target.
-    // merge-duplicates leaves every other column on the row untouched.
-    body: [{
-      supplier_id: supplierId,
-      supplier_product_code: code,
-      stock: map,
-      stock_checked_at: nowIso,
-    }],
-    extraHeaders: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+/**
+ * Write stock onto an EXISTING supplier_products row via a plain UPDATE.
+ *
+ * A stock refresh must NEVER create a product — products come from the nightly
+ * sync; stock only annotates rows that already exist. UPDATE (not upsert) makes
+ * that structural: there is no INSERT tuple to fail NOT-NULL constraints on
+ * (supplier_products.name is NOT NULL with no default), and a missing product
+ * becomes a visible zero-row anomaly instead of a silently-invented row.
+ *
+ * This replaced a partial-column ON CONFLICT upsert whose INSERT arbiter tuple
+ * carried name=null and 400'd with 23502 on every row (PR #83 incident).
+ *
+ * Only `stock` and `stock_checked_at` are written. Returns the number of rows
+ * updated: 0 means the code is in the Laltex stock feed but not in our table.
+ */
+async function updateStock({ supabaseUrl, serviceRoleKey, supplierId, code, map, nowIso }) {
+  const url = `${supabaseUrl}/rest/v1/supplier_products` +
+    `?supplier_id=eq.${encodeURIComponent(supplierId)}` +
+    `&supplier_product_code=eq.${encodeURIComponent(code)}` +
+    `&select=supplier_product_code`; // keep the returned representation tiny
+  const rows = await pgRest('PATCH', url, serviceRoleKey, {
+    body: { stock: map, stock_checked_at: nowIso },
+    extraHeaders: { Prefer: 'return=representation' },
   });
+  return Array.isArray(rows) ? rows.length : 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -327,8 +339,10 @@ export async function syncStock({
   let fetched = 0;
   let updated = 0;
   let failed = 0;
+  let notFound = 0;
   const totals = { variants: 0, inStock: 0, out: 0, mto: 0 };
   const failedCodes = [];
+  const notFoundCodes = [];
 
   try {
     const codes = await getStockableCodes({ supabaseUrl, serviceRoleKey, supplierId });
@@ -337,7 +351,7 @@ export async function syncStock({
 
     if (fetched === 0) {
       status = 'completed';
-      return { runId, fetched, updated, failed, durationMs: Date.now() - runStart, status };
+      return { runId, fetched, updated, failed, notFound, durationMs: Date.now() - runStart, status };
     }
 
     const nowIso = new Date().toISOString();
@@ -348,7 +362,22 @@ export async function syncStock({
       try {
         const arr = await fetchStock({ laltexApiKey, code });
         const { map, counts } = buildStockMap(arr);
-        await upsertStock({ supabaseUrl, serviceRoleKey, supplierId, code, map, nowIso });
+        const affected = await updateStock({ supabaseUrl, serviceRoleKey, supplierId, code, map, nowIso });
+        if (affected === 0) {
+          // The code exists in Laltex's stock feed but not in supplier_products
+          // — a genuine data mismatch (our catalogue is out of step with the
+          // supplier), distinct from a broken write. Log it as such.
+          notFound += 1;
+          notFoundCodes.push(code);
+          failures.push({
+            job_run_id: runId,
+            supplier_product_code: code,
+            reason: 'stock_product_not_found',
+            error_message: 'code present in Laltex stock feed but not in supplier_products',
+            raw_snippet: truncateRawSnippet({ code }),
+          });
+          return;
+        }
         updated += 1;
         totals.variants += counts.variants;
         totals.inStock += counts.inStock;
@@ -356,20 +385,20 @@ export async function syncStock({
         totals.mto += counts.mto;
       } catch (err) {
         // Per-product failure: log + count, keep going. The row keeps its
-        // previous stock + stock_checked_at (we simply skipped the UPSERT).
+        // previous stock + stock_checked_at (we simply skipped the UPDATE).
         failed += 1;
         failedCodes.push(code);
         failures.push({
           job_run_id: runId,
           supplier_product_code: code,
-          reason: err?.message?.includes('PostgREST') ? 'stock_upsert_failed' : 'stock_fetch_failed',
+          reason: err?.message?.includes('PostgREST') ? 'stock_update_failed' : 'stock_fetch_failed',
           error_message: err?.message?.slice(0, 1000) ?? 'unknown',
           raw_snippet: truncateRawSnippet({ code }),
         });
       } finally {
         done += 1;
         if (done % 200 === 0 || done === codes.length) {
-          log(`[stock] ${done}/${codes.length} — updated=${updated} failed=${failed}`);
+          log(`[stock] ${done}/${codes.length} — updated=${updated} failed=${failed} not_found=${notFound}`);
         }
       }
     });
@@ -382,8 +411,8 @@ export async function syncStock({
     // run is 'completed' at the job level (the failures are logged per-code);
     // only infra errors flip status='failed'. This matches the sync module.
     status = 'completed';
-    log(`[stock] done — updated=${updated} failed=${failed} variants=${totals.variants} ` +
-        `(in=${totals.inStock} out=${totals.out} mto=${totals.mto})`);
+    log(`[stock] done — updated=${updated} failed=${failed} not_found=${notFound} ` +
+        `variants=${totals.variants} (in=${totals.inStock} out=${totals.out} mto=${totals.mto})`);
   } catch (err) {
     errorMessage = err?.message ?? String(err);
     status = 'failed';
@@ -399,19 +428,21 @@ export async function syncStock({
         finished_at: new Date().toISOString(),
         duration_ms: durationMs,
         products_fetched: fetched,
-        products_inserted: 0,
+        products_inserted: 0, // stock NEVER inserts — UPDATE-only by design
         products_updated: updated,
         products_failed: failed,
         error_message: errorMessage,
         metadata: {
           concurrency,
+          not_found: notFound,
           variants_total: totals.variants,
           variants_in_stock: totals.inStock,
           variants_out: totals.out,
           variants_mto: totals.mto,
-          // A bounded sample of failing codes so the run row is self-diagnosing
-          // without a job_failures join. Full list is in job_failures.
+          // Bounded samples so the run row is self-diagnosing without a
+          // job_failures join. Full lists are in job_failures.
           failed_codes_sample: failedCodes.slice(0, 50),
+          not_found_codes_sample: notFoundCodes.slice(0, 50),
         },
       },
     }).catch((finalErr) => {
@@ -424,6 +455,7 @@ export async function syncStock({
     fetched,
     updated,
     failed,
+    notFound,
     durationMs: Date.now() - runStart,
     status,
     errorMessage: errorMessage ?? undefined,
