@@ -5469,3 +5469,101 @@ into a stacked base branch, lost in #59's squash-merge, and shipped broken to
 production because no post-merge production check was run. Diagnosed in
 [`audit-authcallback-live-failure.md`](../audit-authcallback-live-failure.md),
 recovered by PR #63.
+
+---
+
+## 59. LALTEX LIVE STOCK — HOURLY REFRESH + INDICATIVE AVAILABILITY
+
+Laltex exposes per-variant stock at `GET /trade/api/stocks/{code}` (NO `/v1/`;
+the PR #81 step-0 404 was a path error — see
+[`audit-laltex-stock-availability.md`](../audit-laltex-stock-availability.md)).
+One call returns every colour x size variant, keyed by `ProductCode` which is
+byte-identical to our stored `items[].item_code` (120/120 join verified). An
+hourly cron refreshes stock into a dedicated column; the size selector shows
+indicative availability. Stock is a **warn-not-block** signal, never a hard gate.
+
+### 59.1 FreeStock semantics (DO NOT get wrong)
+
+| FreeStock | Meaning | Stored as | UI |
+|---|---|---|---|
+| `> 0` | in stock (that many) | `{ free: N }` | quiet; "N left" only when N ≤ 20 (`LOW_STOCK_THRESHOLD`) |
+| `0` | out of stock now | `{ free: 0 }` | greyed + disabled size; DueIns ETA if present |
+| `-1` | **Made To Order** | `{ free: -1, mto: true }` | "Made to order" badge, **fully orderable**, NEVER "out of stock" |
+| absent / stale | unknown | (no entry) | reverts to pre-stock display (no badge, no grey, no cap) |
+
+`DueIns: [{DueInQty, DueInETA}]` → "More due ~<date>".
+
+### 59.2 Storage — dedicated columns, not folded into items[]
+
+Migration [`20260725_supplier_stock.sql`](../supabase/migrations/20260725_supplier_stock.sql)
+(no BEGIN/COMMIT, idempotent, verifying SELECT returns 3 rows) adds:
+- `supplier_products.stock jsonb` — map `item_code -> { free, mto?, due_ins? }`.
+- `supplier_products.stock_checked_at timestamptz` — last refresh time.
+- extends `job_runs_job_type_check` to allow `job_type='stock'`.
+
+Stock is **volatile** (hourly) whereas `items[]` is product data (nightly).
+Folding stock into `items[]` would couple a fast refresh to the product row and
+force rewriting product data every stock run. The stock UPSERT touches ONLY
+`{ stock, stock_checked_at }` via PostgREST merge-duplicates — every other
+column is left alone. This mirrors the sync/embed split (§27): a stock-endpoint
+outage never blocks product sync and vice-versa.
+
+### 59.3 The stock cron
+
+| File | Role |
+|---|---|
+| `scripts/lib/laltex-stock.js` | `syncStock(...)` — reads non-retired Laltex codes, fetches per product (bounded concurrency, default 8), builds the map, UPSERTs, records `job_type='stock'` in `job_runs`/`job_failures` |
+| `api/cron/sync-laltex-stock.js` | Vercel cron entry, Bearer `CRON_SECRET`, `maxDuration: 300` |
+| `scripts/sync-laltex-stock.js` | Local CLI runner |
+| `scripts/diagnostic/probe-stock-parse.mjs` | Dry-run: fetch + parse a few codes, NO DB write |
+
+**Schedule (the single editable value):** the `vercel.json` crons[] entry
+`{ "path": "/api/cron/sync-laltex-stock", "schedule": "0 6-22 * * *" }` — hourly,
+17 runs/day. Vercel Cron is UTC and cannot track DST, so this is 07:00–23:00 UK
+in BST and 06:00–22:00 UK in GMT. Change cadence by editing ONLY that string.
+
+**Partial-failure survivable:** one product's fetch/upsert failure lands in
+`job_failures` (`reason='stock_fetch_failed'` / `'stock_upsert_failed'`) and the
+run continues. A failed product KEEPS its previous stock + `stock_checked_at`
+(the UPSERT is simply skipped) so retrieval never breaks on a partial run. Only
+an infra error (can't resolve supplier / open the run row) fails the whole run.
+`job_runs.metadata.failed_codes_sample` carries up to 50 failing codes for quick
+diagnosis; the full list is in `job_failures`.
+
+### 59.4 Display (LaltexProductView + `src/utils/stockDisplay.js`)
+
+- Stock shows only when the snapshot is **fresh** (`isStockFresh`, window
+  `STOCK_STALE_HOURS = 18`, sized to survive the overnight cron pause without
+  going stale). Stale/null → the pre-stock display (PR #81 behaviour) with NO
+  badges. Freshness note: "Stock indicative, confirmed at order. Checked N ago."
+- Per size: out → grey + disabled + DueIns ETA; low → "N left"; MTO → badge +
+  orderable; over-entered qty → amber "Over stock" (warn, not block).
+- Colour tile greys (opacity + grayscale, still clickable) **only** when EVERY
+  available size is a genuine zero AND none is MTO AND all have data
+  (`isColourSoldOut`). Any unknown / MTO / positive stock → not greyed. This
+  never greys on partial/absent data (avoids the §37 silent-swap failure class).
+- Non-clothing (single-variant) uses the colour-level `stock` for the same
+  low/out/MTO/over notes under the plain quantity input.
+
+### 59.5 Invariants — DO NOT BREAK
+
+- **`FreeStock === -1` is Made To Order, never out of stock.** It stays fully
+  orderable and shows a "Made to order" badge.
+- **Warn, never hard-block.** Out-of-stock greys a single size, but MTO/unknown
+  stay orderable and over-stock only warns. The team reconciles against the live
+  PO (the orders@ alert, §... PR #80, is the backstop).
+- **Never present stale or missing stock as out of stock.** Absent/stale →
+  unknown → revert to the no-stock display, not a zero.
+- **Never fold stock into `items[]` JSONB.** Dedicated `stock` column only; the
+  UPSERT writes only the two stock columns.
+- **Never couple the stock cron to the product sync.** Separate route, separate
+  `job_type`, separate failure domain (§27).
+- **The schedule lives in ONE place** — the `vercel.json` cron entry. Do not
+  duplicate the times into code.
+- **Do NOT set `stock`/`stock_checked_at` in any product-sync or migrate UPSERT
+  body.** Only the stock cron writes them (same discipline as
+  `is_core_product`/`margin_pct_override`, §31.8/§46.5), so a nightly product
+  sync never clobbers fresher stock.
+- **The stock UPSERT must keep `Prefer: resolution=merge-duplicates` with only
+  the two stock columns + conflict keys.** Adding other columns to that body
+  would overwrite product/pricing data with nulls.
