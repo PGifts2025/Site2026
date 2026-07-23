@@ -1418,6 +1418,27 @@ export const normaliseProduct = (row, supplier) => {
     ? (row.raw_payload?.pricing_model || 'flat')
     : 'laltex';
 
+  // Live stock (hourly refresh, CLAUDE.md §... / audit-laltex-stock-availability.md):
+  // supplier_products.stock is a map of item_code -> { free, mto?, due_ins? }.
+  // We join it onto each variant by item_code here so the size selector can
+  // annotate availability. A null/absent map (never refreshed, or a
+  // PGifts-Direct mirror row) yields no per-size stock -> the UI reverts to
+  // the no-stock display. Freshness / staleness is decided at read time in the
+  // component using stockCheckedAt.
+  const stockMap = (row.stock && typeof row.stock === 'object' && !Array.isArray(row.stock))
+    ? row.stock
+    : null;
+  const readStockEntry = (rawEntry) => {
+    if (!rawEntry || typeof rawEntry !== 'object') return null;
+    const freeNum = Number(rawEntry.free);
+    const free = Number.isFinite(freeNum) ? freeNum : null;
+    const mto = rawEntry.mto === true || free === -1;
+    const dueIns = Array.isArray(rawEntry.due_ins)
+      ? rawEntry.due_ins.map((d) => ({ qty: Number(d?.qty) || 0, eta: d?.eta || null }))
+      : [];
+    return { free, mto, dueIns };
+  };
+
   // Pivot the Laltex variant matrix (one SKU per colour x size pair) into a
   // de-duplicated colour list + an ordered size list + a per-colour size
   // availability list. Non-clothing has a single variant, so this yields one
@@ -1429,18 +1450,23 @@ export const normaliseProduct = (row, supplier) => {
       const colourName = it.item_colour || it.ItemColour || `Colour ${idx + 1}`;
       const key = colourName.toLowerCase().trim();
       const sz = it.item_size || it.ItemSize || null;
+      const itemCode = it.item_code || it.ItemCode || null;
       if (sz) sizeSet.add(sz);
       if (!byColour.has(key)) {
         byColour.set(key, {
           id: colourName,
           name: colourName,
-          code: it.item_code || it.ItemCode || colourName,
+          code: itemCode || colourName,
           hex: it.HexValue || it.hex_value || null,
           pms: it.pms || it.PMS || null,
           images: [],
           plainImages: [],
           indicator: it.item_indicator || it.ItemIndicator || null,
           _sizes: new Set(),
+          // sizeName -> { free, mto, dueIns }; null-valued when no stock data.
+          _sizeStock: {},
+          // Colour-level stock for single-variant (non-clothing) products.
+          _variantStock: null,
         });
       }
       const c = byColour.get(key);
@@ -1454,10 +1480,22 @@ export const normaliseProduct = (row, supplier) => {
       }
       if (!c.hex) c.hex = it.HexValue || it.hex_value || null;
       if (sz) c._sizes.add(sz);
+      // Attach stock (by item_code) to the size for clothing, or to the colour
+      // for single-variant products.
+      if (stockMap && itemCode && Object.prototype.hasOwnProperty.call(stockMap, itemCode)) {
+        const entry = readStockEntry(stockMap[itemCode]);
+        if (sz) c._sizeStock[sz] = entry;
+        else if (!c._variantStock) c._variantStock = entry;
+      }
     });
     const colours = [...byColour.values()].map((c) => {
-      const { _sizes, ...rest } = c;
-      return { ...rest, sizes: sortSizes([..._sizes]) };
+      const { _sizes, _sizeStock, _variantStock, ...rest } = c;
+      return {
+        ...rest,
+        sizes: sortSizes([..._sizes]),
+        sizeStock: _sizeStock,
+        stock: _variantStock,
+      };
     });
     const sizes = sortSizes([...sizeSet]).map((name) => ({ name, label: sizeLabel(name) }));
     return { pivotColours: colours, pivotSizes: sizes };
@@ -1487,6 +1525,9 @@ export const normaliseProduct = (row, supplier) => {
     // Distinct sizes in garment order (CLAUDE.md: Laltex colour x size matrix).
     // Empty or single-entry for non-clothing; drives the size selector.
     sizes: pivotSizes,
+    // When live stock was last refreshed (hourly cron). null for never-checked
+    // or PGifts-Direct mirror rows. Drives the freshness note + stale fallback.
+    stockCheckedAt: row.stock_checked_at || null,
     images: images.map((url, i) => ({
       url,
       medium: url,

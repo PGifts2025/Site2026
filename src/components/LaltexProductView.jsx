@@ -53,6 +53,14 @@ import { scheduleMarginForTier } from '../../scripts/lib/laltex-margin.js';
 import { isBucketADesignable } from '../utils/laltexPositionHeuristics';
 import { taxableNetUnit } from '../utils/vat';
 import { getSwatchHex, isLightHex } from '../utils/colourSwatches';
+import {
+  isStockFresh,
+  sizeStockState,
+  isColourSoldOut,
+  exceedsStock,
+  formatCheckedAgo,
+  nextDueLine,
+} from '../utils/stockDisplay';
 import AboveCeilingNotice from './AboveCeilingNotice';
 
 // ---------------------------------------------------------------------------
@@ -267,6 +275,36 @@ const LaltexProductView = ({ product }) => {
     const n = Math.max(0, Math.floor(Number(raw) || 0));
     setSizeQtys((prev) => ({ ...prev, [name]: n }));
   };
+
+  // ----- Live stock (hourly refresh; audit-laltex-stock-availability.md) -----
+  // Stock is only shown when the snapshot is fresh. Stale / never-checked
+  // (PGifts-Direct mirror, or cron down for most of a day) -> falls back to the
+  // pre-stock display: no badges, nothing greyed, no cap.
+  const stockFresh = useMemo(
+    () => isStockFresh(product?.stockCheckedAt),
+    [product?.stockCheckedAt],
+  );
+  const stockCheckedAgo = useMemo(
+    () => (stockFresh ? formatCheckedAgo(product?.stockCheckedAt) : null),
+    [stockFresh, product?.stockCheckedAt],
+  );
+  // Per-size stock state for the SELECTED colour (only when fresh).
+  const sizeStockFor = (name) => {
+    if (!stockFresh || !selectedColour) return { state: 'unknown', free: null, dueIns: [] };
+    return sizeStockState(selectedColour.sizeStock?.[name]);
+  };
+  // Single-variant (non-clothing) colour-level stock for the selected colour.
+  const singleStock = useMemo(() => {
+    if (!stockFresh || !selectedColour) return { state: 'unknown', free: null, dueIns: [] };
+    return sizeStockState(selectedColour.stock);
+  }, [stockFresh, selectedColour]);
+  // Does any entered size quantity exceed its current free stock? (warn, not block)
+  const anySizeOverStock = useMemo(() => {
+    if (!stockFresh || !selectedColour) return false;
+    return Object.entries(sizeQtys).some(([name, q]) => (
+      availableSizeNames.has(name) && exceedsStock(selectedColour.sizeStock?.[name], q)
+    ));
+  }, [stockFresh, selectedColour, sizeQtys, availableSizeNames]);
 
   const heroImage = useMemo(() => {
     if (colourGalleryUrl) return colourGalleryUrl;
@@ -736,6 +774,11 @@ const LaltexProductView = ({ product }) => {
                     // image-less products (useHexMap). null = named-chip fallback.
                     const fillHex = c.hex || (useHexMap ? getSwatchHex(c.name) : null);
                     const selected = c.id === selectedColourId;
+                    // Grey the tile only when EVERY available size is a genuine
+                    // zero and none is Made To Order (isColourSoldOut is false on
+                    // any unknown / stale / MTO / positive stock). Still
+                    // clickable so the customer can inspect it.
+                    const soldOut = isColourSoldOut(c, c.sizes, stockFresh);
                     return (
                     <button
                       key={c.id}
@@ -743,13 +786,13 @@ const LaltexProductView = ({ product }) => {
                         setSelectedColourId(c.id);
                         setColourGalleryUrl(null);
                       }}
-                      className={`w-14 h-14 rounded-lg border-2 overflow-hidden bg-white transition-all ${
+                      className={`relative w-14 h-14 rounded-lg border-2 overflow-hidden bg-white transition-all ${
                         selected
                           ? 'border-blue-600 ring-2 ring-offset-1 ring-blue-500 shadow-md scale-105'
                           : 'border-gray-200 hover:border-gray-300'
-                      }`}
-                      title={c.name}
-                      aria-label={c.name}
+                      } ${soldOut ? 'opacity-40 grayscale' : ''}`}
+                      title={soldOut ? `${c.name} — currently out of stock` : c.name}
+                      aria-label={soldOut ? `${c.name} (out of stock)` : c.name}
                     >
                       {c.images?.[0] ? (
                         <img
@@ -937,9 +980,18 @@ const LaltexProductView = ({ product }) => {
                       </label>
                       <div className="grid grid-cols-3 gap-2">
                         {product.sizes.map((s) => {
-                          const disabled = !availableSizeNames.has(s.name);
+                          const notInColour = !availableSizeNames.has(s.name);
+                          const st = sizeStockFor(s.name);
+                          // Out-of-stock sizes are greyed + disabled, but the
+                          // customer is never hard-blocked at the product level:
+                          // Made-To-Order and unknown/stale sizes stay orderable.
+                          const outOfStock = st.state === 'out';
+                          const disabled = notInColour || outOfStock;
+                          const qty = Number(sizeQtys[s.name]) || 0;
+                          const over = !disabled && exceedsStock(selectedColour?.sizeStock?.[s.name], qty);
+                          const due = outOfStock ? nextDueLine(st.dueIns) : null;
                           return (
-                            <div key={s.name} className={`border rounded-lg p-2 text-center ${disabled ? 'bg-gray-50 opacity-50' : 'border-gray-200'}`}>
+                            <div key={s.name} className={`border rounded-lg p-2 text-center ${disabled ? 'bg-gray-50 opacity-50' : (over ? 'border-amber-300' : 'border-gray-200')}`}>
                               <div className="text-xs font-semibold text-gray-700 mb-1" title={s.name}>{s.label}</div>
                               <input
                                 type="number"
@@ -950,6 +1002,22 @@ const LaltexProductView = ({ product }) => {
                                 onChange={(e) => setSizeQty(s.name, e.target.value)}
                                 className="w-full h-8 text-center border border-gray-300 rounded font-semibold text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-transparent"
                               />
+                              {/* Indicative per-size stock. Quiet unless there's
+                                  something to say (low / out / made-to-order). */}
+                              {!notInColour && st.state === 'low' && (
+                                <div className="mt-1 text-[10px] leading-tight font-medium text-amber-600">{st.free} left</div>
+                              )}
+                              {!notInColour && st.state === 'mto' && (
+                                <div className="mt-1 text-[10px] leading-tight font-medium text-indigo-600">Made to order</div>
+                              )}
+                              {!notInColour && outOfStock && (
+                                <div className="mt-1 text-[10px] leading-tight font-medium text-gray-500">
+                                  {due || 'Out of stock'}
+                                </div>
+                              )}
+                              {over && (
+                                <div className="mt-1 text-[10px] leading-tight font-medium text-amber-600">Over stock</div>
+                              )}
                             </div>
                           );
                         })}
@@ -961,6 +1029,19 @@ const LaltexProductView = ({ product }) => {
                       {sizeTotal > 0 && sizeTotal < minQty && (
                         <p className="text-xs text-red-500 mt-1 text-right font-medium">
                           Minimum order {minQty} units, add {minQty - sizeTotal} more
+                        </p>
+                      )}
+                      {/* Over-stock warning: we warn, we never block. Stock is
+                          indicative (up to ~a few hours stale) and the team
+                          reconciles against the live PO before fulfilment. */}
+                      {anySizeOverStock && (
+                        <p className="text-xs text-amber-600 mt-1 text-right font-medium">
+                          Some sizes exceed current stock. You can still order, we&apos;ll confirm lead time.
+                        </p>
+                      )}
+                      {stockCheckedAgo && (
+                        <p className="text-[11px] text-gray-400 mt-2">
+                          Stock indicative, confirmed at order. Checked {stockCheckedAgo}.
                         </p>
                       )}
                     </div>
@@ -990,6 +1071,30 @@ const LaltexProductView = ({ product }) => {
                           <Plus className="h-4 w-4" />
                         </button>
                       </div>
+                      {/* Single-variant (non-clothing) stock note. Same rules:
+                          indicative, never a hard block. */}
+                      {singleStock.state === 'low' && (
+                        <p className="mt-2 text-xs text-amber-600 text-center font-medium">Low stock — {singleStock.free} available.</p>
+                      )}
+                      {singleStock.state === 'mto' && (
+                        <p className="mt-2 text-xs text-indigo-600 text-center font-medium">Made to order — available on a longer lead time.</p>
+                      )}
+                      {singleStock.state === 'out' && (
+                        <p className="mt-2 text-xs text-gray-500 text-center font-medium">
+                          Currently out of stock{nextDueLine(singleStock.dueIns) ? `. ${nextDueLine(singleStock.dueIns)}` : ''}. You can still order, we&apos;ll confirm lead time.
+                        </p>
+                      )}
+                      {singleStock.state !== 'out' && singleStock.state !== 'mto'
+                        && exceedsStock(selectedColour?.stock, quantity) && (
+                        <p className="mt-2 text-xs text-amber-600 text-center font-medium">
+                          Order exceeds current stock. You can still order, we&apos;ll confirm lead time.
+                        </p>
+                      )}
+                      {stockCheckedAgo && (
+                        <p className="mt-2 text-[11px] text-gray-400 text-center">
+                          Stock indicative, confirmed at order. Checked {stockCheckedAgo}.
+                        </p>
+                      )}
                     </div>
                   )}
 
