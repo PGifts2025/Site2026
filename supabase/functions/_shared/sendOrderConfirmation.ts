@@ -109,7 +109,7 @@ export async function sendOrderConfirmation(
 
   const { data: itemsData } = await supabase
     .from("order_items")
-    .select("product_name, color, quantity, line_total, print_areas")
+    .select("product_name, color, quantity, line_total, print_areas, size_breakdown")
     .eq("order_id", orderId);
   const items = itemsData || [];
 
@@ -146,6 +146,16 @@ export async function sendOrderConfirmation(
     return [];
   };
 
+  // Per-size split (exact feed size names, already garment-ordered).
+  // Mirrors src/utils/laltexSizes.formatSizeBreakdown (Deno can't import src/).
+  const formatSizeBreakdown = (sb: any): string => {
+    if (!sb || typeof sb !== "object") return "";
+    return Object.entries(sb)
+      .filter(([, q]) => Number(q) > 0)
+      .map(([name, q]) => `${name}: ${q}`)
+      .join(", ");
+  };
+
   const itemsHtml = items.map((item: any) => {
     const selections = formatPrintSelections(item.print_areas);
     const selectionsHtml = selections.length > 0
@@ -153,10 +163,14 @@ export async function sendOrderConfirmation(
           .map((s) => `<div>${s}</div>`)
           .join("")}</div>`
       : "";
+    const sizes = formatSizeBreakdown(item.size_breakdown);
+    const sizesHtml = sizes
+      ? `<div style="margin-top:4px; font-size:12px; color:#374151;">Sizes: ${sizes}</div>`
+      : "";
     return `
       <tr>
         <td style="padding: 8px 0; border-bottom: 1px solid #f0f0f0;">
-          ${item.product_name}${item.color ? ` (${item.color})` : ""}${selectionsHtml}
+          ${item.product_name}${item.color ? ` (${item.color})` : ""}${sizesHtml}${selectionsHtml}
         </td>
         <td style="text-align: right; padding: 8px 0; border-bottom: 1px solid #f0f0f0; vertical-align: top;">${item.quantity}</td>
         <td style="text-align: right; padding: 8px 0; border-bottom: 1px solid #f0f0f0; vertical-align: top;">£${Number(item.line_total).toFixed(2)}</td>
@@ -166,9 +180,12 @@ export async function sendOrderConfirmation(
   const itemsText = items
     .map((item: any) => {
       const selections = formatPrintSelections(item.print_areas);
+      const sizes = formatSizeBreakdown(item.size_breakdown);
       const head = `- ${item.product_name}${item.color ? ` (${item.color})` : ""} × ${item.quantity} — £${Number(item.line_total).toFixed(2)}`;
-      if (selections.length === 0) return head;
-      return [head, ...selections.map((s) => `    ${s}`)].join("\n");
+      const extra: string[] = [];
+      if (sizes) extra.push(`    Sizes: ${sizes}`);
+      for (const s of selections) extra.push(`    ${s}`);
+      return extra.length ? [head, ...extra].join("\n") : head;
     })
     .join("\n");
 

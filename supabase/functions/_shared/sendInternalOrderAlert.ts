@@ -74,6 +74,17 @@ function productCodeFromNotes(notes: unknown): string | null {
   return m ? m[1] : null;
 }
 
+// Per-size split for the supplier PO. Renders the EXACT feed size names (keys
+// are already in garment order) so the team can match them to Laltex.
+// Mirrors src/utils/laltexSizes.formatSizeBreakdown (Deno can't import src/).
+function formatSizeBreakdown(sb: any): string {
+  if (!sb || typeof sb !== "object") return "";
+  return Object.entries(sb)
+    .filter(([, q]) => Number(q) > 0)
+    .map(([name, q]) => `${name}: ${q}`)
+    .join(", ");
+}
+
 async function postResend(
   apiKey: string,
   payload: Record<string, unknown>,
@@ -159,7 +170,7 @@ export async function sendInternalOrderAlert(
     try {
       const { data: itemsData } = await supabase
         .from("order_items")
-        .select("product_name, quantity, unit_price, color, print_areas, taxable_net_unit, line_vat, notes, product_id")
+        .select("product_name, quantity, unit_price, color, print_areas, size_breakdown, taxable_net_unit, line_vat, notes, product_id")
         .eq("order_id", orderId);
       const items = itemsData || [];
 
@@ -219,10 +230,14 @@ export async function sendInternalOrderAlert(
         const selHtml = sels.length
           ? `<div style="margin-top:4px; font-size:12px; color:#6b7280;">${sels.map((s) => `<div>${esc(s)}</div>`).join("")}</div>`
           : "";
+        const sizes = formatSizeBreakdown(item.size_breakdown);
+        const sizeHtml = sizes
+          ? `<div style="margin-top:4px; font-size:12px; color:#1a1a1a; font-weight:600;">Sizes: ${esc(sizes)}</div>`
+          : "";
         return `
                 <tr>
                   <td style="padding:8px 0; border-bottom:1px solid #f0f0f0; font-size:13px;">
-                    <strong>${esc(item.product_name)}</strong>${code ? ` <span style="color:#6b7280;">(${esc(code)})</span>` : ""}${item.color ? `<br><span style="color:#6b7280;">Colour: ${esc(item.color)}</span>` : ""}${selHtml}
+                    <strong>${esc(item.product_name)}</strong>${code ? ` <span style="color:#6b7280;">(${esc(code)})</span>` : ""}${item.color ? `<br><span style="color:#6b7280;">Colour: ${esc(item.color)}</span>` : ""}${sizeHtml}${selHtml}
                   </td>
                   <td style="padding:8px 0; border-bottom:1px solid #f0f0f0; text-align:center; font-size:13px; vertical-align:top;">${item.quantity}</td>
                   <td style="padding:8px 0; border-bottom:1px solid #f0f0f0; text-align:right; font-size:13px; vertical-align:top;">${money(item.unit_price)}</td>
@@ -287,8 +302,12 @@ ${zeroRatedNote}`;
       const itemsText = items.map((item: any) => {
         const code = productCodeFromNotes(item.notes);
         const sels = formatPrintSelections(item.print_areas);
+        const sizes = formatSizeBreakdown(item.size_breakdown);
         const head = `- ${item.product_name}${code ? ` (${code})` : ""}${item.color ? ` [${item.color}]` : ""} x${item.quantity} @ ${money(item.unit_price)} = ${money((Number(item.unit_price) || 0) * (Number(item.quantity) || 0))}`;
-        return sels.length ? [head, ...sels.map((s) => `    ${s}`)].join("\n") : head;
+        const extra: string[] = [];
+        if (sizes) extra.push(`    Sizes: ${sizes}`);
+        for (const s of sels) extra.push(`    ${s}`);
+        return extra.length ? [head, ...extra].join("\n") : head;
       }).join("\n");
 
       const deliveryText = addr
