@@ -5,6 +5,7 @@ import AdminLayout from '../../components/admin/AdminLayout';
 import { supabase, getArtworkSignedUrl, downloadArtworkFile } from '../../services/supabaseService';
 import { supabaseConfig } from '../../config/supabase';
 import { validateDeliveryForApproval, DELIVERY_FIELD_LABELS } from '../../lib/deliveryValidation';
+import { formatSizeBreakdown } from '../../utils/laltexSizes';
 
 // Artwork helpers (mirrors AdminOrders.jsx — kept local to avoid a shared
 // module we don't have a home for yet).
@@ -381,6 +382,9 @@ const AdminOrderDetail = ({ user, adminRole }) => {
                       <h3 className="font-semibold text-gray-900">{item.product_name}</h3>
                       {item.color && (
                         <p className="text-sm text-gray-600">Color: {item.color}</p>
+                      )}
+                      {formatSizeBreakdown(item.size_breakdown) && (
+                        <p className="text-sm text-gray-600">Sizes: {formatSizeBreakdown(item.size_breakdown)}</p>
                       )}
                       <p className="text-sm text-gray-600">Quantity: {item.quantity}</p>
                     </div>
