@@ -24,6 +24,7 @@
 import Stripe from "https://esm.sh/stripe@17?target=deno";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { sendOrderConfirmation } from "../_shared/sendOrderConfirmation.ts";
+import { sendInternalOrderAlert } from "../_shared/sendInternalOrderAlert.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -185,6 +186,25 @@ Deno.serve(async (req: Request) => {
         console.error(
           `[stripe-webhook] event ${event.id} email step failed (non-fatal):`,
           emailErr,
+        );
+      }
+
+      // Internal orders@ alert — idempotent across both payment paths, never
+      // throws. Best-effort: must NOT change the 200 response.
+      try {
+        const alertResult = await sendInternalOrderAlert(
+          supabase,
+          orderId,
+          { customer_email: session.customer_email ?? null },
+        );
+        console.log(
+          `[stripe-webhook] event ${event.id} sendInternalOrderAlert result:`,
+          alertResult,
+        );
+      } catch (alertErr) {
+        console.error(
+          `[stripe-webhook] event ${event.id} internal alert step failed (non-fatal):`,
+          alertErr,
         );
       }
 

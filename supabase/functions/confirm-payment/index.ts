@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { sendOrderConfirmation } from "../_shared/sendOrderConfirmation.ts";
+import { sendInternalOrderAlert } from "../_shared/sendInternalOrderAlert.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -115,6 +116,15 @@ Deno.serve(async (req: Request) => {
       );
     } catch (emailErr) {
       console.error("[confirm-payment] Email step failed (non-fatal):", emailErr);
+    }
+
+    // Internal orders@ alert — separate helper, idempotent across both payment
+    // paths, never throws. Best-effort: must NOT affect the response.
+    try {
+      const alertResult = await sendInternalOrderAlert(supabase, orderId, stripeSession);
+      console.log("[confirm-payment] sendInternalOrderAlert result:", alertResult);
+    } catch (alertErr) {
+      console.error("[confirm-payment] Internal alert step failed (non-fatal):", alertErr);
     }
 
     return new Response(
