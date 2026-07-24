@@ -5479,7 +5479,7 @@ the PR #81 step-0 404 was a path error — see
 [`audit-laltex-stock-availability.md`](../audit-laltex-stock-availability.md)).
 One call returns every colour x size variant, keyed by `ProductCode` which is
 byte-identical to our stored `items[].item_code` (120/120 join verified). An
-hourly cron refreshes stock into a dedicated column; the size selector shows
+daily cron refreshes stock into a dedicated column; the size selector shows
 indicative availability. Stock is a **warn-not-block** signal, never a hard gate.
 
 ### 59.1 FreeStock semantics (DO NOT get wrong)
@@ -5501,7 +5501,7 @@ Migration [`20260725_supplier_stock.sql`](../supabase/migrations/20260725_suppli
 - `supplier_products.stock_checked_at timestamptz` — last refresh time.
 - extends `job_runs_job_type_check` to allow `job_type='stock'`.
 
-Stock is **volatile** (hourly) whereas `items[]` is product data (nightly).
+Stock is **volatile** (refreshed daily) whereas `items[]` is product data (nightly).
 Folding stock into `items[]` would couple a fast refresh to the product row and
 force rewriting product data every stock run. The stock UPSERT touches ONLY
 `{ stock, stock_checked_at }` via PostgREST merge-duplicates — every other
@@ -5512,23 +5512,38 @@ outage never blocks product sync and vice-versa.
 
 | File | Role |
 |---|---|
-| `scripts/lib/laltex-stock.js` | `syncStock(...)` — reads non-retired Laltex codes, fetches per product (bounded concurrency, default 8), builds the map, UPSERTs, records `job_type='stock'` in `job_runs`/`job_failures` |
+| `scripts/lib/laltex-stock.js` | `syncStock(...)` — reads non-retired Laltex codes, fetches per product (bounded concurrency, default 8), builds the map, **UPDATEs** matching rows (never inserts), records `job_type='stock'` in `job_runs`/`job_failures` |
 | `api/cron/sync-laltex-stock.js` | Vercel cron entry, Bearer `CRON_SECRET`, `maxDuration: 300` |
 | `scripts/sync-laltex-stock.js` | Local CLI runner |
 | `scripts/diagnostic/probe-stock-parse.mjs` | Dry-run: fetch + parse a few codes, NO DB write |
 
-**Schedule (the single editable value):** the `vercel.json` crons[] entry
-`{ "path": "/api/cron/sync-laltex-stock", "schedule": "0 6-22 * * *" }` — hourly,
-17 runs/day. Vercel Cron is UTC and cannot track DST, so this is 07:00–23:00 UK
-in BST and 06:00–22:00 UK in GMT. Change cadence by editing ONLY that string.
+**The write is a plain UPDATE, NOT an upsert (PR #83 incident fix).** A stock
+refresh must never create a product — products come from the nightly sync; stock
+only annotates rows that already exist. The first upsert attempt used a
+partial-column `ON CONFLICT (supplier_id, supplier_product_code)` body; because
+`supplier_products.name` is `NOT NULL` with no default, the INSERT arbiter tuple
+carried `name=null` and 400'd with **23502 on all 1194 rows** (the nightly sync
+survives the same target only because it sends full rows). `updateStock` does
+`PATCH ?supplier_id=eq.&supplier_product_code=eq.` writing ONLY
+`{ stock, stock_checked_at }`. A zero-row UPDATE means the code is in Laltex's
+stock feed but not in `supplier_products` — logged as
+`reason='stock_product_not_found'` (a data mismatch, distinct from a broken
+write), never a silently-invented row.
 
-**Partial-failure survivable:** one product's fetch/upsert failure lands in
-`job_failures` (`reason='stock_fetch_failed'` / `'stock_upsert_failed'`) and the
-run continues. A failed product KEEPS its previous stock + `stock_checked_at`
-(the UPSERT is simply skipped) so retrieval never breaks on a partial run. Only
-an infra error (can't resolve supplier / open the run row) fails the whole run.
-`job_runs.metadata.failed_codes_sample` carries up to 50 failing codes for quick
-diagnosis; the full list is in `job_failures`.
+**Schedule (the single editable value):** the `vercel.json` crons[] entry
+`{ "path": "/api/cron/sync-laltex-stock", "schedule": "0 6 * * *" }` — daily at
+06:00 UTC. **Vercel's Hobby plan caps cron jobs at once per day**, so any more
+frequent expression fails at deployment. Vercel Cron is UTC and cannot track
+DST. Change cadence by editing ONLY that string.
+
+**Partial-failure survivable:** one product's fetch/update failure lands in
+`job_failures` (`reason='stock_fetch_failed'` / `'stock_update_failed'` /
+`'stock_product_not_found'`) and the run continues. A failed product KEEPS its
+previous stock + `stock_checked_at` (the UPDATE is simply skipped) so retrieval
+never breaks on a partial run. Only an infra error (can't resolve supplier /
+open the run row) fails the whole run. `job_runs.metadata.failed_codes_sample` /
+`not_found_codes_sample` carry up to 50 codes each for quick diagnosis; the full
+list is in `job_failures`.
 
 ### 59.4 Display (LaltexProductView + `src/utils/stockDisplay.js`)
 
@@ -5555,15 +5570,23 @@ diagnosis; the full list is in `job_failures`.
 - **Never present stale or missing stock as out of stock.** Absent/stale →
   unknown → revert to the no-stock display, not a zero.
 - **Never fold stock into `items[]` JSONB.** Dedicated `stock` column only; the
-  UPSERT writes only the two stock columns.
+  UPDATE writes only the two stock columns.
+- **The stock job must NEVER INSERT into `supplier_products`.** It is UPDATE-only
+  by design (`updateStock`). A partial-column upsert 400's on `name NOT NULL`
+  (23502) — the PR #83 incident. If a code has no matching row, that is a data
+  mismatch to log (`stock_product_not_found`), not a row to create.
+- **The stock UPDATE writes ONLY `{ stock, stock_checked_at }`.** No other
+  column, no INSERT fallback.
 - **Never couple the stock cron to the product sync.** Separate route, separate
   `job_type`, separate failure domain (§27).
 - **The schedule lives in ONE place** — the `vercel.json` cron entry. Do not
   duplicate the times into code.
-- **Do NOT set `stock`/`stock_checked_at` in any product-sync or migrate UPSERT
+- **Do NOT set `stock`/`stock_checked_at` in any product-sync or migrate write
   body.** Only the stock cron writes them (same discipline as
   `is_core_product`/`margin_pct_override`, §31.8/§46.5), so a nightly product
   sync never clobbers fresher stock.
-- **The stock UPSERT must keep `Prefer: resolution=merge-duplicates` with only
-  the two stock columns + conflict keys.** Adding other columns to that body
-  would overwrite product/pricing data with nulls.
+- **Latent same-class bug (not yet fixed):** the retirement reconciliation in
+  `scripts/lib/laltex-sync.js` (§51) also does a partial-column upsert
+  (`{supplier_id, supplier_product_code, missing_from_feed_count, is_retired}`,
+  omits `name`). It would 23502 the same way if it ever reaches the INSERT
+  arbiter path. Convert it to a filtered UPDATE in a dedicated §51 follow-up.
