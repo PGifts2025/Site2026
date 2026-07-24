@@ -56,4 +56,9 @@ site/docs/laltex-samples/
 
 docs/laltex-samples/
 docs/*.pdf
+
+# Supplier / internal cost sheets — contain real trade prices and margins.
+# Same confidentiality class as docs/laltex-samples/ (CLAUDE.md §26.9).
+*.xlsx
+*.xls
 .env*.local
