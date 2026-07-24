@@ -30,16 +30,23 @@ const STOCK_STALE_MS = STOCK_STALE_HOURS * 60 * 60 * 1000;
 // note. Above it, an in-stock size shows nothing (deliberately quiet).
 export const LOW_STOCK_THRESHOLD = 20;
 
+// On-view refresh window: a product page re-polls Laltex for its own stock only
+// when the stored figure is older than this. The SERVER re-checks the same
+// window before any upstream call (scripts/lib/laltex-stock.js
+// refreshProductStock), so this client-side value is only an optimisation —
+// but both import this one constant so they cannot drift.
+export const ON_VIEW_FRESHNESS_MS = 60 * 60 * 1000;
+
 /**
  * Is the product's stock snapshot fresh enough to display?
  * Returns false for null/invalid timestamps or anything older than the window.
  * `now` is injectable for tests.
  */
-export function isStockFresh(checkedAt, now = Date.now()) {
+export function isStockFresh(checkedAt, now = Date.now(), windowMs = STOCK_STALE_MS) {
   if (!checkedAt) return false;
   const t = new Date(checkedAt).getTime();
   if (!Number.isFinite(t)) return false;
-  return (now - t) <= STOCK_STALE_MS;
+  return (now - t) <= windowMs;
 }
 
 /**

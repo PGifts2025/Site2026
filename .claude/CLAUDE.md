@@ -5536,6 +5536,32 @@ write), never a silently-invented row.
 frequent expression fails at deployment. Vercel Cron is UTC and cannot track
 DST. Change cadence by editing ONLY that string.
 
+### 59.3.1 On-view refresh (the primary freshness mechanism)
+
+A daily catalogue-wide cron polls 1,194 products so a handful get looked at.
+**`POST /api/stock/refresh` inverts that**: when a Laltex product page loads and
+its stored stock is older than `ON_VIEW_FRESHNESS_MS` (1 hour), the page asks
+the server to refresh that ONE product. Data is seconds old rather than hours,
+at a fraction of the calls.
+
+- **Non-blocking.** The page renders immediately from stored stock; fresh
+  figures are merged in place via `applyLiveStock` (productCatalogService) with
+  no reload. A failed refresh is swallowed: stored stock keeps showing and is
+  NEVER re-presented as out of stock.
+- **Reuses the cron's write path.** `refreshProductStock` in
+  `scripts/lib/laltex-stock.js` composes the same `fetchStock` /
+  `buildStockMap` / `updateStock` primitives, so UPDATE-only, never-insert and
+  `FreeStock -1 = Made To Order` are shared, not duplicated.
+- **No `job_runs` row per view.** Those are for batch runs; one row per page
+  view would swamp the table. Failures are logged to stderr only.
+- **Brakes:** only known non-retired Laltex codes are accepted (unknown codes
+  are rejected WITHOUT an upstream call), and the freshness gate is enforced
+  SERVER-side before any upstream call, so repeated views cost nothing. Code
+  lookup is case-tolerant per §33.
+- **The daily cron stays.** It is the baseline that guarantees every product has
+  stock (so a page is never empty on first load) and covers products nobody
+  views. The two are complementary; neither replaces the other.
+
 **Partial-failure survivable:** one product's fetch/update failure lands in
 `job_failures` (`reason='stock_fetch_failed'` / `'stock_update_failed'` /
 `'stock_product_not_found'`) and the run continues. A failed product KEEPS its
@@ -5580,7 +5606,16 @@ list is in `job_failures`.
 - **Never couple the stock cron to the product sync.** Separate route, separate
   `job_type`, separate failure domain (§27).
 - **The schedule lives in ONE place** — the `vercel.json` cron entry. Do not
-  duplicate the times into code.
+  duplicate the times into code. **Vercel's Hobby plan caps crons at once per
+  day**: any sub-daily expression fails at deployment (this is why the original
+  hourly/3-hourly values had to go).
+- **Do NOT remove the daily cron in favour of on-view refresh.** It is the
+  baseline for products nobody has viewed; without it a first-time visitor to a
+  never-viewed product sees the no-stock display until their own refresh lands.
+- **The on-view endpoint must stay UPDATE-only, known-codes-only, and must not
+  write `job_runs`.** It is public (the browser calls it), so the known-code
+  check plus the server-side freshness gate are the only things standing
+  between a bot and the supplier API.
 - **Do NOT set `stock`/`stock_checked_at` in any product-sync or migrate write
   body.** Only the stock cron writes them (same discipline as
   `is_core_product`/`margin_pct_override`, §31.8/§46.5), so a nightly product

@@ -6,12 +6,14 @@
  *     with job_type='stock', reads every non-retired Laltex supplier_product
  *     code, calls GET /trade/api/stocks/{code} for each (one call returns all
  *     that product's colour x size variants), builds an item_code -> stock map,
- *     UPSERTs ONLY the { stock, stock_checked_at } columns onto the row, records
+ *     UPDATEs ONLY the { stock, stock_checked_at } columns on the row, records
  *     per-product failures into job_failures, and finalises the job_runs row.
+ *   refreshProductStock({ ... }) — the same write path for ONE product, used by
+ *     the on-view refresh endpoint (POST /api/stock/refresh). No job_runs row.
  *
  * Design (see audit-laltex-stock-availability.md §5 + CLAUDE.md §27):
  *
- *  1. Separate cron from product sync. Stock is volatile (hourly); the product
+ *  1. Separate cron from product sync. Stock is volatile; the product
  *     sync is nightly. A stock-endpoint outage must never block the product
  *     sync and vice-versa. Same observability tables, distinct job_type.
  *
@@ -32,9 +34,12 @@
  *     breaks on a partial run. Only an infra-level error (can't resolve the
  *     supplier, can't open the job_runs row) fails the whole run.
  *
- *  5. Bulk-write discipline. Writes go via PostgREST + SUPABASE_SERVICE_ROLE_KEY
- *     (CLAUDE.md §27.2), merge-duplicates so only the two stock columns change.
+ *  5. Write discipline. Writes go via PostgREST + SUPABASE_SERVICE_ROLE_KEY
+ *     (CLAUDE.md §27.2) as a filtered UPDATE — never an upsert, so the job can
+ *     never create a product row (a partial-column upsert 400s on name NOT NULL).
  */
+
+import { ON_VIEW_FRESHNESS_MS } from '../../src/utils/stockDisplay.js';
 
 const LALTEX_BASE = 'https://auto.laltex.com/trade/api';
 // NOTE: the stock endpoint has NO /v1/ prefix (unlike products). This was the
@@ -268,6 +273,94 @@ async function updateStock({ supabaseUrl, serviceRoleKey, supplierId, code, map,
     extraHeaders: { Prefer: 'return=representation' },
   });
   return Array.isArray(rows) ? rows.length : 0;
+}
+
+// ---------------------------------------------------------------------------
+// Single-product refresh (on-view path)
+// ---------------------------------------------------------------------------
+
+// Freshness window shared with the client (src/utils/stockDisplay.js) so the
+// browser's optimistic skip and this authoritative server-side gate cannot
+// drift apart. stockDisplay.js is dependency-free, so importing it here is safe
+// for both the Vercel function and the node CLI.
+
+/**
+ * Look up one product's identity + current stock freshness.
+ * Returns null when the code is not a known non-retired Laltex product, which
+ * is what lets the endpoint reject unknown codes WITHOUT calling upstream.
+ */
+async function getProductStockState({ supabaseUrl, serviceRoleKey, supplierId, code }) {
+  const lookup = async (candidate) => {
+    const url = `${supabaseUrl}/rest/v1/supplier_products` +
+      `?supplier_id=eq.${encodeURIComponent(supplierId)}` +
+      `&supplier_product_code=eq.${encodeURIComponent(candidate)}` +
+      `&is_retired=eq.false` +
+      `&select=supplier_product_code,stock,stock_checked_at&limit=1`;
+    const rows = await pgRest('GET', url, serviceRoleKey);
+    return Array.isArray(rows) && rows[0] ? rows[0] : null;
+  };
+  // supplier_product_code is stored case-sensitively and PostgREST eq. is
+  // case-sensitive too: Laltex SKUs are UPPERCASE while URL slugs arrive
+  // lowercase (CLAUDE.md §33). Try as-given, then uppercase — the same
+  // two-step getSupplierProductByCode uses. The row we return carries the
+  // CANONICAL code, and every downstream call uses that, never the input.
+  return (await lookup(code)) || (await lookup(String(code).toUpperCase()));
+}
+
+/**
+ * Refresh ONE product's stock, for the on-view path.
+ *
+ * Composes exactly the same primitives the nightly cron uses — fetchStock,
+ * buildStockMap, updateStock — so the write rules are shared, not duplicated:
+ * UPDATE-only (never inserts), writes only { stock, stock_checked_at }, and
+ * FreeStock -1 stays Made To Order.
+ *
+ * Differences from the batch run, both deliberate:
+ *   * No job_runs row. Those are for batch runs; one row per page view would
+ *     swamp the table. Failures are logged to stderr only.
+ *   * A server-side freshness gate runs BEFORE the upstream call, so repeated
+ *     views of the same product inside the window cost nothing.
+ *
+ * @returns {Promise<{status:'refreshed'|'fresh'|'unknown_code'|'not_found',
+ *                    stock?:object, stockCheckedAt?:string}>}
+ */
+export async function refreshProductStock({
+  laltexApiKey,
+  supabaseUrl,
+  serviceRoleKey,
+  code,
+  freshnessMs = ON_VIEW_FRESHNESS_MS,
+  now = Date.now(),
+}) {
+  ensureEnv('laltexApiKey', laltexApiKey);
+  ensureEnv('supabaseUrl', supabaseUrl);
+  ensureEnv('serviceRoleKey', serviceRoleKey);
+  ensureEnv('code', code);
+
+  const supplierId = await getLaltexSupplierId({ supabaseUrl, serviceRoleKey });
+
+  // Known-code gate: unknown / malformed / retired codes never reach Laltex.
+  const existing = await getProductStockState({ supabaseUrl, serviceRoleKey, supplierId, code });
+  if (!existing) return { status: 'unknown_code' };
+
+  // Freshness gate, server-side and before the upstream call.
+  const checkedAt = existing.stock_checked_at ? new Date(existing.stock_checked_at).getTime() : null;
+  if (checkedAt != null && Number.isFinite(checkedAt) && (now - checkedAt) < freshnessMs) {
+    return { status: 'fresh', stock: existing.stock ?? null, stockCheckedAt: existing.stock_checked_at };
+  }
+
+  const arr = await fetchStock({ laltexApiKey, code: existing.supplier_product_code });
+  const { map } = buildStockMap(arr);
+  const nowIso = new Date(now).toISOString();
+  const affected = await updateStock({
+    supabaseUrl, serviceRoleKey, supplierId,
+    code: existing.supplier_product_code, map, nowIso,
+  });
+  if (affected === 0) {
+    // Same meaning as in the batch run: the code exists upstream but not here.
+    return { status: 'not_found' };
+  }
+  return { status: 'refreshed', stock: map, stockCheckedAt: nowIso };
 }
 
 // ---------------------------------------------------------------------------
