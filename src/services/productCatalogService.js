@@ -1342,6 +1342,62 @@ export const getCuratedCategoryProducts = async (categorySlug) =>
 //   - 'flat' | 'clothing' | 'coverage' for catalog_products
 //   - 'laltex' for supplier_products (Laltex feed)
 // =====================================================
+/**
+ * Parse one raw stock entry ({ free, mto?, due_ins? }) into the shape the UI
+ * consumes. Shared by the initial normalisation and the on-view refresh so the
+ * two can never diverge. Returns null for absent/unusable entries, which the
+ * display treats as "unknown" (never as out of stock).
+ */
+const readStockEntry = (rawEntry) => {
+  if (!rawEntry || typeof rawEntry !== 'object') return null;
+  const freeNum = Number(rawEntry.free);
+  const free = Number.isFinite(freeNum) ? freeNum : null;
+  const mto = rawEntry.mto === true || free === -1;
+  const dueIns = Array.isArray(rawEntry.due_ins)
+    ? rawEntry.due_ins.map((d) => ({ qty: Number(d?.qty) || 0, eta: d?.eta || null }))
+    : [];
+  return { free, mto, dueIns };
+};
+
+/**
+ * Re-join a freshly-fetched stock map onto an already-normalised product.
+ *
+ * Used by the on-view refresh (POST /api/stock/refresh): the page renders
+ * immediately from stored stock, and when fresh figures land we rebuild only
+ * the stock fields, in place, without refetching or re-normalising the product.
+ *
+ * Returns a NEW product object; the input is not mutated. Everything except
+ * colours[].sizeStock / colours[].stock / stockCheckedAt is carried through
+ * untouched, so pricing and display state are unaffected.
+ */
+export const applyLiveStock = (product, stockMap, checkedAt) => {
+  if (!product) return product;
+  const map = (stockMap && typeof stockMap === 'object' && !Array.isArray(stockMap)) ? stockMap : null;
+  const lookup = (itemCode) => (
+    map && itemCode && Object.prototype.hasOwnProperty.call(map, itemCode)
+      ? readStockEntry(map[itemCode])
+      : null
+  );
+  return {
+    ...product,
+    stockCheckedAt: checkedAt || product.stockCheckedAt || null,
+    colours: (product.colours || []).map((c) => {
+      const sizeStock = {};
+      for (const [sizeName, itemCode] of Object.entries(c.sizeItemCodes || {})) {
+        const entry = lookup(itemCode);
+        if (entry) sizeStock[sizeName] = entry;
+      }
+      return {
+        ...c,
+        sizeStock,
+        // Single-variant (non-clothing) products key stock on the colour's own
+        // item code.
+        stock: lookup(c.code) ?? (Object.keys(sizeStock).length ? null : c.stock),
+      };
+    }),
+  };
+};
+
 export const normaliseProduct = (row, supplier) => {
   if (!row) return null;
 
@@ -1428,16 +1484,8 @@ export const normaliseProduct = (row, supplier) => {
   const stockMap = (row.stock && typeof row.stock === 'object' && !Array.isArray(row.stock))
     ? row.stock
     : null;
-  const readStockEntry = (rawEntry) => {
-    if (!rawEntry || typeof rawEntry !== 'object') return null;
-    const freeNum = Number(rawEntry.free);
-    const free = Number.isFinite(freeNum) ? freeNum : null;
-    const mto = rawEntry.mto === true || free === -1;
-    const dueIns = Array.isArray(rawEntry.due_ins)
-      ? rawEntry.due_ins.map((d) => ({ qty: Number(d?.qty) || 0, eta: d?.eta || null }))
-      : [];
-    return { free, mto, dueIns };
-  };
+  // readStockEntry is module-scoped (see below) so the on-view refresh path
+  // parses stock entries identically to the initial normalisation.
 
   // Pivot the Laltex variant matrix (one SKU per colour x size pair) into a
   // de-duplicated colour list + an ordered size list + a per-colour size
@@ -1465,6 +1513,10 @@ export const normaliseProduct = (row, supplier) => {
           _sizes: new Set(),
           // sizeName -> { free, mto, dueIns }; null-valued when no stock data.
           _sizeStock: {},
+          // sizeName -> item_code. Retained so a freshly-fetched stock map
+          // (on-view refresh) can be re-joined client-side without re-running
+          // the whole normaliser. See applyLiveStock below.
+          _sizeItemCodes: {},
           // Colour-level stock for single-variant (non-clothing) products.
           _variantStock: null,
         });
@@ -1480,6 +1532,7 @@ export const normaliseProduct = (row, supplier) => {
       }
       if (!c.hex) c.hex = it.HexValue || it.hex_value || null;
       if (sz) c._sizes.add(sz);
+      if (sz && itemCode) c._sizeItemCodes[sz] = itemCode;
       // Attach stock (by item_code) to the size for clothing, or to the colour
       // for single-variant products.
       if (stockMap && itemCode && Object.prototype.hasOwnProperty.call(stockMap, itemCode)) {
@@ -1489,11 +1542,12 @@ export const normaliseProduct = (row, supplier) => {
       }
     });
     const colours = [...byColour.values()].map((c) => {
-      const { _sizes, _sizeStock, _variantStock, ...rest } = c;
+      const { _sizes, _sizeStock, _sizeItemCodes, _variantStock, ...rest } = c;
       return {
         ...rest,
         sizes: sortSizes([..._sizes]),
         sizeStock: _sizeStock,
+        sizeItemCodes: _sizeItemCodes,
         stock: _variantStock,
       };
     });

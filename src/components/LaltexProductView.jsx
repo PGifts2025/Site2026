@@ -28,7 +28,7 @@
  *   ONLY at display time (toFixed(2)), never during math.
  */
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Heart,
@@ -47,6 +47,7 @@ import {
 } from 'lucide-react';
 
 import { supabase } from '../services/supabaseService';
+import { applyLiveStock } from '../services/productCatalogService';
 import { useAuth } from '../context/AuthContext';
 import { deliveryPerUnit } from '../../scripts/lib/laltex-delivery.js';
 import { scheduleMarginForTier } from '../../scripts/lib/laltex-margin.js';
@@ -60,6 +61,7 @@ import {
   exceedsStock,
   formatCheckedAgo,
   nextDueLine,
+  ON_VIEW_FRESHNESS_MS,
 } from '../utils/stockDisplay';
 import AboveCeilingNotice from './AboveCeilingNotice';
 
@@ -229,9 +231,52 @@ const LaltexProductView = ({ product }) => {
   }, [lightboxOpen]);
 
   // ----- Derived: current colour, image, tier -----
+  // ----- On-view stock refresh (non-blocking) -----
+  // The page renders immediately from stored stock; if that figure is stale the
+  // server refreshes this ONE product and we merge the result in place. A
+  // failure is swallowed: stored stock keeps showing, and missing stock is
+  // never presented as out of stock.
+  const [liveStock, setLiveStock] = useState(null); // { map, checkedAt }
+  const stockRequestedRef = useRef(null);
+
+  useEffect(() => {
+    const code = product?.code;
+    if (!code || product?.supplier !== 'laltex') return;
+    if (stockRequestedRef.current === code) return; // once per product per mount
+    stockRequestedRef.current = code;
+
+    // Client-side pre-check is only an optimisation — the authoritative
+    // freshness gate is server-side, before any upstream call.
+    if (isStockFresh(product.stockCheckedAt, Date.now(), ON_VIEW_FRESHNESS_MS)) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const resp = await fetch('/api/stock/refresh', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code }),
+        });
+        if (!resp.ok) return; // keep stored stock
+        const data = await resp.json();
+        if (cancelled || !data?.stock || !data?.stock_checked_at) return;
+        setLiveStock({ map: data.stock, checkedAt: data.stock_checked_at });
+      } catch {
+        // Network/API unreachable — stored stock stays on screen.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [product?.code, product?.supplier, product?.stockCheckedAt]);
+
+  // Product with live stock merged in (identical object when none has arrived).
+  const stockProduct = useMemo(
+    () => (liveStock ? applyLiveStock(product, liveStock.map, liveStock.checkedAt) : product),
+    [product, liveStock],
+  );
+
   const selectedColour = useMemo(
-    () => (product?.colours || []).find((c) => c.id === selectedColourId) || null,
-    [product?.colours, selectedColourId],
+    () => (stockProduct?.colours || []).find((c) => c.id === selectedColourId) || null,
+    [stockProduct?.colours, selectedColourId],
   );
 
   // The indicative hex map is a fallback ONLY for products with no per-colour
@@ -276,17 +321,17 @@ const LaltexProductView = ({ product }) => {
     setSizeQtys((prev) => ({ ...prev, [name]: n }));
   };
 
-  // ----- Live stock (hourly refresh; audit-laltex-stock-availability.md) -----
+  // ----- Live stock (daily cron baseline + on-view refresh) -----
   // Stock is only shown when the snapshot is fresh. Stale / never-checked
   // (PGifts-Direct mirror, or cron down for most of a day) -> falls back to the
   // pre-stock display: no badges, nothing greyed, no cap.
   const stockFresh = useMemo(
-    () => isStockFresh(product?.stockCheckedAt),
-    [product?.stockCheckedAt],
+    () => isStockFresh(stockProduct?.stockCheckedAt),
+    [stockProduct?.stockCheckedAt],
   );
   const stockCheckedAgo = useMemo(
-    () => (stockFresh ? formatCheckedAgo(product?.stockCheckedAt) : null),
-    [stockFresh, product?.stockCheckedAt],
+    () => (stockFresh ? formatCheckedAgo(stockProduct?.stockCheckedAt) : null),
+    [stockFresh, stockProduct?.stockCheckedAt],
   );
   // Per-size stock state for the SELECTED colour (only when fresh).
   const sizeStockFor = (name) => {
@@ -605,7 +650,7 @@ const LaltexProductView = ({ product }) => {
   // ----- Render -----
   if (!product) return null;
 
-  const visibleColours = showAllColours ? product.colours : product.colours.slice(0, 8);
+  const visibleColours = showAllColours ? stockProduct.colours : stockProduct.colours.slice(0, 8);
 
   return (
     <div className="bg-gradient-to-br from-gray-50 via-white to-gray-100">
