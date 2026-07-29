@@ -1,4 +1,3 @@
-[dotenv@17.2.3] injecting env (15) from .env -- tip: ⚙️  specify custom .env file path with { path: '/custom/path/.env' }
 -- ============================================================================
 -- PGifts Direct clothing: finished per-POSITION sell price from Dave's sheet.
 --
