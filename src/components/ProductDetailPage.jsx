@@ -1046,22 +1046,9 @@ const ProductDetailPage = ({ productSlug, identifier }) => {
     return getColourVariant(colorObj);
   };
 
-  // Total design print-colour count = sum of the colour counts across enabled
-  // print positions, clamped to [1, 6] (the spreadsheet's range). Drives the
-  // total_sell_price lookup. A single enabled position (the default) yields its
-  // own colour count, so a "1 colour" design = 1.
-  const getDesignColourCount = () => {
-    const sum = Object.values(printPositions).reduce((acc, colOpt) => {
-      if (!colOpt || colOpt === 'None') return acc;
-      const n = parseInt(colOpt, 10);
-      return acc + (Number.isFinite(n) ? n : 0);
-    }, 0);
-    return Math.min(6, Math.max(1, sum));
-  };
-
-  // Find the finished sell price (spreadsheet Total, garment+print+profit) for a
-  // variant + total colour count + quantity band. Used verbatim — NO margin.
-  // Returns null when the row has no total (e.g. hi-vis-vest -> legacy path).
+  // Find the finished sell price (spreadsheet Total = garment+print+profit) for a
+  // variant + a SINGLE position's colour count + quantity band. Read verbatim —
+  // NO margin. Returns null when no seeded total (e.g. hi-vis-vest -> legacy).
   const findTotalRow = (variant, colourCount, qty) =>
     printPricingData.find(p =>
       p.colour_variant === variant &&
@@ -1071,6 +1058,44 @@ const ProductDetailPage = ({ productSlug, identifier }) => {
       (p.max_quantity == null || qty <= p.max_quantity)
     );
 
+  // The sheet garment cost for a variant + quantity band (constant across colour
+  // counts). Only seeded Direct-clothing rows (total_sell_price present) are
+  // used, so hi-vis/legacy garment costs are never picked up here. Subtracted
+  // from each position's Total to get that position's print+profit. Uses the
+  // SAME sheet (variant) as the Total, so white/coloured are never mixed.
+  const findGarmentSell = (variant, qty) => {
+    const row = printPricingData.find(p =>
+      p.colour_variant === variant &&
+      p.total_sell_price != null &&
+      p.garment_cost != null &&
+      (p.min_quantity == null || qty >= p.min_quantity) &&
+      (p.max_quantity == null || qty <= p.max_quantity)
+    );
+    return row ? parseFloat(row.garment_cost) : null;
+  };
+
+  // Per-position Direct clothing price: buy the garment ONCE, then add each
+  // enabled position's print+profit (its Total minus the garment). Reduces to
+  // the Total column exactly for a single position. Returns null when the
+  // product has no seeded totals (-> caller uses the legacy garment+print path).
+  const getClothingTotalPrice = (variant, qty, positions) => {
+    const garment = findGarmentSell(variant, qty);
+    if (garment == null) return null;
+    let price = garment;
+    let sawPosition = false;
+    for (const colOpt of Object.values(positions)) {
+      if (!colOpt || colOpt === 'None') continue;
+      const c = parseInt(colOpt, 10);
+      if (!Number.isFinite(c)) continue;
+      const row = findTotalRow(variant, c, qty);
+      if (row?.total_sell_price == null) return null; // incomplete -> legacy path
+      price += parseFloat(row.total_sell_price) - garment;
+      sawPosition = true;
+    }
+    // No enabled position -> blank garment (garment cost only).
+    return sawPosition ? price : garment;
+  };
+
   // Calculate weighted-average price across all colour order rows (clothing model only)
   // Each row uses its own white/coloured variant pricing for garment cost + print cost
   const getClothingBlendedPrice = () => {
@@ -1079,19 +1104,18 @@ const ProductDetailPage = ({ productSlug, identifier }) => {
     const totalQty = rowsWithQty.reduce((sum, r) => sum + getRowSubtotal(r), 0);
     if (totalQty === 0) return null;
 
-    const designColourCount = getDesignColourCount();
     let weightedSum = 0;
     rowsWithQty.forEach(row => {
       const rowSubtotal = getRowSubtotal(row);
       const variant = getRowVariant(row.colorCode);
 
-      // Preferred: finished sell price from the spreadsheet Total (garment +
-      // print + profit), read verbatim with NO margin. Each colour row uses its
-      // own White/Coloured sheet via its variant.
-      const totalRow = findTotalRow(variant, designColourCount, totalQty);
+      // Preferred: per-position sheet pricing for this colour row's variant —
+      // garment once + each position's (Total − garment), NO margin. Each colour
+      // row uses its own White/Coloured sheet via its variant (no cross-mixing).
+      const sheetPrice = getClothingTotalPrice(variant, totalQty, printPositions);
       let rowPrice;
-      if (totalRow?.total_sell_price != null) {
-        rowPrice = parseFloat(totalRow.total_sell_price);
+      if (sheetPrice != null) {
+        rowPrice = sheetPrice;
       } else {
         // Legacy fallback (products with no seeded total, e.g. hi-vis-vest):
         // garment + per-position print. Unchanged behaviour.
@@ -1143,15 +1167,13 @@ const ProductDetailPage = ({ productSlug, identifier }) => {
       const blended = getClothingBlendedPrice();
       if (blended !== null) return blended;
 
-      // Single-swatch path. Preferred: finished sell price from the spreadsheet
-      // Total (garment + print + profit) for the selected variant + total design
-      // colour count + quantity — read verbatim, NO margin.
-      const designColourCount = getDesignColourCount();
-      const totalRow = findTotalRow(colourVariant, designColourCount, totalQuantity);
-      if (totalRow?.total_sell_price != null) {
-        const sell = parseFloat(totalRow.total_sell_price);
-        console.log(`[PrintCost] TOTAL(sheet): variant="${colourVariant}" colours=${designColourCount} qty=${totalQuantity} → £${sell.toFixed(2)}`);
-        return sell;
+      // Single-swatch path. Preferred: per-position sheet pricing — garment once
+      // plus each enabled position's (Total − garment). Single position reduces
+      // to the Total column exactly. Read verbatim, NO margin.
+      const sheetPrice = getClothingTotalPrice(colourVariant, totalQuantity, printPositions);
+      if (sheetPrice != null) {
+        console.log(`[PrintCost] TOTAL(sheet per-position): variant="${colourVariant}" qty=${totalQuantity} → £${sheetPrice.toFixed(2)}`);
+        return sheetPrice;
       }
 
       // Legacy fallback (no seeded total, e.g. hi-vis-vest): garment + per-position print.
