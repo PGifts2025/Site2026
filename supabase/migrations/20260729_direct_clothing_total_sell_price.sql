@@ -10,9 +10,9 @@
 --
 -- The old build summed garment+print (omitting profit) and had no white rows for
 -- hoodie/sweat/polo (white showed dearer than coloured). Both fixed. No margin is
--- ever applied on top — profit is already in the sheet figures. Laltex untouched.
+-- ever applied on top - profit is already in the sheet figures. Laltex untouched.
 --
--- APPLY (CLAUDE.md §52): Supabase SQL Editor, paste, Run. No BEGIN/COMMIT.
+-- APPLY (CLAUDE.md Sec 52): Supabase SQL Editor, paste, Run. No BEGIN/COMMIT.
 -- Idempotent. Final SELECT must return 8 rows (4 garments x 2 variants).
 -- ============================================================================
 
