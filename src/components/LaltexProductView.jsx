@@ -54,7 +54,7 @@ import { scheduleMarginForTier } from '../../scripts/lib/laltex-margin.js';
 import { isBucketADesignable } from '../utils/laltexPositionHeuristics';
 import { taxableNetUnit } from '../utils/vat';
 import { getSwatchHex, isLightHex } from '../utils/colourSwatches';
-import { isScreenPrintRow, productNeedsWhiteBase } from '../utils/screenPrintBase';
+import { isScreenPrintRow, productNeedsWhiteBase, baseCostForQty } from '../utils/screenPrintBase';
 import {
   isStockFresh,
   sizeStockState,
@@ -145,93 +145,29 @@ function pickPrintTier(positionTiers, qty, numColours) {
 }
 
 /**
- * Resolve the print tier to bill, applying the white-base correction.
+ * Margined white-base cost per unit for a screen print at a given quantity.
  *
- * On a dark garment a screen print needs an opaque white underbase, which is a
- * full extra colour (own screen, own pass). Laltex do not charge for it, so we
- * look the price up at (colours + 1). The tier table already carries both the
- * extra pass and the amortised screen setup, so no separate fee is added.
- * See src/utils/screenPrintBase.js for the full rationale.
+ * The base is a PRINT cost, so it is margined exactly like the print tier it
+ * attaches to: base_sell = base_cost x (1 + tier margin). We reuse the tier's
+ * own `marginAppliedPct` (the same fraction baked into its sell_price) so the
+ * base and the print it sits on carry identical margin; falls back to the
+ * quantity's schedule margin if the tier doesn't expose one.
  *
- * CEILING OVERFLOW — deliberately NOT a silent clamp.
- * Spot Print tops out at 4 colours on every Laltex clothing product. A
- * 4-colour design on a dark garment therefore needs a 5th (base) tier that
- * does not exist. Clamping back to the 4-colour price would silently
- * undercharge by a whole colour, which is the exact bug this change fixes.
- * Instead we extrapolate the final step of the tier ladder at the same
- * quantity band: price(N+1) = price(N) + (price(N) - price(N-1)). The result
- * is flagged `extrapolated` so callers can surface it.
+ * Flat, additive, banded by quantity (screenPrintBase.baseCostForQty). NOT a
+ * tier shift — so there is no colour-count ceiling to fall off, and no floor to
+ * engage. Replaces PR #85's (colours + 1) mechanism entirely.
  *
- * NO-NEGATIVE-UPLIFT FLOOR.
- * Laltex's tier ladder is not always monotonic: on several products the
- * 2-colour price at the 500 band is LOWER than the 1-colour price (e.g. TF0001
- * £3.78 vs £3.80, TF0101 £0.7215 vs £0.7460). Applying the base blindly there
- * would make a navy garment CHEAPER than the same white one, which is
- * indefensible. So the based price is floored at the un-based price: adding a
- * base can never reduce what the customer pays. This is a floor against
- * supplier data inversion, not a clamp on the ceiling.
- *
- * @returns {{tier: object|null, extrapolated: boolean, billedColours: number|null, floored: boolean}}
+ * @returns {number} margined base cost per unit (0 when no base applies)
  */
-export function resolvePrintTierWithBase(positionTiers, qty, colours, addBase) {
-  const resolved = resolveBaseTierRaw(positionTiers, qty, colours, addBase);
-  if (!addBase || !resolved.tier) return { ...resolved, floored: false };
-
-  const unbased = pickPrintTier(positionTiers, qty, colours);
-  const basedPrice = resolved.tier.allInUnitPrice;
-  const unbasedPrice = unbased && (unbased.numColours ?? 1) === colours ? unbased.allInUnitPrice : null;
-  if (basedPrice != null && unbasedPrice != null && Number(basedPrice) < Number(unbasedPrice)) {
-    return {
-      tier: { ...resolved.tier, allInUnitPrice: Number(unbasedPrice) },
-      extrapolated: resolved.extrapolated,
-      billedColours: resolved.billedColours,
-      floored: true,
-    };
-  }
-  return { ...resolved, floored: false };
-}
-
-function resolveBaseTierRaw(positionTiers, qty, colours, addBase) {
-  const target = colours + (addBase ? 1 : 0);
-  const exact = pickPrintTier(positionTiers, qty, target);
-
-  // pickPrintTier falls back to ALL tiers when no row matches the requested
-  // colour count, so verify we actually got the count we asked for.
-  if (exact && (exact.numColours ?? 1) === target) {
-    return { tier: exact, extrapolated: false, billedColours: target };
-  }
-  if (!addBase) {
-    // No base in play: preserve the pre-existing behaviour exactly.
-    return { tier: exact, extrapolated: false, billedColours: exact ? (exact.numColours ?? 1) : null };
-  }
-
-  // Base required but the (colours + 1) tier does not exist -> extrapolate.
-  const counts = availableColourCounts({ tiers: positionTiers });
-  if (counts.length === 0) return { tier: exact, extrapolated: false, billedColours: null };
-  const top = counts[counts.length - 1];
-  const prev = counts.length > 1 ? counts[counts.length - 2] : null;
-  const topTier = pickPrintTier(positionTiers, qty, top);
-  const prevTier = prev != null ? pickPrintTier(positionTiers, qty, prev) : null;
-  if (!topTier || (topTier.numColours ?? 1) !== top) {
-    return { tier: exact, extrapolated: false, billedColours: null };
-  }
-  if (!prevTier || (prevTier.numColours ?? 1) !== prev || topTier.allInUnitPrice == null || prevTier.allInUnitPrice == null) {
-    // Cannot measure a step (single-tier ladder or POA) — bill the top tier
-    // rather than inventing a number, and flag it.
-    return { tier: topTier, extrapolated: true, billedColours: top };
-  }
-  const stepsBeyond = target - top;
-  const step = (Number(topTier.allInUnitPrice) - Number(prevTier.allInUnitPrice)) / (top - prev);
-  const projected = Number(topTier.allInUnitPrice) + step * stepsBeyond;
-  return {
-    tier: {
-      ...topTier,
-      allInUnitPrice: Number(projected.toFixed(6)),
-      numColours: target,
-    },
-    extrapolated: true,
-    billedColours: target,
-  };
+export function baseSellForPosition(tier, qty, marginOverride) {
+  if (!tier || tier.isPoa) return 0;
+  const cost = baseCostForQty(qty);
+  if (!(cost > 0)) return 0;
+  const margin = tier.marginAppliedPct != null
+    ? Number(tier.marginAppliedPct)
+    : scheduleMarginForTier(qty, marginOverride ?? null);
+  const m = Number.isFinite(margin) ? margin : 0;
+  return cost * (1 + m);
 }
 
 // ---------------------------------------------------------------------------
@@ -478,11 +414,12 @@ const LaltexProductView = ({ product }) => {
   );
 
   // Does a screen print on THIS garment, in THIS colour, need a white base?
-  // Clothing only (non-clothing is entirely unaffected), and every colour
-  // except White / Natural. See src/utils/screenPrintBase.js.
+  // Only the four base-taking garment types (t-shirts, hoodies, sweatshirts,
+  // polos, by sub_category allow-list — NOT category='Clothing'), and every
+  // colour except White / Natural / Arctic White. See src/utils/screenPrintBase.js.
   const garmentNeedsBase = useMemo(
-    () => productNeedsWhiteBase(product?.category, selectedColour?.name),
-    [product?.category, selectedColour?.name],
+    () => productNeedsWhiteBase(product?.subCategory, selectedColour?.name),
+    [product?.subCategory, selectedColour?.name],
   );
 
   // Per-position cost contribution at current qty. Each enabled position
@@ -501,13 +438,14 @@ const LaltexProductView = ({ product }) => {
       if (!pick?.enabled) return;
       const row = g.rows[pick.selectedRowIndex] || g.rows[g.defaultRowIndex] || g.rows[0];
       if (!row) return;
-      // White base: a screen print on a dark garment needs an opaque underbase,
-      // which is a full extra colour. Applied PER POSITION — each position needs
-      // its own base screen and its own pass, so a front+back design on a navy
-      // shirt takes two bases. Non-screen methods and White/Natural are exempt.
+      // White base: a screen print on a dark garment needs an opaque underbase.
+      // It is a flat per-unit PRINT cost (banded by quantity), added on top of
+      // the plain colour tier and margined like any other print cost — NOT a
+      // tier shift. Applied PER POSITION: each position needs its own base pass,
+      // so a front+back design on a navy shirt takes two bases. Non-screen
+      // methods and White/Natural/Arctic White are exempt.
       const addBase = garmentNeedsBase && isScreenPrintRow(row);
-      const { tier, extrapolated, billedColours, floored } =
-        resolvePrintTierWithBase(row.tiers, quantity, pick.colours, addBase);
+      const tier = pickPrintTier(row.tiers, quantity, pick.colours);
       const label = `${g.name} (${printMethodLabel(row)})`;
       if (!tier) {
         out.push({
@@ -516,7 +454,9 @@ const LaltexProductView = ({ product }) => {
         });
         return;
       }
-      const unit = tier.allInUnitPrice != null ? Number(tier.allInUnitPrice) : null;
+      const printUnit = tier.allInUnitPrice != null ? Number(tier.allInUnitPrice) : null;
+      const baseUnit = addBase ? baseSellForPosition(tier, quantity, product?.marginPctOverride) : 0;
+      const unit = printUnit == null ? null : Number((printUnit + baseUnit).toFixed(6));
       out.push({
         name: g.name,
         label,
@@ -528,9 +468,7 @@ const LaltexProductView = ({ product }) => {
         isPoa: !!tier.isPoa,
         // Fulfilment metadata — NOT shown to the customer as a separate line.
         whiteBase: addBase,
-        billedColours: addBase ? billedColours : null,
-        baseExtrapolated: !!extrapolated,
-        baseFloored: !!floored,
+        baseUnit: addBase ? Number(baseUnit.toFixed(4)) : 0,
       });
     });
     return out;
@@ -700,12 +638,12 @@ const LaltexProductView = ({ product }) => {
               class: p.row?.printClass || null,
               num_colours: p.colours,
               unit_price: p.unit != null ? +p.unit.toFixed(4) : null,
-              // White-base metadata for the print room: the customer chose
-              // num_colours, but a dark garment is billed (and printed) at
-              // billed_colours because of the opaque underbase. Not rendered
-              // to the customer anywhere — the unit price already includes it.
+              // White-base metadata for the print room: a dark garment carries
+              // an opaque white underbase (an extra flat-cost print pass). Not
+              // rendered to the customer anywhere — the unit price already
+              // includes base_unit_price (margined, per unit).
               ...(p.whiteBase
-                ? { white_base: true, billed_colours: p.billedColours ?? null }
+                ? { white_base: true, base_unit_price: p.baseUnit ?? null }
                 : {}),
             })),
           }
