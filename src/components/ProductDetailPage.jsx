@@ -42,6 +42,10 @@ import {
 import { supabase, getUserDesign } from '../services/supabaseService';
 import { useAuth } from '../context/AuthContext';
 import LaltexProductView from './LaltexProductView';
+// Reuse the SAME exempt-colour set as Laltex (do not redefine): exempt colours
+// price off the White sheet, everything else off the Coloured sheet. Arctic
+// White becomes exempt when PR #87 extends BASE_EXEMPT_COLOURS (single source).
+import { colourNeedsWhiteBase } from '../utils/screenPrintBase';
 
 // Helper constants and functions for apparel size selector
 const APPAREL_SIZES = ['S', 'M', 'L', 'XL', 'XXL'];
@@ -996,9 +1000,10 @@ const ProductDetailPage = ({ productSlug, identifier }) => {
     return ALL_POSITION_LABELS.slice(0, count);
   };
 
-  // Determine colour_variant for print pricing lookup.
-  // Check both color_code and color_name (case-insensitive) so 'White', 'WHITE', 'white' all match.
-  // 'natural' explicitly uses 'coloured' pricing.
+  // Determine colour_variant ('white' = White sheet, 'coloured' = Coloured sheet).
+  // Exempt colours (White, Natural, Arctic White — the shared Laltex set) price
+  // off the White sheet; everything else off the Coloured sheet. hi-vis-vest
+  // keeps its own yellow/orange rule (and its legacy garment+print pricing).
   const selectedColorObj = colors.find(c => c.color_code === selectedColor) || colors[0] || {};
   const getColourVariant = (colorObj) => {
     if (!colorObj) return 'coloured';
@@ -1009,7 +1014,8 @@ const ProductDetailPage = ({ productSlug, identifier }) => {
               code.includes('yellow') || code.includes('orange');
       return isYellowOrange ? 'white' : 'coloured';
     }
-    return (code === 'white' || name === 'white') ? 'white' : 'coloured';
+    // colourNeedsWhiteBase === false for the exempt set -> White sheet.
+    return colourNeedsWhiteBase(colorObj.color_name || colorObj.color_code) ? 'coloured' : 'white';
   };
   const colourVariant = getColourVariant(selectedColorObj);
 
@@ -1040,6 +1046,31 @@ const ProductDetailPage = ({ productSlug, identifier }) => {
     return getColourVariant(colorObj);
   };
 
+  // Total design print-colour count = sum of the colour counts across enabled
+  // print positions, clamped to [1, 6] (the spreadsheet's range). Drives the
+  // total_sell_price lookup. A single enabled position (the default) yields its
+  // own colour count, so a "1 colour" design = 1.
+  const getDesignColourCount = () => {
+    const sum = Object.values(printPositions).reduce((acc, colOpt) => {
+      if (!colOpt || colOpt === 'None') return acc;
+      const n = parseInt(colOpt, 10);
+      return acc + (Number.isFinite(n) ? n : 0);
+    }, 0);
+    return Math.min(6, Math.max(1, sum));
+  };
+
+  // Find the finished sell price (spreadsheet Total, garment+print+profit) for a
+  // variant + total colour count + quantity band. Used verbatim — NO margin.
+  // Returns null when the row has no total (e.g. hi-vis-vest -> legacy path).
+  const findTotalRow = (variant, colourCount, qty) =>
+    printPricingData.find(p =>
+      p.colour_variant === variant &&
+      p.colour_count === colourCount &&
+      p.total_sell_price != null &&
+      (p.min_quantity == null || qty >= p.min_quantity) &&
+      (p.max_quantity == null || qty <= p.max_quantity)
+    );
+
   // Calculate weighted-average price across all colour order rows (clothing model only)
   // Each row uses its own white/coloured variant pricing for garment cost + print cost
   const getClothingBlendedPrice = () => {
@@ -1048,34 +1079,44 @@ const ProductDetailPage = ({ productSlug, identifier }) => {
     const totalQty = rowsWithQty.reduce((sum, r) => sum + getRowSubtotal(r), 0);
     if (totalQty === 0) return null;
 
+    const designColourCount = getDesignColourCount();
     let weightedSum = 0;
     rowsWithQty.forEach(row => {
       const rowSubtotal = getRowSubtotal(row);
       const variant = getRowVariant(row.colorCode);
-      const variantRows = printPricingData.filter(p => p.colour_variant === variant);
-      if (variantRows.length === 0) return;
 
-      const garmentRow = variantRows.find(p =>
-        p.garment_cost != null &&
-        (p.min_quantity == null || totalQty >= p.min_quantity) &&
-        (p.max_quantity == null || totalQty <= p.max_quantity)
-      );
-      const garmentCost = parseFloat(garmentRow?.garment_cost ?? 0);
-
-      let printCost = 0;
-      Object.entries(printPositions).forEach(([, colOpt]) => {
-        if (colOpt === 'None') return;
-        const colCount = parseInt(colOpt);
-        const printRow = variantRows.find(p =>
-          p.colour_count === colCount &&
-          p.print_cost_per_position != null &&
+      // Preferred: finished sell price from the spreadsheet Total (garment +
+      // print + profit), read verbatim with NO margin. Each colour row uses its
+      // own White/Coloured sheet via its variant.
+      const totalRow = findTotalRow(variant, designColourCount, totalQty);
+      let rowPrice;
+      if (totalRow?.total_sell_price != null) {
+        rowPrice = parseFloat(totalRow.total_sell_price);
+      } else {
+        // Legacy fallback (products with no seeded total, e.g. hi-vis-vest):
+        // garment + per-position print. Unchanged behaviour.
+        const variantRows = printPricingData.filter(p => p.colour_variant === variant);
+        if (variantRows.length === 0) return;
+        const garmentRow = variantRows.find(p =>
+          p.garment_cost != null &&
           (p.min_quantity == null || totalQty >= p.min_quantity) &&
           (p.max_quantity == null || totalQty <= p.max_quantity)
         );
-        printCost += parseFloat(printRow?.print_cost_per_position ?? 0);
-      });
-
-      const rowPrice = garmentCost + printCost;
+        const garmentCost = parseFloat(garmentRow?.garment_cost ?? 0);
+        let printCost = 0;
+        Object.entries(printPositions).forEach(([, colOpt]) => {
+          if (colOpt === 'None') return;
+          const colCount = parseInt(colOpt);
+          const printRow = variantRows.find(p =>
+            p.colour_count === colCount &&
+            p.print_cost_per_position != null &&
+            (p.min_quantity == null || totalQty >= p.min_quantity) &&
+            (p.max_quantity == null || totalQty <= p.max_quantity)
+          );
+          printCost += parseFloat(printRow?.print_cost_per_position ?? 0);
+        });
+        rowPrice = garmentCost + printCost;
+      }
       console.log(`[BlendedPrice] ${row.colorName} (${variant}) × ${rowSubtotal} @ £${rowPrice.toFixed(2)}`);
       weightedSum += rowPrice * rowSubtotal;
     });
@@ -1102,7 +1143,18 @@ const ProductDetailPage = ({ productSlug, identifier }) => {
       const blended = getClothingBlendedPrice();
       if (blended !== null) return blended;
 
-      // Single-colour fallback: use the currently selected swatch variant
+      // Single-swatch path. Preferred: finished sell price from the spreadsheet
+      // Total (garment + print + profit) for the selected variant + total design
+      // colour count + quantity — read verbatim, NO margin.
+      const designColourCount = getDesignColourCount();
+      const totalRow = findTotalRow(colourVariant, designColourCount, totalQuantity);
+      if (totalRow?.total_sell_price != null) {
+        const sell = parseFloat(totalRow.total_sell_price);
+        console.log(`[PrintCost] TOTAL(sheet): variant="${colourVariant}" colours=${designColourCount} qty=${totalQuantity} → £${sell.toFixed(2)}`);
+        return sell;
+      }
+
+      // Legacy fallback (no seeded total, e.g. hi-vis-vest): garment + per-position print.
       const garmentRow = findGarmentRow(totalQuantity);
       const garmentCost = parseFloat(garmentRow?.garment_cost ?? 0);
 
@@ -1120,7 +1172,7 @@ const ProductDetailPage = ({ productSlug, identifier }) => {
 
       const total = garmentCost + totalPrintCost;
       console.log(
-        `[PrintCost] TOTAL: garment £${garmentCost} + print £${totalPrintCost} = £${total.toFixed(2)}` +
+        `[PrintCost] TOTAL(legacy): garment £${garmentCost} + print £${totalPrintCost} = £${total.toFixed(2)}` +
         ` (qty=${totalQuantity}, variant="${colourVariant}")`
       );
       return total;
