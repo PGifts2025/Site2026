@@ -1729,6 +1729,31 @@ export const getProductPrintPricing = async (productId) => {
   }
 };
 
+/**
+ * BAG print pricing (build-up-from-cost model, src/utils/bagPricing.js).
+ * Loads the product's supplier unit-cost rows + shipping bands. A product with
+ * priceRows.length > 0 is a "bag pricing" product; every other flat product
+ * returns empty and is unchanged. See migration 20260730_bag_print_pricing.
+ */
+export const getBagPricing = async (productId) => {
+  if (isMockAuth) return { priceRows: [], shippingRows: [] };
+  try {
+    const client = getSupabaseClient();
+    const [priceRes, shipRes] = await Promise.all([
+      client.from('bag_print_pricing').select('*').eq('catalog_product_id', productId),
+      client.from('bag_shipping').select('*').eq('catalog_product_id', productId),
+    ]);
+    if (priceRes.error) throw priceRes.error;
+    if (shipRes.error) throw shipRes.error;
+    return { priceRows: priceRes.data || [], shippingRows: shipRes.data || [] };
+  } catch (error) {
+    // Bag tables may not exist yet (pre-migration) — degrade to no-bag-pricing,
+    // so the product renders its normal flat behaviour rather than crashing.
+    console.error('Error fetching bag pricing:', error?.message || error);
+    return { priceRows: [], shippingRows: [] };
+  }
+};
+
 // =====================================================
 // EXPORT ALL FUNCTIONS
 // =====================================================
@@ -1760,6 +1785,7 @@ export default {
   getProductPricingTiers,
   calculatePriceForQuantity,
   getProductPrintPricing,
+  getBagPricing,
 
   // Colors & Images
   getProductColors,
