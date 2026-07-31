@@ -362,10 +362,21 @@ const ProductDetailPage = ({ productSlug, identifier }) => {
         }
       }
 
+      // Load bag print pricing (build-up model) BEFORE deriving MOQ: a bag
+      // product's MOQ comes from catalog_products.min_order_quantity (e.g. 100),
+      // NOT from its now-stale catalog_pricing_tiers (which still start at 25 and
+      // are only a fallback). Empty for every non-bag product.
+      const bag = await getBagPricing(data.id);
+      setBagPriceRows(bag.priceRows);
+      setBagShippingRows(bag.shippingRows);
+      const hasBagPricing = bag.priceRows.length > 0;
+
       // Derive min order quantity from the lowest pricing tier if available,
-      // otherwise fall back to the product's min_order_quantity column
+      // otherwise fall back to the product's min_order_quantity column. Bag
+      // products skip this: their stale flat tiers must NOT clobber the DB MOQ,
+      // and the bag cost bands start at that MOQ (below it there is no bag price).
       const tiers = data.pricing || [];
-      if (tiers.length > 0) {
+      if (tiers.length > 0 && !hasBagPricing) {
         const lowestTierMin = Math.min(...tiers.map(t => t.min_quantity));
         data.min_order_quantity = lowestTierMin;
       }
@@ -411,11 +422,6 @@ const ProductDetailPage = ({ productSlug, identifier }) => {
       } catch (printErr) {
         console.warn('[PrintPricing] Could not load print pricing (table may not exist yet):', printErr.message);
       }
-
-      // Load bag print pricing (build-up model). Empty for non-bag products.
-      const bag = await getBagPricing(data.id);
-      setBagPriceRows(bag.priceRows);
-      setBagShippingRows(bag.shippingRows);
 
       setLoading(false);
     } catch (err) {
