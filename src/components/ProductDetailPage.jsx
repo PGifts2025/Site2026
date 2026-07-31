@@ -37,8 +37,12 @@ import {
   calculatePriceForQuantity,
   checkProductCustomizable,
   getDesignerUrl,
-  getProductPrintPricing
+  getProductPrintPricing,
+  getBagPricing
 } from '../services/productCatalogService';
+import {
+  bagUnitPrice, bagColourGroup, BAG_MAX_QTY, BAG_MAX_COLOURS,
+} from '../utils/bagPricing';
 import { supabase, getUserDesign } from '../services/supabaseService';
 import { useAuth } from '../context/AuthContext';
 import LaltexProductView from './LaltexProductView';
@@ -194,6 +198,15 @@ const ProductDetailPage = ({ productSlug, identifier }) => {
   const [secondPosition, setSecondPosition] = useState(false);
   // Coverage model: selected coverage type
   const [coverageType, setCoverageType] = useState('front_only');
+  // Bag model: build-up-from-cost print pricing (src/utils/bagPricing.js).
+  // A product with bagPriceRows is a "bag pricing" product; others are unaffected.
+  const [bagPriceRows, setBagPriceRows] = useState([]);
+  const [bagShippingRows, setBagShippingRows] = useState([]);
+  const [bagMethod, setBagMethod] = useState('screen');   // 'screen' | 'dtf'
+  const [bagColours, setBagColours] = useState(1);        // 1-10 (screen)
+  const [bagSecondSide, setBagSecondSide] = useState(false); // screen
+  const [bagDtfSize, setBagDtfSize] = useState('A4');     // 'A4' | 'A3' (dtf)
+  const [bagDtfSides, setBagDtfSides] = useState(1);      // 1 | 2 (dtf)
 
   // Multi-color selections for apparel (replaces simple sizeQuantities)
   const [colorSelections, setColorSelections] = useState([
@@ -399,6 +412,11 @@ const ProductDetailPage = ({ productSlug, identifier }) => {
         console.warn('[PrintPricing] Could not load print pricing (table may not exist yet):', printErr.message);
       }
 
+      // Load bag print pricing (build-up model). Empty for non-bag products.
+      const bag = await getBagPricing(data.id);
+      setBagPriceRows(bag.priceRows);
+      setBagShippingRows(bag.shippingRows);
+
       setLoading(false);
     } catch (err) {
       console.error('Error loading product data:', err);
@@ -502,7 +520,8 @@ const ProductDetailPage = ({ productSlug, identifier }) => {
    */
   const handleQuantityChange = (value) => {
     const minQty = product?.min_order_quantity || 25;
-    const newQuantity = Math.max(minQty, Math.min(10000, value));
+    const maxQty = isBagPricing ? BAG_MAX_QTY : 10000;
+    const newQuantity = Math.max(minQty, Math.min(maxQty, value));
     setQuantity(newQuantity);
   };
 
@@ -520,11 +539,12 @@ const ProductDetailPage = ({ productSlug, identifier }) => {
     const value = parseInt(quantityInput, 10);
     const minQty = product?.min_order_quantity || 25;
 
+    const maxQty = isBagPricing ? BAG_MAX_QTY : 10000;
     if (isNaN(value) || value < minQty) {
       setQuantity(minQty);
       setQuantityInput(minQty.toString());
     } else {
-      const validValue = Math.min(10000, value);
+      const validValue = Math.min(maxQty, value);
       setQuantity(validValue);
       setQuantityInput(validValue.toString());
     }
@@ -919,11 +939,16 @@ const ProductDetailPage = ({ productSlug, identifier }) => {
       const selectedColorObj = colors.find(c => c.color_code === selectedColor) || {};
       const colorName = selectedColorObj.color_name || selectedColor || null;
 
-      // Build print areas summary
-      const printAreasSummary = Object.entries(printPositions)
-        .filter(([, val]) => val && val !== 'None')
-        .map(([pos, val]) => `${pos}: ${val}`)
-        .join(', ') || null;
+      // Build print areas summary — bag model records method + options; other
+      // products record their clothing print positions.
+      const printAreasSummary = isBagPricing
+        ? (bagMethod === 'screen'
+            ? `Screen Print, ${bagColours} colour${bagColours > 1 ? 's' : ''}${bagSecondSide ? ', 2 sides' : ', 1 side'}`
+            : `DTF Transfer, ${bagDtfSize}, ${bagDtfSides} side${bagDtfSides > 1 ? 's' : ''}`)
+        : (Object.entries(printPositions)
+            .filter(([, val]) => val && val !== 'None')
+            .map(([pos, val]) => `${pos}: ${val}`)
+            .join(', ') || null);
 
       // Calculate unit price — use effectivePricePerUnit (already computed for display)
       // with fallbacks to currentTier and product base price
@@ -1018,6 +1043,10 @@ const ProductDetailPage = ({ productSlug, identifier }) => {
     return colourNeedsWhiteBase(colorObj.color_name || colorObj.color_code) ? 'coloured' : 'white';
   };
   const colourVariant = getColourVariant(selectedColorObj);
+
+  // A product with seeded bag cost rows uses the build-up bag pricing model
+  // (screen/DTF print UI + cost-based price). Every other product is unaffected.
+  const isBagPricing = bagPriceRows.length > 0;
 
   // Filter print pricing rows to only those matching the current colour variant
   const activePrintPricing = printPricingData.filter(p => p.colour_variant === colourVariant);
@@ -1154,6 +1183,25 @@ const ProductDetailPage = ({ productSlug, identifier }) => {
   const getEffectivePricePerUnit = () => {
     // Fallback to tier price when no print pricing data exists for this product
     const tierBase = parseFloat(currentPrice?.price_per_unit || currentTier.price_per_unit) || 0;
+
+    // BAG build-up model (data-driven: only when this product has bag cost rows).
+    // Checked FIRST because bags have zero catalog_print_pricing rows and would
+    // otherwise hit the early return below. Falls back to tierBase if the current
+    // selection can't be priced (e.g. quantity below the seeded MOQ band).
+    if (isBagPricing) {
+      const p = bagUnitPrice({
+        method: bagMethod,
+        colourGroup: bagColourGroup(selectedColorObj?.color_name || selectedColorObj?.color_code),
+        qty: totalQuantity,
+        colours: bagColours,
+        secondSide: bagSecondSide,
+        dtfSize: bagDtfSize,
+        dtfSides: bagDtfSides,
+        priceRows: bagPriceRows,
+        shippingRows: bagShippingRows,
+      });
+      return p != null ? p : tierBase;
+    }
 
     if (!product || activePrintPricing.length === 0) {
       if (printPricingData.length > 0) {
@@ -1767,6 +1815,109 @@ const ProductDetailPage = ({ productSlug, identifier }) => {
                         </button>
                       </div>
                       <p className="text-xs text-gray-500 mt-2 text-center">Minimum order: {product?.min_order_quantity || 25} units</p>
+                    </div>
+                  )}
+
+                  {/* BAG MODEL: print method + options (build-up-from-cost pricing) */}
+                  {isBagPricing && (
+                    <div className="space-y-4">
+                      {/* Print method */}
+                      <div>
+                        <h4 className="text-sm font-medium text-gray-700 mb-2">Print Method</h4>
+                        <div className="grid grid-cols-2 gap-2">
+                          {[
+                            { value: 'screen', label: 'Screen Print' },
+                            { value: 'dtf', label: 'DTF Transfer' },
+                          ].map(({ value, label }) => (
+                            <button
+                              key={value}
+                              type="button"
+                              onClick={() => setBagMethod(value)}
+                              className={`px-3 py-2 rounded-lg border text-sm font-medium transition-colors ${
+                                bagMethod === value
+                                  ? 'border-blue-600 bg-blue-50 text-blue-700'
+                                  : 'border-gray-200 text-gray-600 hover:border-gray-300'
+                              }`}
+                            >
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Screen print: colour count + second side */}
+                      {bagMethod === 'screen' && (
+                        <>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">Number of print colours</label>
+                            <select
+                              value={bagColours}
+                              onChange={(e) => setBagColours(parseInt(e.target.value, 10))}
+                              className="w-full border border-gray-300 rounded-lg py-1.5 px-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            >
+                              {Array.from({ length: BAG_MAX_COLOURS }, (_, i) => i + 1).map((n) => (
+                                <option key={n} value={n}>{n} colour{n > 1 ? 's' : ''}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <label className="flex items-center gap-3 cursor-pointer p-3 rounded-lg border border-gray-200 hover:border-blue-300 transition-colors">
+                            <input
+                              type="checkbox"
+                              checked={bagSecondSide}
+                              onChange={(e) => setBagSecondSide(e.target.checked)}
+                              className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                            />
+                            <div>
+                              <span className="text-sm font-medium text-gray-700">Print second side</span>
+                              <span className="text-sm text-gray-500 ml-1">(+£0.20/unit)</span>
+                            </div>
+                          </label>
+                        </>
+                      )}
+
+                      {/* DTF: size + sides */}
+                      {bagMethod === 'dtf' && (
+                        <>
+                          <div>
+                            <h4 className="text-sm font-medium text-gray-700 mb-2">Transfer size</h4>
+                            <div className="grid grid-cols-2 gap-2">
+                              {['A4', 'A3'].map((sz) => (
+                                <button
+                                  key={sz}
+                                  type="button"
+                                  onClick={() => setBagDtfSize(sz)}
+                                  className={`px-3 py-2 rounded-lg border text-sm font-medium transition-colors ${
+                                    bagDtfSize === sz
+                                      ? 'border-blue-600 bg-blue-50 text-blue-700'
+                                      : 'border-gray-200 text-gray-600 hover:border-gray-300'
+                                  }`}
+                                >
+                                  {sz}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                          <div>
+                            <h4 className="text-sm font-medium text-gray-700 mb-2">Sides</h4>
+                            <div className="grid grid-cols-2 gap-2">
+                              {[1, 2].map((sd) => (
+                                <button
+                                  key={sd}
+                                  type="button"
+                                  onClick={() => setBagDtfSides(sd)}
+                                  className={`px-3 py-2 rounded-lg border text-sm font-medium transition-colors ${
+                                    bagDtfSides === sd
+                                      ? 'border-blue-600 bg-blue-50 text-blue-700'
+                                      : 'border-gray-200 text-gray-600 hover:border-gray-300'
+                                  }`}
+                                >
+                                  {sd === 1 ? '1 side' : '2 sides'}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        </>
+                      )}
                     </div>
                   )}
 
