@@ -21,6 +21,16 @@ ALTER TABLE catalog_products ADD COLUMN IF NOT EXISTS bag_flat_margin NUMERIC(4,
 COMMENT ON COLUMN catalog_products.bag_quote_ceiling IS 'Bag pricing: max quotable qty; above it the product page shows a contact-us message instead of a price and disables Add to Quote. NULL = no ceiling.';
 COMMENT ON COLUMN catalog_products.bag_flat_margin IS 'Bag pricing: flat margin applied at every quantity (e.g. 0.400 = 40%). NULL = default 40%/35% schedule in src/utils/bagPricing.js.';
 
+-- 1b. Widen the colour_group CHECK to admit 'white'. The 12oz migration created
+--     it as natural/black only; the 5oz adds White, so the constraint must be
+--     dropped and recreated BEFORE the inserts or every white row is rejected
+--     (23514) and the migration dies partway through. Idempotent (DROP IF EXISTS
+--     then ADD). NOTE FOR THE NEXT BAG: any brand-new colour group needs the same
+--     treatment here — see the PR's recommendation on retiring this CHECK.
+ALTER TABLE bag_print_pricing DROP CONSTRAINT IF EXISTS bag_print_pricing_colour_group_check;
+ALTER TABLE bag_print_pricing ADD CONSTRAINT bag_print_pricing_colour_group_check
+  CHECK (colour_group = ANY (ARRAY['natural'::text, 'black'::text, 'white'::text]));
+
 -- 2. Clear any prior 5oz bag rows so re-runs are clean.
 DELETE FROM bag_print_pricing WHERE catalog_product_id = (SELECT id FROM catalog_products WHERE slug = '5oz-mini-cotton-bag');
 DELETE FROM bag_shipping WHERE catalog_product_id = (SELECT id FROM catalog_products WHERE slug = '5oz-mini-cotton-bag');
@@ -100,3 +110,16 @@ SELECT count(*) AS shipping_rows
 SELECT slug, min_order_quantity, bag_quote_ceiling, bag_flat_margin
   FROM catalog_products
  WHERE slug = '5oz-mini-cotton-bag';                 -- expect: 100 | 1000 | 0.400
+
+-- Widened constraint now admits natural, black AND white:
+SELECT pg_get_constraintdef(oid) AS colour_group_check
+  FROM pg_constraint
+ WHERE conrelid = 'bag_print_pricing'::regclass
+   AND conname = 'bag_print_pricing_colour_group_check';
+   -- expect: CHECK ((colour_group = ANY (ARRAY['natural'::text, 'black'::text, 'white'::text])))
+
+-- Every existing row (12oz natural/black + 5oz natural/white) satisfies it:
+SELECT colour_group, count(*) AS rows
+  FROM bag_print_pricing
+ GROUP BY colour_group
+ ORDER BY colour_group;                              -- expect: black, natural, white (no other group)
