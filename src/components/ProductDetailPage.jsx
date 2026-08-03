@@ -918,7 +918,11 @@ const ProductDetailPage = ({ productSlug, identifier }) => {
   const topTierMinQty = (pricingTiers || []).length > 0
     ? Math.max(...pricingTiers.map((t) => t.min_quantity))
     : null;
+  // Bag products have their own hard quote ceiling (bagOverCeiling, below) and
+  // must NOT trigger this soft tier-ceiling notice off their stale fallback
+  // catalog_pricing_tiers — those still start at 25 and would misfire.
   const isAboveCeiling =
+    bagPriceRows.length === 0 &&
     (pricingTiers || []).length > 1 &&
     topTierMinQty != null &&
     totalQuantity > topTierMinQty;
@@ -932,6 +936,11 @@ const ProductDetailPage = ({ productSlug, identifier }) => {
 
     if (!product) {
       alert('Product not loaded yet.');
+      return;
+    }
+
+    // Bag quote ceiling: above it we don't quote (the button is disabled too).
+    if (bagOverCeiling) {
       return;
     }
 
@@ -1053,6 +1062,18 @@ const ProductDetailPage = ({ productSlug, identifier }) => {
   // A product with seeded bag cost rows uses the build-up bag pricing model
   // (screen/DTF print UI + cost-based price). Every other product is unaffected.
   const isBagPricing = bagPriceRows.length > 0;
+
+  // Per-bag policy read straight off the product row (select('*') carries them):
+  //  - bagHasDtf: this bag has DTF cost rows. The 5oz Mini Cotton Bag is screen
+  //    only, so its Print Method toggle must not appear (screen is forced).
+  //  - bagFlatMargin: flat margin at every qty (5oz = 0.40); null = the default
+  //    40%/35% schedule (12oz), handled inside bagUnitPrice.
+  //  - bagQuoteCeiling: above this qty we stop quoting and invite a call (5oz =
+  //    1000). null = no ceiling (12oz quotes up to its 5000 input cap).
+  const bagHasDtf = bagPriceRows.some(r => r.print_method === 'dtf');
+  const bagFlatMargin = isBagPricing ? (product?.bag_flat_margin ?? null) : null;
+  const bagQuoteCeiling = isBagPricing ? (product?.bag_quote_ceiling ?? null) : null;
+  const bagOverCeiling = bagQuoteCeiling != null && totalQuantity > bagQuoteCeiling;
 
   // Filter print pricing rows to only those matching the current colour variant
   const activePrintPricing = printPricingData.filter(p => p.colour_variant === colourVariant);
@@ -1205,6 +1226,7 @@ const ProductDetailPage = ({ productSlug, identifier }) => {
         dtfSides: bagDtfSides,
         priceRows: bagPriceRows,
         shippingRows: bagShippingRows,
+        flatMargin: bagFlatMargin,
       });
       return p != null ? p : tierBase;
     }
@@ -1287,6 +1309,7 @@ const ProductDetailPage = ({ productSlug, identifier }) => {
       colours: bagColours,
       priceRows: bagPriceRows,
       shippingRows: bagShippingRows,
+      flatMargin: bagFlatMargin,
     };
     const off = bagUnitPrice({ ...common, secondSide: false });
     const on = bagUnitPrice({ ...common, secondSide: true });
@@ -1849,29 +1872,33 @@ const ProductDetailPage = ({ productSlug, identifier }) => {
                   {/* BAG MODEL: print method + options (build-up-from-cost pricing) */}
                   {isBagPricing && (
                     <div className="space-y-4">
-                      {/* Print method */}
-                      <div>
-                        <h4 className="text-sm font-medium text-gray-700 mb-2">Print Method</h4>
-                        <div className="grid grid-cols-2 gap-2">
-                          {[
-                            { value: 'screen', label: 'Screen Print' },
-                            { value: 'dtf', label: 'DTF Transfer' },
-                          ].map(({ value, label }) => (
-                            <button
-                              key={value}
-                              type="button"
-                              onClick={() => setBagMethod(value)}
-                              className={`px-3 py-2 rounded-lg border text-sm font-medium transition-colors ${
-                                bagMethod === value
-                                  ? 'border-blue-600 bg-blue-50 text-blue-700'
-                                  : 'border-gray-200 text-gray-600 hover:border-gray-300'
-                              }`}
-                            >
-                              {label}
-                            </button>
-                          ))}
+                      {/* Print method — only shown when this bag actually has DTF
+                          rows. Screen-only bags (e.g. 5oz Mini Cotton Bag) hide
+                          the toggle entirely and stay on the default 'screen'. */}
+                      {bagHasDtf && (
+                        <div>
+                          <h4 className="text-sm font-medium text-gray-700 mb-2">Print Method</h4>
+                          <div className="grid grid-cols-2 gap-2">
+                            {[
+                              { value: 'screen', label: 'Screen Print' },
+                              { value: 'dtf', label: 'DTF Transfer' },
+                            ].map(({ value, label }) => (
+                              <button
+                                key={value}
+                                type="button"
+                                onClick={() => setBagMethod(value)}
+                                className={`px-3 py-2 rounded-lg border text-sm font-medium transition-colors ${
+                                  bagMethod === value
+                                    ? 'border-blue-600 bg-blue-50 text-blue-700'
+                                    : 'border-gray-200 text-gray-600 hover:border-gray-300'
+                                }`}
+                              >
+                                {label}
+                              </button>
+                            ))}
+                          </div>
                         </div>
-                      </div>
+                      )}
 
                       {/* Screen print: colour count + second side */}
                       {bagMethod === 'screen' && (
@@ -2025,35 +2052,53 @@ const ProductDetailPage = ({ productSlug, identifier }) => {
 
                   {/* Price Display */}
                   <div className="text-center p-6 bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl">
-                    <div className="mb-2">
-                      <span className="text-sm text-gray-600">Price per unit (ex VAT)</span>
-                    </div>
-                    <div className={`text-3xl font-bold text-blue-600 transition-all duration-300 ${animatePrice ? 'scale-110' : 'scale-100'}`}>
-                      £{effectivePricePerUnit.toFixed(2)}
-                    </div>
-                    <div className="mt-4 pt-4 border-t border-gray-200">
-                      <div className="flex justify-between items-center">
-                        <span className="text-gray-600">Total (ex VAT)</span>
-                        <span className="text-2xl font-bold text-gray-900">£{effectiveTotalPrice}</span>
+                    {bagOverCeiling ? (
+                      /* Bag quote ceiling: above it we don't quote — larger runs
+                         are negotiated with the supplier. No price, no total,
+                         Add to Quote disabled below. */
+                      <div className="text-left">
+                        <p className="text-base font-semibold text-gray-900">
+                          For orders over {bagQuoteCeiling.toLocaleString()} please contact us for a quote
+                        </p>
+                        <p className="text-sm text-gray-600 mt-2">
+                          Larger runs are priced individually. Call us on{' '}
+                          <a href="tel:01844398333" className="font-semibold text-blue-600 underline hover:text-blue-700">01844 398333</a>{' '}
+                          and we'll sort your best price.
+                        </p>
                       </div>
-                      <p className="text-xs text-gray-400 mt-1 text-left">Prices exclude VAT. VAT is added at checkout.</p>
-                      {/* Print breakdown for clothing model */}
-                      {getPrintBreakdown() && (
-                        <p className="text-xs text-gray-500 mt-2 text-center">{getPrintBreakdown()}</p>
-                      )}
-                      {/* Colour/quantity breakdown for clothing model */}
-                      {product?.pricing_model === 'clothing' && (() => {
-                        const parts = colorOrderRows
-                          .filter(r => getRowSubtotal(r) > 0 && r.colorName)
-                          .map(r => `${r.colorName} x ${getRowSubtotal(r)}`);
-                        return parts.length > 0
-                          ? <p className="text-xs text-gray-500 mt-1 text-center">{parts.join(' + ')}</p>
-                          : null;
-                      })()}
-                      {isAboveCeiling && (
-                        <AboveCeilingNotice topTierQty={topTierMinQty} />
-                      )}
-                    </div>
+                    ) : (
+                      <>
+                        <div className="mb-2">
+                          <span className="text-sm text-gray-600">Price per unit (ex VAT)</span>
+                        </div>
+                        <div className={`text-3xl font-bold text-blue-600 transition-all duration-300 ${animatePrice ? 'scale-110' : 'scale-100'}`}>
+                          £{effectivePricePerUnit.toFixed(2)}
+                        </div>
+                        <div className="mt-4 pt-4 border-t border-gray-200">
+                          <div className="flex justify-between items-center">
+                            <span className="text-gray-600">Total (ex VAT)</span>
+                            <span className="text-2xl font-bold text-gray-900">£{effectiveTotalPrice}</span>
+                          </div>
+                          <p className="text-xs text-gray-400 mt-1 text-left">Prices exclude VAT. VAT is added at checkout.</p>
+                          {/* Print breakdown for clothing model */}
+                          {getPrintBreakdown() && (
+                            <p className="text-xs text-gray-500 mt-2 text-center">{getPrintBreakdown()}</p>
+                          )}
+                          {/* Colour/quantity breakdown for clothing model */}
+                          {product?.pricing_model === 'clothing' && (() => {
+                            const parts = colorOrderRows
+                              .filter(r => getRowSubtotal(r) > 0 && r.colorName)
+                              .map(r => `${r.colorName} x ${getRowSubtotal(r)}`);
+                            return parts.length > 0
+                              ? <p className="text-xs text-gray-500 mt-1 text-center">{parts.join(' + ')}</p>
+                              : null;
+                          })()}
+                          {isAboveCeiling && (
+                            <AboveCeilingNotice topTierQty={topTierMinQty} />
+                          )}
+                        </div>
+                      </>
+                    )}
                   </div>
 
 
@@ -2061,9 +2106,9 @@ const ProductDetailPage = ({ productSlug, identifier }) => {
                   <div className="space-y-3">
                     <button
                       onClick={handleAddToQuote}
-                      disabled={!isOrderValid() || addingToQuote}
+                      disabled={!isOrderValid() || addingToQuote || bagOverCeiling}
                       className={`w-full py-4 rounded-xl font-semibold transition-all duration-300 shadow-lg hover:shadow-xl transform hover:scale-105 flex items-center justify-center space-x-2 ${
-                        !isOrderValid() || addingToQuote
+                        !isOrderValid() || addingToQuote || bagOverCeiling
                           ? 'bg-gray-300 cursor-not-allowed text-gray-500'
                           : 'bg-gradient-to-r from-blue-600 via-purple-600 to-blue-700 text-white hover:from-blue-700 hover:via-purple-700 hover:to-blue-800'
                       }`}
@@ -2072,6 +2117,11 @@ const ProductDetailPage = ({ productSlug, identifier }) => {
                         <>
                           <Loader className="h-5 w-5 animate-spin" />
                           <span>Adding...</span>
+                        </>
+                      ) : bagOverCeiling ? (
+                        <>
+                          <ShoppingCart className="h-5 w-5" />
+                          <span>Contact us for a quote</span>
                         </>
                       ) : (
                         <>
