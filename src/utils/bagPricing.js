@@ -40,8 +40,20 @@ export const BAG_MAX_COLOURS = 10;
 export const BAG_DTF_SIZES = ['A4', 'A3'];
 export const BAG_DTF_SIDES = [1, 2];
 
-/** Margin: 40% under 1000 units, 35% at 1000 and above. */
-export const bagMargin = (qty) => (Number(qty) < 1000 ? 0.40 : 0.35);
+/**
+ * Margin for a bag order.
+ *
+ * Default schedule: 40% under 1000 units, 35% at 1000 and above (the 12oz
+ * Recycled Canvas). A bag may instead carry a per-product FLAT margin
+ * (catalog_products.bag_flat_margin) that applies at every quantity — e.g. the
+ * 5oz Mini Cotton Bag is flat 40% with a 1000-unit quote ceiling above which we
+ * don't quote at all. Pass that flat value through `flatMargin`; null/undefined
+ * falls back to the default schedule so the 12oz is untouched.
+ */
+export const bagMargin = (qty, flatMargin = null) => {
+  if (flatMargin != null) return Number(flatMargin);
+  return Number(qty) < 1000 ? 0.40 : 0.35;
+};
 
 const round2 = (x) => Math.round((x + Number.EPSILON) * 100) / 100;
 
@@ -93,7 +105,7 @@ export function findBagShipping(shippingRows, qty) {
  * @param {Array} opts.shippingRows   bag_shipping rows for the product
  */
 export function bagUnitPrice(opts) {
-  const { method, colourGroup, qty, colours, secondSide, dtfSize, dtfSides, priceRows, shippingRows } = opts;
+  const { method, colourGroup, qty, colours, secondSide, dtfSize, dtfSides, priceRows, shippingRows, flatMargin = null } = opts;
   const q = Number(qty);
   if (!Number.isFinite(q) || q <= 0) return null;
 
@@ -109,20 +121,31 @@ export function bagUnitPrice(opts) {
   // DTF: no screen charge, no second-side charge (baked into the cost table).
 
   const costSubtotal = unitCost * q + decoration + shipping;
-  const sellTotal = costSubtotal * (1 + bagMargin(q));
+  const sellTotal = costSubtotal * (1 + bagMargin(q, flatMargin));
   return round2(sellTotal / q);
 }
 
 /**
  * Map a product colour to its cost group. Bags cost by group, not by individual
- * swatch. Natural (and any exempt/natural-like) -> 'natural'; everything else
- * -> 'black' (the underbase group). Today this bag offers exactly Natural +
- * Black, but the mapping is defensive for future bags with more swatches — any
- * unrecognised colour falls into the dearer (black/underbase) group, the safe
- * direction. Unknown groups should be surfaced to Dave, not silently priced.
+ * swatch. Recognised groups map to their own cost table:
+ *   - 'natural' -> 'natural'
+ *   - 'white'   -> 'white'   (5oz Mini Cotton Bag: Natural + White)
+ *   - anything else -> 'black' (12oz Recycled Canvas: Natural + Black; the
+ *     black/underbase group is also the safe default for an unrecognised
+ *     swatch — a colour with no seeded cost row simply won't price, which is
+ *     surfaced rather than silently mis-priced).
+ *
+ * NOTE the natural/white swap on the 5oz: natural cotton has visible flecks and
+ * needs the opaque underbase, so on that bag 'natural' is the DEARER group and
+ * 'white' the cheaper — the reverse of the supplier sheet's labelling. That
+ * lives in the seeded cost tables, not here; this function only routes a swatch
+ * name to its group. A bag only ever has the groups it seeds, and each real
+ * bag's swatch names (Natural/White or Natural/Black) map directly, so no bag
+ * relies on the black default for a colour it actually offers.
  */
 export function bagColourGroup(colourNameOrCode) {
   const n = String(colourNameOrCode ?? '').toLowerCase().trim();
   if (n === 'natural') return 'natural';
+  if (n === 'white') return 'white';
   return 'black';
 }
