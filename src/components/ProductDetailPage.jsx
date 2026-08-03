@@ -1272,6 +1272,28 @@ const ProductDetailPage = ({ productSlug, identifier }) => {
   const effectivePricePerUnit = getEffectivePricePerUnit();
   const effectiveTotalPrice = (effectivePricePerUnit * totalQuantity).toFixed(2);
 
+  // What the customer actually pays for the bag second side, at the CURRENT
+  // quantity — the supplier's £0.20/unit cost with margin applied (so £0.28/unit
+  // below 1000 units, £0.27 at 1000+). Derived from the pricing engine (price
+  // with second side minus without) so it tracks the margin schedule
+  // automatically and updates live as the quantity crosses the 1000 boundary.
+  // Never show the raw £0.20 cost — that is a figure the customer never pays.
+  const bagSecondSideDelta = (() => {
+    if (!isBagPricing || bagMethod !== 'screen') return null;
+    const common = {
+      method: 'screen',
+      colourGroup: bagColourGroup(selectedColorObj?.color_name || selectedColorObj?.color_code),
+      qty: totalQuantity,
+      colours: bagColours,
+      priceRows: bagPriceRows,
+      shippingRows: bagShippingRows,
+    };
+    const off = bagUnitPrice({ ...common, secondSide: false });
+    const on = bagUnitPrice({ ...common, secondSide: true });
+    if (off == null || on == null) return null;
+    return Math.round((on - off) * 100) / 100;
+  })();
+
   // Build breakdown string for clothing model
   const getPrintBreakdown = () => {
     if (product?.pricing_model !== 'clothing') return null;
@@ -1875,7 +1897,9 @@ const ProductDetailPage = ({ productSlug, identifier }) => {
                             />
                             <div>
                               <span className="text-sm font-medium text-gray-700">Print second side</span>
-                              <span className="text-sm text-gray-500 ml-1">(+£0.20/unit)</span>
+                              {bagSecondSideDelta != null && (
+                                <span className="text-sm text-gray-500 ml-1">(+£{bagSecondSideDelta.toFixed(2)}/unit)</span>
+                              )}
                             </div>
                           </label>
                         </>
