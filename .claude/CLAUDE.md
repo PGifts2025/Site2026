@@ -5625,3 +5625,134 @@ list is in `job_failures`.
   (`{supplier_id, supplier_product_code, missing_from_feed_count, is_retired}`,
   omits `name`). It would 23502 the same way if it ever reaches the INSERT
   arbiter path. Convert it to a filtered UPDATE in a dedicated §51 follow-up.
+
+---
+
+## 60. PRICING PATHS — CONSOLIDATED REFERENCE (four models)
+
+There are four distinct pricing paths, each with its own rules and its own
+reasons. This section is the map; per-area detail lives in the referenced
+sections. Established over ~15 rounds and several real bugs — read the
+implementations (`src/utils/screenPrintBase.js`, `scripts/lib/laltex-margin.js`,
+`src/components/LaltexProductView.jsx`, `src/utils/bagPricing.js`,
+`getClothingTotalPrice` in `ProductDetailPage.jsx`), do not re-derive from memory.
+
+**Which path a product uses:**
+
+| Path | Selector | Price built from |
+|---|---|---|
+| Laltex | `supplier_products` (Laltex supplier), `LaltexProductView` | supplier components, margin at SYNC + delivery at READ |
+| Direct clothing | `catalog_products.pricing_model = 'clothing'` | finished spreadsheet "Total" columns (profit already in) |
+| Direct bags | `catalog_products` with `bag_print_pricing` rows (`isBagPricing`) | supplier cost, margin applied at the END |
+| Direct flat/coverage | `pricing_model` in ('flat','coverage') | `catalog_pricing_tiers` / `catalog_print_pricing` |
+
+### 60.1 Laltex — built up from components
+
+- **Margin schedule v2** (§57): 1–99 → 35%, 100–249 → 30%, 250–499 → 25%,
+  500–999 → 22.5%, 1000+ → 20%. Applied **per pricing tier by `tier.min_qty`**
+  (not the customer's actual qty) at **sync** time to
+  `product_pricing.sell_price` and `print_details.print_price.sell_price`
+  (setup amortised over `min_qty`, baked INSIDE `sell_price`).
+- **Delivery is a READ-time add**, NOT in the synced `sell_price` (Dave's B1-A):
+  `LaltexProductView` / `slimProduct` / search add the UK STANDARD delivery
+  share at the actual qty, **with margin applied to the delivery share**
+  (§46). Net outcome: product + print(+setup) + delivery all carry margin, but
+  the *mechanism* is split sync (product+print) vs read (delivery). "Margin on
+  the full landed cost" is the outcome, not a single-step calc.
+- **Screen-print white base** (`screenPrintBase.js`, PR #87): a screen print on
+  a dark garment needs an opaque underbase. Laltex don't price it, so we ADD a
+  **flat base-print COST per unit, banded by quantity**:
+  25→£0.36, 50→£0.20, 100→£0.20, 250→£0.13, 500→£0.14, 1000+→£0.14.
+  It is a PRINT cost: margined at the attaching tier's own rate
+  (`baseSellForPosition`) and added **PER PRINT POSITION** (front+back on navy =
+  two bases). Fulfilment-metadata only; never shown as a separate customer line.
+  - **Gate** (`productNeedsWhiteBase`): `sub_category` ∈ {t-shirts, polos,
+    hoodies, sweatshirts} **AND** colour ∉ {white, natural, arctic white}.
+    Screen print only (`FSCREEN1` / 'Spot Print'); embroidery + transfer exempt.
+  - Deliberately **NOT** exempt: Natural Raw, Natural Stone (tinted, need base).
+- **WHY flat, not `(colours + 1)`:** Laltex's colour-step ladder is
+  NON-MONOTONIC and inverts — TF0001's 1→2 step runs 8p/20p/13p/6p/**−2p**/5p
+  across bands, going negative at 500 and forcing a £0.00 floor. `(colours+1)`
+  faithfully reproduced those inversions. The flat table (Dave's GD005
+  coloured-minus-white delta) is monotonic, always positive, and
+  garment-independent across all four types (§ `audit-base-pricing-source.md`).
+- **WHY flat pence, not a colour-step:** Laltex charge **no screen setup for the
+  underbase** — only the base print pass — so it is a flat per-unit print cost,
+  not a tier shift (hence no colour-count ceiling to fall off).
+- **WHY `sub_category`, not `category`:** gating on `category='Clothing'` wrongly
+  based AF0010 (a hi-vis vest: category 'Clothing', sub_category 'Accessories').
+  The allow-list is explicit; a new garment type defaults to NO base.
+
+### 60.2 Direct clothing — finished totals, NO margin on top
+
+- `pricing_model='clothing'`. Reads `catalog_print_pricing.total_sell_price`
+  (the spreadsheet "Total" columns). **Profit is already in those numbers —
+  applying any margin double-counts it.** Read verbatim.
+- **White and Coloured are separate sources** (different garment costs). The
+  chosen colour resolves to a variant (`'white'`/`'coloured'`) that selects the
+  sheet.
+- **Multi-position** (`getClothingTotalPrice`): garment counted **once** + each
+  enabled position's `(total_sell_price − garment)` for its own colour count.
+  A single position reduces to the Total column exactly. Legacy fallback (no
+  seeded totals, e.g. hi-vis-vest): `garment_cost + per-position print_cost`.
+
+### 60.3 Direct bags — build up from cost, margin at the end
+
+- `isBagPricing` = product has `bag_print_pricing` rows. Formula (`bagPricing.js`):
+  `unit = (unit_cost×qty + screen(£15×colours) + secondSide(£0.20×qty, screen
+  only) + shipping) × (1 + margin) / qty`. No separate underbase screen charge
+  (baked into the cost tables). Second side adds no screens. DTF: no screen and
+  no second-side charge.
+- **Per-product config**: `bag_print_pricing` (cost by method/group/band/colour),
+  `bag_shipping` (flat by band), and `catalog_products` columns `bag_flat_margin`
+  (NULL = default 40%/35% schedule) + `bag_quote_ceiling` (NULL = none; above it
+  the page shows contact-us, suppresses the price, disables Add to Quote).
+  Colour → group via `bagColourGroup()`: natural→natural, white→white, else→black.
+- **Per-bag differences (already diverging — do not assume one bag's rules):**
+
+  | | 12oz Recycled Canvas | 5oz Mini Cotton Bag |
+  |---|---|---|
+  | Quantity bands | 5 (100/250/500/1000/2500) | 2 (100–249, 250–1000) |
+  | Colour groups | natural + black | natural + white |
+  | DTF | yes | no (method toggle hidden) |
+  | Margin | 40% <1000 / 35% ≥1000 | flat 40% (`bag_flat_margin=0.40`) |
+  | Ceiling | none (5000 input cap) | 1000 (`bag_quote_ceiling`, contact-us above) |
+
+- **Natural/white swap (5oz):** the supplier sheet labels the higher-priced
+  table "White" and the lower "Natural". Deliberately **SWAPPED** on Dave's
+  instruction — natural cotton has visible flecks and needs the opaque
+  underbase, so on the 5oz **natural is the DEARER group**. Do NOT "correct"
+  it back to the sheet's labelling.
+- **MOQ-derivation bug (PR #90):** `ProductDetailPage` derives
+  `min_order_quantity` from the lowest `catalog_pricing_tiers` row and
+  overwrites the DB column. Bags' stale flat tiers start at 25 and clobbered the
+  DB MOQ (100), dropping the default qty below every bag cost band → `bagUnitPrice`
+  returned null → silent fall-back to flat pricing. Fixed by gating the override
+  with `!hasBagPricing` so bags keep their DB MOQ.
+- **Every bag pricing prompt MUST carry an expected-value table.** It has caught
+  a transcription error **twice** before it reached customers (12oz Natural 4col;
+  5oz White 4col @500, £1.16 → correct £1.14).
+
+### 60.4 Bags' stale `catalog_pricing_tiers` — KEEP, do not delete (follow-up 3)
+
+Both bags still carry 6 old flat `catalog_pricing_tiers` rows (12oz
+25→£5.99 … 1000+→£2.99; 5oz 25→£2.69 … 1000+→£1.34). Investigated PR#93 —
+they are **load-bearing**, not dead:
+
+- **`CategoryPage` "From £X.XX"** (`CategoryPage.jsx` ~L200) derives the /bags
+  card price from `Math.min(tier.price_per_unit)`. Deleting the tiers blanks/zeros
+  that line — a visible regression. (Caveat: that "From" figure is the OLD flat
+  price, not the real bag price — an accuracy gap, see below.)
+- **Product-page fallback** (`getEffectivePricePerUnit` → `tierBase`): a bag
+  falls back to the flat tier when `bagUnitPrice` returns null. In steady state
+  this is **not reached** — quantity clamps to MOQ (100), which is the first
+  cost band, so a real bag price always resolves; it is a graceful-degrade net.
+  If the tiers were removed, `getCurrentTier` returns `{price_per_unit: 0}` →
+  £0.00 on a (non-reachable) miss — degraded, not a crash.
+
+**Do not delete** these rows without first re-sourcing the category "From £X.XX"
+line. Recommended future improvement: derive the /bags "From" price from the bag
+cost tables (lowest `bagUnitPrice`) so it reflects real bag pricing, THEN retire
+the stale tiers (and optionally replace the product-page fallback with an
+explicit "price on application" state below MOQ). Until then, redundant-looking
+but load-bearing.
