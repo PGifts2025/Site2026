@@ -1736,21 +1736,28 @@ export const getProductPrintPricing = async (productId) => {
  * returns empty and is unchanged. See migration 20260730_bag_print_pricing.
  */
 export const getBagPricing = async (productId) => {
-  if (isMockAuth) return { priceRows: [], shippingRows: [] };
+  if (isMockAuth) return { priceRows: [], shippingRows: [], secondSideRows: [] };
   try {
     const client = getSupabaseClient();
-    const [priceRes, shipRes] = await Promise.all([
+    const [priceRes, shipRes, ssRes] = await Promise.all([
       client.from('bag_print_pricing').select('*').eq('catalog_product_id', productId),
       client.from('bag_shipping').select('*').eq('catalog_product_id', productId),
+      // Per-(product, colour_group) second-side cost. Absent groups default to
+      // £0.20 in bagPricing.js. `.maybeSingle()`-free: expect 0..N rows.
+      client.from('bag_group_second_side').select('colour_group, second_side_cost').eq('catalog_product_id', productId),
     ]);
     if (priceRes.error) throw priceRes.error;
     if (shipRes.error) throw shipRes.error;
-    return { priceRows: priceRes.data || [], shippingRows: shipRes.data || [] };
+    // bag_group_second_side may not exist yet (pre-migration) — treat as no
+    // overrides (all groups £0.20) rather than failing the whole load.
+    const secondSideRows = ssRes.error ? [] : (ssRes.data || []);
+    if (ssRes.error) console.warn('bag_group_second_side unavailable, defaulting second side to £0.20:', ssRes.error?.message);
+    return { priceRows: priceRes.data || [], shippingRows: shipRes.data || [], secondSideRows };
   } catch (error) {
     // Bag tables may not exist yet (pre-migration) — degrade to no-bag-pricing,
     // so the product renders its normal flat behaviour rather than crashing.
     console.error('Error fetching bag pricing:', error?.message || error);
-    return { priceRows: [], shippingRows: [] };
+    return { priceRows: [], shippingRows: [], secondSideRows: [] };
   }
 };
 
