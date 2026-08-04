@@ -5699,24 +5699,37 @@ implementations (`src/utils/screenPrintBase.js`, `scripts/lib/laltex-margin.js`,
 ### 60.3 Direct bags — build up from cost, margin at the end
 
 - `isBagPricing` = product has `bag_print_pricing` rows. Formula (`bagPricing.js`):
-  `unit = (unit_cost×qty + screen(£15×colours) + secondSide(£0.20×qty, screen
+  `unit = (unit_cost×qty + screen(£15×colours) + secondSide(rate×qty, screen
   only) + shipping) × (1 + margin) / qty`. No separate underbase screen charge
   (baked into the cost tables). Second side adds no screens. DTF: no screen and
-  no second-side charge.
+  no second-side charge. The second-side `rate` is **per colour group** (§ below):
+  £0.20 default, £0.24 on a group whose 2nd side needs its own underbase.
 - **Per-product config**: `bag_print_pricing` (cost by method/group/band/colour),
-  `bag_shipping` (flat by band), and `catalog_products` columns `bag_flat_margin`
-  (NULL = default 40%/35% schedule) + `bag_quote_ceiling` (NULL = none; above it
-  the page shows contact-us, suppresses the price, disables Add to Quote).
-  Colour → group via `bagColourGroup()`: natural→natural, white→white, else→black.
-- **Per-bag differences (already diverging — do not assume one bag's rules):**
+  `bag_shipping` (flat by band), `bag_group_second_side` (per-(product,
+  colour_group) second-side cost; **absent ⇒ £0.20 default** — the earlier bags
+  carry no rows), and `catalog_products` columns `bag_flat_margin` (NULL =
+  default 40%/35% schedule) + `bag_quote_ceiling` (NULL = none; above it the page
+  shows contact-us, suppresses the price, disables Add to Quote).
+- **Colour → group is CONTEXT-AWARE** (`bagColourGroup(name, availableGroups)`,
+  #96): resolved against the groups the product actually seeds, because the same
+  swatch maps differently per bag — `white` → `white` on the two 5oz-white bags
+  but → `natural` on the 8oz. Rule: natural→natural; white→`white` if present
+  else `natural` if present else the dearer group; other→the dearer group
+  (`coloured`, else `black`). `availableGroups` is derived from the loaded
+  `bag_print_pricing` rows (`bagAvailableGroups`). Legacy no-context callers keep
+  the old natural/white/black mapping. **A pure name→group function cannot serve
+  all bags — always pass the product's groups for bag pricing.**
+- **Per-bag config (the full range — all five differ; do not assume one bag's rules):**
 
-  | | 12oz Recycled Canvas | 5oz Mini Cotton Bag |
-  |---|---|---|
-  | Quantity bands | 5 (100/250/500/1000/2500) | 2 (100–249, 250–1000) |
-  | Colour groups | natural + black | natural + white |
-  | DTF | yes | no (method toggle hidden) |
-  | Margin | 40% <1000 / 35% ≥1000 | flat 40% (`bag_flat_margin=0.40`) |
-  | Ceiling | none (5000 input cap) | 1000 (`bag_quote_ceiling`, contact-us above) |
+  | | 12oz Recycled Canvas | 5oz Mini Cotton | 5oz Recycled Cotton | 8oz Canvas | 5oz Cotton |
+  |---|---|---|---|---|---|
+  | Bands | 5 (100/250/500/1000/2500) | 2 (100–249, 250–1000) | 2 (100–249, 250–1000) | 5 (100/250/500/1000/2500) | 2 (100–249, 250–1000) |
+  | Groups | natural + black | natural + white | natural + white | natural + coloured | natural + coloured |
+  | White → group | (no white) | white | white | **natural** | (no white) |
+  | DTF | yes | no | no | no | no |
+  | Margin | 40/35 break | flat 40% | flat 40% | 40/35 break | flat 40% |
+  | Ceiling | none (5000 cap) | 1000 | 1000 | 2500 | 1000 |
+  | 2nd-side coloured rate | — (all £0.20) | — | — | £0.24 | £0.24 |
 
 - **Natural/white swap (5oz):** the supplier sheet labels the higher-priced
   table "White" and the lower "Natural". Deliberately **SWAPPED** on Dave's
