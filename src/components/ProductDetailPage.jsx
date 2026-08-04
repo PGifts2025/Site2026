@@ -41,7 +41,7 @@ import {
   getBagPricing
 } from '../services/productCatalogService';
 import {
-  bagUnitPrice, bagColourGroup, BAG_MAX_QTY, BAG_MAX_COLOURS,
+  bagUnitPrice, bagColourGroup, bagAvailableGroups, BAG_MAX_QTY, BAG_MAX_COLOURS,
 } from '../utils/bagPricing';
 import { supabase, getUserDesign } from '../services/supabaseService';
 import { useAuth } from '../context/AuthContext';
@@ -202,6 +202,7 @@ const ProductDetailPage = ({ productSlug, identifier }) => {
   // A product with bagPriceRows is a "bag pricing" product; others are unaffected.
   const [bagPriceRows, setBagPriceRows] = useState([]);
   const [bagShippingRows, setBagShippingRows] = useState([]);
+  const [bagSecondSideRows, setBagSecondSideRows] = useState([]);
   const [bagMethod, setBagMethod] = useState('screen');   // 'screen' | 'dtf'
   const [bagColours, setBagColours] = useState(1);        // 1-10 (screen)
   const [bagSecondSide, setBagSecondSide] = useState(false); // screen
@@ -369,6 +370,7 @@ const ProductDetailPage = ({ productSlug, identifier }) => {
       const bag = await getBagPricing(data.id);
       setBagPriceRows(bag.priceRows);
       setBagShippingRows(bag.shippingRows);
+      setBagSecondSideRows(bag.secondSideRows || []);
       const hasBagPricing = bag.priceRows.length > 0;
 
       // Derive min order quantity from the lowest pricing tier if available,
@@ -1075,6 +1077,18 @@ const ProductDetailPage = ({ productSlug, identifier }) => {
   const bagQuoteCeiling = isBagPricing ? (product?.bag_quote_ceiling ?? null) : null;
   const bagOverCeiling = bagQuoteCeiling != null && totalQuantity > bagQuoteCeiling;
 
+  // Colour -> cost group, resolved against the groups THIS bag seeds (so White
+  // -> 'white' on the 5oz bags but -> 'natural' on the 8oz Canvas). Then the
+  // per-group second-side cost: 8oz coloured = £0.24, everything else the £0.20
+  // default (bag_group_second_side carries only the non-default rows).
+  const bagGroupsAvailable = isBagPricing ? bagAvailableGroups(bagPriceRows) : null;
+  const bagCurrentGroup = isBagPricing
+    ? bagColourGroup(selectedColorObj?.color_name || selectedColorObj?.color_code, bagGroupsAvailable)
+    : null;
+  const bagSecondSideCost = isBagPricing
+    ? (bagSecondSideRows.find(r => r.colour_group === bagCurrentGroup)?.second_side_cost ?? null)
+    : null;
+
   // Filter print pricing rows to only those matching the current colour variant
   const activePrintPricing = printPricingData.filter(p => p.colour_variant === colourVariant);
 
@@ -1218,10 +1232,11 @@ const ProductDetailPage = ({ productSlug, identifier }) => {
     if (isBagPricing) {
       const p = bagUnitPrice({
         method: bagMethod,
-        colourGroup: bagColourGroup(selectedColorObj?.color_name || selectedColorObj?.color_code),
+        colourGroup: bagCurrentGroup,
         qty: totalQuantity,
         colours: bagColours,
         secondSide: bagSecondSide,
+        secondSideCost: bagSecondSideCost,
         dtfSize: bagDtfSize,
         dtfSides: bagDtfSides,
         priceRows: bagPriceRows,
@@ -1297,16 +1312,18 @@ const ProductDetailPage = ({ productSlug, identifier }) => {
   // What the customer actually pays for the bag second side, at the CURRENT
   // quantity — the supplier's £0.20/unit cost with margin applied (so £0.28/unit
   // below 1000 units, £0.27 at 1000+). Derived from the pricing engine (price
-  // with second side minus without) so it tracks the margin schedule
-  // automatically and updates live as the quantity crosses the 1000 boundary.
-  // Never show the raw £0.20 cost — that is a figure the customer never pays.
+  // with second side minus without) so it tracks the margin schedule AND the
+  // per-colour-group second-side rate automatically, and updates live as the
+  // quantity crosses a margin boundary or the colour switches group. Never show
+  // the raw cost (£0.20 / £0.24) — that is a figure the customer never pays.
   const bagSecondSideDelta = (() => {
     if (!isBagPricing || bagMethod !== 'screen') return null;
     const common = {
       method: 'screen',
-      colourGroup: bagColourGroup(selectedColorObj?.color_name || selectedColorObj?.color_code),
+      colourGroup: bagCurrentGroup,
       qty: totalQuantity,
       colours: bagColours,
+      secondSideCost: bagSecondSideCost,
       priceRows: bagPriceRows,
       shippingRows: bagShippingRows,
       flatMargin: bagFlatMargin,

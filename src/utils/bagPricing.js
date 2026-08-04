@@ -99,13 +99,18 @@ export function findBagShipping(shippingRows, qty) {
  * @param {number} opts.qty
  * @param {number} [opts.colours]     screen only, 1-10
  * @param {boolean} [opts.secondSide] screen only
+ * @param {number} [opts.secondSideCost] screen only — per-unit second-side COST.
+ *   Defaults to BAG_SECOND_SIDE_PER_UNIT (£0.20). Some bags charge more on the
+ *   dearer colour group because the second side needs its own underbase (8oz
+ *   Canvas: coloured = £0.24). Sourced per (product, colour_group) from
+ *   bag_group_second_side; the three earlier bags carry no rows and take £0.20.
  * @param {'A4'|'A3'} [opts.dtfSize]  dtf only
  * @param {1|2} [opts.dtfSides]       dtf only
  * @param {Array} opts.priceRows      bag_print_pricing rows for the product
  * @param {Array} opts.shippingRows   bag_shipping rows for the product
  */
 export function bagUnitPrice(opts) {
-  const { method, colourGroup, qty, colours, secondSide, dtfSize, dtfSides, priceRows, shippingRows, flatMargin = null } = opts;
+  const { method, colourGroup, qty, colours, secondSide, secondSideCost, dtfSize, dtfSides, priceRows, shippingRows, flatMargin = null } = opts;
   const q = Number(qty);
   if (!Number.isFinite(q) || q <= 0) return null;
 
@@ -113,10 +118,17 @@ export function bagUnitPrice(opts) {
   const shipping = findBagShipping(shippingRows, q);
   if (unitCost == null || shipping == null) return null;
 
+  // Null/undefined (no per-group override) => £0.20 default. Guard explicitly:
+  // Number(null) is 0, which is finite, so a bare Number.isFinite check would
+  // wrongly zero the second-side charge for every default-rate group.
+  const ssCost = (secondSideCost != null && Number.isFinite(Number(secondSideCost)))
+    ? Number(secondSideCost)
+    : BAG_SECOND_SIDE_PER_UNIT;
+
   let decoration = 0;
   if (method === 'screen') {
     decoration += BAG_SCREEN_CHARGE_PER_COLOUR * Number(colours);          // £15 x colours, once
-    if (secondSide) decoration += BAG_SECOND_SIDE_PER_UNIT * q;            // £0.20/unit, no extra screens
+    if (secondSide) decoration += ssCost * q;                              // per-unit second side, no extra screens
   }
   // DTF: no screen charge, no second-side charge (baked into the cost table).
 
@@ -126,26 +138,54 @@ export function bagUnitPrice(opts) {
 }
 
 /**
- * Map a product colour to its cost group. Bags cost by group, not by individual
- * swatch. Recognised groups map to their own cost table:
- *   - 'natural' -> 'natural'
- *   - 'white'   -> 'white'   (5oz Mini Cotton Bag: Natural + White)
- *   - anything else -> 'black' (12oz Recycled Canvas: Natural + Black; the
- *     black/underbase group is also the safe default for an unrecognised
- *     swatch — a colour with no seeded cost row simply won't price, which is
- *     surfaced rather than silently mis-priced).
+ * Map a product colour to its cost group, RESOLVED AGAINST THE GROUPS THE
+ * PRODUCT ACTUALLY SEEDS. Bags cost by group, not by individual swatch, and the
+ * same swatch name maps to different groups on different bags — most notably
+ * 'white':
+ *   - 5oz Mini / 5oz Recycled (groups natural + white): White -> 'white'
+ *   - 8oz Canvas (groups natural + coloured): White -> 'natural' (Natural and
+ *     White share the cheaper table; the five colours take the dearer one)
+ * A pure function of the colour name cannot satisfy both, so the caller passes
+ * `availableGroups` — a Set of the colour_group values present in the product's
+ * bag_print_pricing rows (derive with bagAvailableGroups()). Resolution:
+ *   natural -> 'natural' (if present)
+ *   white   -> 'white' if present, else 'natural' if present, else the dearer group
+ *   other   -> the dearer group present ('coloured', else 'black')
+ * "Dearer group" is 'coloured' if seeded, else 'black'.
  *
- * NOTE the natural/white swap on the 5oz: natural cotton has visible flecks and
- * needs the opaque underbase, so on that bag 'natural' is the DEARER group and
- * 'white' the cheaper — the reverse of the supplier sheet's labelling. That
- * lives in the seeded cost tables, not here; this function only routes a swatch
- * name to its group. A bag only ever has the groups it seeds, and each real
- * bag's swatch names (Natural/White or Natural/Black) map directly, so no bag
- * relies on the black default for a colour it actually offers.
+ * When `availableGroups` is omitted (legacy callers / no product context) it
+ * falls back to the original pure mapping: natural->natural, white->white,
+ * else->black. Passing the product's groups is strongly preferred for bags.
+ *
+ * The natural/white cost SWAP (natural dearer than white on the 5oz bags) lives
+ * in the seeded cost tables, not here — this function only routes a swatch to a
+ * group name.
  */
-export function bagColourGroup(colourNameOrCode) {
+export function bagColourGroup(colourNameOrCode, availableGroups = null) {
   const n = String(colourNameOrCode ?? '').toLowerCase().trim();
-  if (n === 'natural') return 'natural';
-  if (n === 'white') return 'white';
-  return 'black';
+
+  if (!availableGroups) {
+    // Legacy pure mapping — no product context.
+    if (n === 'natural') return 'natural';
+    if (n === 'white') return 'white';
+    return 'black';
+  }
+
+  const dearer = availableGroups.has('coloured') ? 'coloured'
+    : availableGroups.has('black') ? 'black'
+    : null;
+
+  if (n === 'natural') return availableGroups.has('natural') ? 'natural' : (dearer ?? 'coloured');
+  if (n === 'white') {
+    if (availableGroups.has('white')) return 'white';
+    if (availableGroups.has('natural')) return 'natural';
+    return dearer ?? 'coloured';
+  }
+  // Any other colour -> the dearer group the product seeds.
+  return dearer ?? (availableGroups.has('white') ? 'white' : 'natural');
+}
+
+/** Set of colour_group values present in a product's bag_print_pricing rows. */
+export function bagAvailableGroups(priceRows) {
+  return new Set((Array.isArray(priceRows) ? priceRows : []).map((r) => r.colour_group));
 }
