@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { fabric } from 'fabric';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 import {
   Save,
   X,
@@ -32,7 +33,6 @@ import {
   upsertProductVariant,
   batchUpdatePrintAreasForVariant,
   uploadTemplateImage,
-  isCurrentUserAdmin,
   getApparelColors,
   getProductColors,
   assignColorToProduct,
@@ -148,8 +148,9 @@ const resizeImage = (file) => {
   });
 };
 
-const ProductManager = () => {
+const ProductManager = ({ adminRole } = {}) => {
   const navigate = useNavigate();
+  const { loading: authLoading } = useAuth();
   const canvasRef = useRef(null);
   const fabricCanvasRef = useRef(null);
 
@@ -221,27 +222,20 @@ const ProductManager = () => {
   // Edit Mode
   const [editingProductId, setEditingProductId] = useState(null);
 
-  // Check admin access
+  // Admin access is already enforced by AdminGuard (this route is wrapped in it),
+  // which passes `adminRole` when authorised. Trust that instead of an independent
+  // getUser() network call: the old call ejected a signed-in admin to the homepage
+  // on ANY transient failure (audit-admin-roles-and-access.md §2.2). Derive purely
+  // from AuthContext's settled loading state + the guard's adminRole prop — no
+  // network round-trip, so a slow/cold load can no longer eject a real admin.
   useEffect(() => {
-    const checkAdmin = async () => {
+    if (authLoading) {
       setCheckingAuth(true);
-      try {
-        const adminStatus = await isCurrentUserAdmin();
-        setIsAdmin(adminStatus);
-        if (!adminStatus) {
-          showMessage('error', 'Access denied. Admin privileges required.');
-          setTimeout(() => navigate('/'), 2000);
-        }
-      } catch (error) {
-        console.error('Error checking admin:', error);
-        setIsAdmin(false);
-      } finally {
-        setCheckingAuth(false);
-      }
-    };
-
-    checkAdmin();
-  }, [navigate]);
+      return;
+    }
+    setIsAdmin(!!adminRole);
+    setCheckingAuth(false);
+  }, [authLoading, adminRole]);
 
   // Load products when in list view
   useEffect(() => {
