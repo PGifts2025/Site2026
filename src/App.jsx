@@ -144,7 +144,7 @@ function App() {
             <Route path="/admin/pricing" element={<AdminGuard><AdminPricing /></AdminGuard>} />
             <Route path="/admin/team" element={<AdminGuard><AdminTeam /></AdminGuard>} />
             <Route path="/admin/settings" element={<AdminGuard><AdminSettings /></AdminGuard>} />
-            <Route path="/admin/seed-data" element={<AdminSeedData />} />
+            <Route path="/admin/seed-data" element={<AdminGuard><AdminSeedData /></AdminGuard>} />
 
             {/* Stripe success redirect (live payment path is Quotes → Pay Now) */}
             <Route path="/order-confirmation" element={<OrderConfirmation />} />
