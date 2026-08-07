@@ -5769,3 +5769,86 @@ cost tables (lowest `bagUnitPrice`) so it reflects real bag pricing, THEN retire
 the stale tiers (and optionally replace the product-page fallback with an
 explicit "price on application" state below MOQ). Until then, redundant-looking
 but load-bearing.
+
+---
+
+## 61. EDGE FUNCTION `verify_jwt` — DECLARE IT DURABLY, NEVER PER-DEPLOY
+
+`verify_jwt` is a per-function platform gate. When ON, Supabase rejects any
+request without a valid project JWT **before the function code runs** — so the
+function's own logs show **nothing**, and the caller sees a bare
+`401 UNAUTHORIZED_NO_AUTH_HEADER "Missing authorization header"`. That silence is
+the whole trap: a function can be completely dead in production and leave no
+trace in the place you'd look (its logs).
+
+**It must be declared in `supabase/config.toml`, not set by the `--no-verify-jwt`
+deploy flag.** The flag applies only to that one deploy; the next plain
+`supabase functions deploy <name>` silently re-enables the gate. `config.toml`
+`[functions.<name>].verify_jwt` is authoritative and survives every deploy.
+
+### The settings (see `supabase/config.toml`)
+
+| Function | verify_jwt | Caller | What authenticates the caller |
+|---|---|---|---|
+| `confirm-payment` | **true** | Browser (OrderConfirmation) | anon-key JWT (platform gate) |
+| `create-checkout-session` | **true** | Browser (Pay Now) | anon-key JWT (platform gate) |
+| `send-artwork-received-email` | **true** | Browser fire-and-forget | anon-key JWT (platform gate) |
+| `stripe-webhook` | **false** | Stripe | Stripe **signature** verified in-function |
+| `send-internal-artwork-alert` | **false** | pg_net trigger | **shared secret** (`x-artwork-alert-secret`) verified in-function |
+
+**Rule: `verify_jwt = false` REQUIRES the function to authenticate the caller
+itself.** A function that is `false` with no in-function check is an
+unauthenticated public endpoint. `send-artwork-received-email` was exactly that
+(deployed `false`, no auth) until this section — an unauthenticated
+customer-email trigger; setting it `true` closed it (the real caller already
+sends the anon key). If you ever add a `false`, add an in-function auth check in
+the SAME change.
+
+### Diagnosing it — the asymmetry IS the signature
+
+A `verify_jwt` misfire looks like a "different" bug every time (a broken webhook,
+a broken alert). The tell is always the same asymmetry:
+
+- The **caller-side** log shows a 401: Stripe's endpoint delivery log, or
+  `net._http_response.status_code` for pg_net callers (note: pg_net prunes this
+  table after a few hours — the durable signal is whether the downstream effect
+  happened, e.g. `order_artwork.internal_alert_sent_at` stamped ~1s after upload).
+- The **function's own** Supabase logs show **nothing at all** for that request.
+
+If a server-to-server function "isn't doing anything" and its logs are empty,
+suspect `verify_jwt` before anything else.
+
+### Two real incidents
+
+1. **Stripe webhook (PR #20) — never worked from deployment until 7 Aug 2026.**
+   Every `checkout.session.completed` returned `401 ... Missing authorization
+   header`; Supabase function logs were empty. The payment backstop was silently
+   off the entire time. Redeploying `--no-verify-jwt` fixed it instantly. Live
+   keys with this broken = a customer charged with no order.
+2. **Artwork alert (PR #98).** The pg_net trigger got 401s (compounded by a real
+   Vault secret mismatch). Same root fragility.
+
+### This is deploy trap #4 on this project
+
+Group with the other deploy traps:
+- **§58** — squash-merge stranding a stacked branch ("merged" ≠ on `main`).
+- **§52** — migration-first: apply SQL before merge, and the SQL-Editor
+  transaction/verification discipline.
+- **`supabase functions deploy` uploads your WORKING DIRECTORY, not the merged
+  branch** — so deploy functions from a clean, merged `main`, never from a
+  feature branch (deploying stale/uncommitted function code is its own incident
+  class).
+- **§61 (this)** — `verify_jwt` must be durable in `config.toml`, not a
+  remembered flag.
+
+### After any function deploy, verify the gate stuck
+
+`config.toml` is the durable fix, but confirm it applied (Management API):
+```
+GET https://api.supabase.com/v1/projects/<ref>/functions
+```
+Each function's `verify_jwt` must match the table above. Or per function:
+`GET .../functions/<slug>`. If a `false` function shows `true`, the gate is back
+on and that function is dead — redeploy. The one-time proof that the config is
+durable: run a PLAIN `supabase functions deploy stripe-webhook` (NO flag) from a
+clean merged `main`, then re-query — `verify_jwt` must still be `false`.
