@@ -54,8 +54,8 @@ git push -u origin main
 5. Add your environment variables:
    - Go to "Environment Variables" section
    - Add each variable from your `.env` file
-   - **Important**: Only add variables starting with `VITE_` as "Production" and "Preview"
-   - Add `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` as "Production" only
+   - **Important**: Vercel should hold ONLY the `VITE_`-prefixed variables (they are bundled into the browser build). Add them as "Production" and "Preview".
+   - **Do NOT add `STRIPE_SECRET_KEY` or `STRIPE_WEBHOOK_SECRET` to Vercel.** The deployed Stripe path runs entirely in Supabase Edge Functions, which read those from **Supabase Edge Function secrets** (`supabase secrets set …`), not Vercel. Nothing on Vercel reads the secret key. See CLAUDE.md §16.2 / §17.4.
 6. Click "Deploy"
 
 ### Option B: Deploy via Vercel CLI
@@ -88,9 +88,12 @@ After deployment, go to your project settings:
 - `VITE_SUPABASE_URL` - Your Supabase project URL
 - `VITE_SUPABASE_ANON_KEY` - Your Supabase anonymous key
 
-### Server-side Variables (Serverless Functions Only)
-- `STRIPE_SECRET_KEY` - Your Stripe secret key
-- `STRIPE_WEBHOOK_SECRET` - Your Stripe webhook secret (optional)
+### Server-side Variables — Supabase Edge Function secrets, NOT Vercel
+These are set with `supabase secrets set …` (see CLAUDE.md §17.4) and read by the
+Edge Functions at runtime. They must NOT be added to Vercel — nothing on Vercel
+reads them.
+- `STRIPE_SECRET_KEY` - Stripe secret key. Read by `confirm-payment`, `create-checkout-session`, `stripe-webhook`.
+- `STRIPE_WEBHOOK_SECRET` - Stripe webhook signing secret (**required**, not optional — `stripe-webhook` verifies every event signature against it).
 
 ## Step 5: Update API URL for Production
 
@@ -134,20 +137,23 @@ that route does not exist; ignore any historic references.
    JWT, so signature verification (inside the function) is the security
    boundary instead.
 
-## Serverless Function Endpoints
+## Stripe endpoints (Supabase Edge Functions, NOT Vercel)
 
-Your Vercel deployment includes these serverless functions:
+The Stripe payment path runs entirely as **Supabase Edge Functions** — there are no
+Stripe serverless functions on Vercel. They read `STRIPE_SECRET_KEY` /
+`STRIPE_WEBHOOK_SECRET` from Supabase Edge Function secrets:
 
-- **POST** `/api/create-checkout-session` - Create Stripe Checkout Session
-- **GET** `/api/checkout-session?sessionId=xxx` - Retrieve session details
+- `create-checkout-session` - creates the Stripe Checkout Session from a quote
+- `confirm-payment` - redirect path: verifies the paid session and creates the order (via `confirm_payment_atomic`)
+- `stripe-webhook` - server-to-server backstop for the same, on `checkout.session.completed`
 
-These replace the Express server (`server/stripe-server.cjs`) used in local development.
+The legacy local Express server (`server/stripe-server.cjs`) that these replaced has been removed.
 
 ## Troubleshooting
 
 ### Issue: Payment not processing
-- Check that `STRIPE_SECRET_KEY` is set correctly in Vercel
-- Verify `VITE_API_URL` points to your Vercel domain
+- Check that `STRIPE_SECRET_KEY` is set correctly in **Supabase Edge Function secrets** (`supabase secrets list`), NOT Vercel
+- Check the `stripe-webhook` function logs and the Stripe Dashboard → Webhooks event log
 
 ### Issue: CORS errors
 - The serverless functions include CORS headers
