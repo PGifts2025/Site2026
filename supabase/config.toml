@@ -1,0 +1,48 @@
+# Supabase project config.
+#
+# This file exists PRIMARILY to declare `verify_jwt` per Edge Function DURABLY,
+# so it survives every `supabase functions deploy` regardless of whether the
+# `--no-verify-jwt` flag is remembered. Before this file existed, verify_jwt was
+# set only by the deploy flag, so any plain redeploy silently re-enabled the JWT
+# gate — which broke the Stripe webhook and the artwork alert in production, each
+# with a 401 that produced NO function logs (rejection happens at the platform
+# layer, before the function runs). See CLAUDE.md §61.
+#
+# This project manages the DATABASE via the Supabase SQL Editor / Management API
+# (CLAUDE.md §27.2), NOT `supabase db push`, and does not use `supabase start`.
+# So only the [functions.*] blocks below are relied upon; the rest of a full
+# config is intentionally omitted and the CLI defaults apply.
+
+project_id = "cbcevjhvgmxrxeeyldza"
+
+# --- verify_jwt = true : caller sends a Supabase JWT (the anon key is a valid
+#     project JWT), so the platform gate is the auth. These are browser-invoked. ---
+
+[functions.confirm-payment]
+# Browser (OrderConfirmation page) POSTs with `Authorization: Bearer <anonKey>`.
+verify_jwt = true
+
+[functions.create-checkout-session]
+# Browser (Pay Now, CustomerQuotes) POSTs with `Authorization: Bearer <anonKey>`.
+verify_jwt = true
+
+[functions.send-artwork-received-email]
+# Browser fire-and-forget (CustomerOrders / AdminOrderDetail) with the anon key.
+# NOTE: this was deployed verify_jwt=false with NO in-function auth = an
+# unauthenticated customer-email trigger (Resend-cost / spam vector). Setting it
+# true closes that hole; the real caller already sends the anon-key JWT so it
+# keeps working. Redeploy required to apply. See CLAUDE.md §61.
+verify_jwt = true
+
+# --- verify_jwt = false : caller sends NO Supabase JWT, so the function MUST
+#     authenticate the caller ITSELF (in-function). Both do. ---
+
+[functions.stripe-webhook]
+# Stripe sends no JWT. Auth = Stripe signature verified in-function
+# (constructEventAsync over the raw body). Deploy: --no-verify-jwt OR this config.
+verify_jwt = false
+
+[functions.send-internal-artwork-alert]
+# pg_net trigger sends no JWT. Auth = shared secret (x-artwork-alert-secret
+# header) verified in-function against ARTWORK_ALERT_SECRET.
+verify_jwt = false
