@@ -1,5 +1,14 @@
 # Stripe Payment Integration - PGifts
 
+> ⚠️ **LEGACY — describes the original local Express server (`server/stripe-server.cjs`,
+> port 3001).** That path has been REPLACED by Supabase Edge Functions
+> (`create-checkout-session`, `confirm-payment`, `stripe-webhook`) driving the
+> quote pipeline. The local server has been removed and is no longer part of the
+> app. `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` now live in **Supabase
+> Edge Function secrets**, NOT `.env` and NOT Vercel. The authoritative reference
+> is **CLAUDE.md §16–§17 and §44**. Sections below about the port-3001 server are
+> kept only for history.
+
 ## Overview
 
 PGifts now includes full Stripe payment processing integration with a two-step checkout flow:
@@ -180,11 +189,10 @@ Stripe provides test cards that simulate different scenarios:
 ## Security Best Practices
 
 ✅ **DO:**
-- Keep `STRIPE_SECRET_KEY` in `.env` (server-only)
-- Use `VITE_STRIPE_PUBLISHABLE_KEY` for client
-- Never commit `.env` to Git
-- Use test keys for development
-- Use live keys only in production
+- Keep `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` in **Supabase Edge Function secrets** (`supabase secrets set …`) — NOT `.env`, NOT Vercel. The Edge Functions read them at runtime.
+- Put ONLY `VITE_STRIPE_PUBLISHABLE_KEY` (the publishable key) in Vercel — `VITE_`-prefixed vars are bundled for the browser, which is correct for a publishable key.
+- Never commit any key to Git
+- Use test keys for development, live keys only in production
 
 ❌ **DON'T:**
 - Commit API keys to version control
