@@ -62,6 +62,9 @@ import AdminCustomerDetail from './pages/admin/AdminCustomerDetail';
 import AdminTeam from './pages/admin/AdminTeam';
 import AdminSettings from './pages/admin/AdminSettings';
 import AdminPricing from './pages/AdminPricing';
+import Privacy from './pages/Privacy';
+import Terms from './pages/Terms';
+import SiteFooter from './components/SiteFooter';
 
 function App() {
   return (
@@ -157,7 +160,12 @@ function App() {
                 flow: the client parses the #access_token hash, AuthCallback
                 confirms and forwards to /account. See audit-email-verification-flow.md. */}
             <Route path="/auth/callback" element={<AuthCallback />} />
+
+            {/* Legal pages — public, site-wide via the footer. */}
+            <Route path="/privacy" element={<Privacy />} />
+            <Route path="/terms" element={<Terms />} />
           </Routes>
+          <SiteFooter />
           <Cart />
           <AIChatWidget />
         </Router>
