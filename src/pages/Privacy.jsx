@@ -1,5 +1,5 @@
 import { BUSINESS, registeredOfficeLine } from '../config/business';
-import { LegalPage, H2, P, UL, LI, ToConfirm, MailLink } from '../components/legal/Doc';
+import { LegalPage, H2, P, UL, LI, MailLink } from '../components/legal/Doc';
 
 // Data-rights / deletion route (Dave's decision). Distinct from the general
 // contact address (BUSINESS.email).
@@ -71,18 +71,11 @@ function Privacy() {
         <LI><strong>AI assistant conversations:</strong> retained to operate and improve the service and to investigate misuse; ask us via <MailLink address={HELPDESK} /> if you want a conversation removed.</LI>
       </UL>
 
-      <H2>Where your data is processed</H2>
+      <H2>Where your data is held</H2>
       <P>
-        Some of our providers operate outside the United Kingdom. Where your data
-        is transferred outside the UK, we rely on the providers' appropriate
-        safeguards (such as the UK's approved transfer mechanisms) to keep it
-        protected.
+        Your personal data is stored in the United Kingdom. Our database and file
+        storage are hosted in London.
       </P>
-      <ToConfirm>
-        The hosting region for our database provider (Supabase) has yet to be
-        confirmed. If it is outside the UK, this section will name that location
-        and the specific transfer safeguard relied on.
-      </ToConfirm>
 
       <H2>Your rights</H2>
       <P>
@@ -123,10 +116,10 @@ function Privacy() {
         Office (ICO), the UK's data protection regulator, at{' '}
         <a href="https://ico.org.uk" className="text-blue-700 underline hover:text-blue-900" target="_blank" rel="noreferrer">ico.org.uk</a>.
       </P>
-      <ToConfirm>
-        Our ICO registration number will be shown here once {BUSINESS.legalEntity}'s
-        registration with the ICO is completed.
-      </ToConfirm>
+      <P>
+        {BUSINESS.legalEntity} is registered with the Information Commissioner's
+        Office under registration number ZC222668.
+      </P>
 
       <H2>Changes to this policy</H2>
       <P>

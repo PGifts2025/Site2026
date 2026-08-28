@@ -72,6 +72,12 @@ function Terms() {
         You grant us the licence we need to reproduce your artwork in order to
         fulfil your order (including preparing proofs and production files).
       </P>
+      <P>
+        We reserve the right to use finished work we produce for you in our own
+        marketing and portfolio material, for example on our website or as
+        samples. Where your brand or logo is identifiable, we will ask your
+        permission before using it.
+      </P>
 
       <H2>7. Proofs and approval</H2>
       <P>
