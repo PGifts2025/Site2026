@@ -130,6 +130,14 @@ async function dispatchTool({ name, input, baseUrl, cronSecret }) {
     let parsed;
     try { parsed = JSON.parse(text); } catch { parsed = { raw: text.slice(0, 1000) }; }
     if (!resp.ok) {
+      // Log the UNDERLYING failure so it is diagnosable from function logs.
+      // The customer only ever sees Ava's friendly apology; without this line
+      // a provider outage (e.g. OpenAI "no credits remaining" surfaced by
+      // /api/search-products as a 500) is invisible and has to be guessed at.
+      console.error(
+        `[ai/chat] tool ${name} failed: ${path} HTTP ${resp.status} —`,
+        typeof parsed === 'object' ? JSON.stringify(parsed).slice(0, 600) : String(parsed).slice(0, 600),
+      );
       return {
         ok: false,
         error: `${path} returned HTTP ${resp.status}`,
@@ -138,6 +146,7 @@ async function dispatchTool({ name, input, baseUrl, cronSecret }) {
     }
     return { ok: true, error: null, payload: parsed };
   } catch (err) {
+    console.error(`[ai/chat] tool ${name} threw calling ${path}:`, err?.message ?? String(err));
     return {
       ok: false,
       error: err?.message ?? String(err),
