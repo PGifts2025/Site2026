@@ -7,9 +7,10 @@
 //                   testers can use the widget while it's hidden from
 //                   the public).
 //
-// FingerprintJS is loaded lazily on first use to avoid blocking initial
-// render. We never send the raw fingerprint anywhere except this one
-// POST body — the server hashes it before storage.
+// Anonymous fair-use identifier: a random id we create once and keep in the
+// visitor's own localStorage (see getVisitorId). It is sent as visitor_id and
+// the server hashes it before storage. No device fingerprinting — the visitor
+// can clear it, and clearing it degrades to the server-side per-IP limit.
 //
 // No localStorage usage for conversations (privacy + simplicity). Anon
 // conversations live in component state. The header has two buttons:
@@ -40,18 +41,26 @@ const AVA_AVATAR_SRC = '/images/ava.png?v=2';
 const PANEL_WIDTH = 380;
 const PANEL_HEIGHT = 560;
 
-let fpAgentPromise = null;
-async function getVisitorId() {
-  if (!fpAgentPromise) {
-    fpAgentPromise = import('@fingerprintjs/fingerprintjs').then((m) => m.load());
-  }
+const VISITOR_ID_KEY = 'pg_ai_visitor_id';
+
+// Random per-browser id, created on first use and stored in localStorage.
+// Returns null when localStorage is unavailable (private mode, storage
+// disabled) — the server then falls back to its per-IP limit. The visitor
+// can clear this at will; that is expected and only grants a fresh anonymous
+// allowance, still bounded by the server-side per-IP rate limit.
+function getVisitorId() {
   try {
-    const agent = await fpAgentPromise;
-    const result = await agent.get();
-    return result?.visitorId ?? null;
-  } catch (e) {
-    // Adblocker, exotic browser, etc. — server will fall back to IP hash.
-    console.warn('[AIChatWidget] FingerprintJS failed; relying on server IP fallback', e?.message);
+    let id = localStorage.getItem(VISITOR_ID_KEY);
+    if (!id) {
+      id =
+        (typeof crypto !== 'undefined' && crypto.randomUUID)
+          ? crypto.randomUUID()
+          : `v_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 12)}`;
+      localStorage.setItem(VISITOR_ID_KEY, id);
+    }
+    return id;
+  } catch {
+    // localStorage blocked/unavailable — server IP fallback applies.
     return null;
   }
 }
@@ -165,7 +174,7 @@ export default function AIChatWidget() {
     setMessages((m) => [...m, { role: 'user', content: text }]);
     setSending(true);
     try {
-      const visitorId = user ? null : await getVisitorId();
+      const visitorId = user ? null : getVisitorId();
       const accessToken = user ? await getSupabaseAccessToken() : null;
 
       const resp = await fetch('/api/ai/chat', {
@@ -182,6 +191,23 @@ export default function AIChatWidget() {
       });
 
       const data = await resp.json().catch(() => ({}));
+      if (resp.status === 429) {
+        // Hard per-IP rate limit reached. Present as a limit, not an error:
+        // render it as a calm assistant message rather than the red error row.
+        setMessages((m) => [
+          ...m,
+          {
+            role: 'assistant',
+            content:
+              data?.message ??
+              "You've reached the limit for the assistant for now. Please try again a little later, or sign in for uninterrupted access.",
+            tool_calls: [],
+            products: [],
+            products_remainder: [],
+          },
+        ]);
+        return;
+      }
       if (!resp.ok) {
         setError(data?.error ?? `Request failed (${resp.status})`);
         return;
