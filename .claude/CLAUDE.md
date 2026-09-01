@@ -447,7 +447,7 @@ All three route to `/account/quotes` on success, with a flash banner `"Quote cre
 
 ---
 
-*Last updated: 11 May 2026 — session 5.1: §32.12 added — system prompt v2 (no emojis, no em dashes) + NEAR-MISS REASONING section. v1 prompt body scrubbed of em dashes so the model isn't modelled on a style it's told to avoid. Verified via scripts/verify-session-5-1.js: three probes (bamboo eco-products, decline-jokes-about-competitors, 12oz cotton bags) all returned zero emojis + zero em dashes; the 12oz probe exercised the three-step near-miss pattern verbatim. Earlier 11 May 2026 — session 5: §32 AI Assistant added. First customer-facing surface — POST /api/ai/chat (Anthropic Sonnet 4.6, prompt-cached system prompt + tools, manual tool-use loop dispatching to /api/search-products and /api/find-alternatives via Bearer CRON_SECRET). New tables ai_conversations + ai_quotas; new profiles.ai_chat_enabled boolean. Anonymous quota: 5 searchProducts/24h rolling per visitor_id_hash (SHA-256). Signed-in unlimited. Feature-flag gating: anon via VITE_AI_CHAT_PUBLIC_ENABLED (start false), signed-in via profiles.ai_chat_enabled (manual seed). Minimal AIChatWidget mounted in App.jsx; session 6 polishes UI. Pinned @anthropic-ai/sdk 0.95.1, @fingerprintjs/fingerprintjs 5.2.0. Verification ALL PASS end-to-end after Anthropic credit top-up: A (auth contract 4/4), B (vague → clarification), C (precise → search + synthesis), D (out-of-scope → polite decline), E (5/24h quota cap), F (alternatives free), I (persistence), J (feature flag matrix). Cache hit ratio 66.0% across 12 verification turns. §32.4 explicitly notes the modern cache_control pattern (no anthropic-beta header). §32.11 added for the pre-launch profiles auto-create follow-up. Session 4b (earlier 11 May 2026): §31 Hybrid Search Layer added. Two new serverless endpoints (POST /api/search-products, POST /api/find-alternatives) on the existing Bearer CRON_SECRET pattern; scoring is RRF(k=60) over vector + tsvector ranks with core 1.30× and pgifts-direct 1.05× multipliers (core retuned 1.15 → 1.30 during verification — Query-C diagnostic captured in retune migration). New columns: is_core_product, core_priority, lead_time_days, express_available, in_stock, plus a STORED tsvector + GIN index. 8 PGifts-Direct hero SKUs seeded as is_core_product=true. Laltex parser extended with parseLeadTimeDays + express_available derivation from Supplier='Fast Fit'. No frontend, no AI, no UI — those are sessions 5+. Session 4a.1 (earlier 11 May 2026): §27 rewritten to clarify sync is per-supplier (one cron per feed) and embed is supplier-agnostic (one cron spans every supplier_products row). Embed module renamed laltex-embed.js → catalogue-embed.js; CLI renamed embed-laltex-catalogue.js → embed-catalogue.js; cron route renamed /api/cron/embed-laltex → /api/cron/embed-catalogue (vercel.json + smoke-test updated). New migration 20260511_job_runs_supplier_id_nullable.sql drops NOT NULL on job_runs.supplier_id with a CHECK keeping it required for job_type='sync'. §26.11 supplier ontology table updated. New invariants added in §27.8. Session 4a (24 April 2026): §26.11 Multi-supplier product ontology added; §30 PGifts Direct Migration added (mirror strategy, field mapping, approved 25-row category mapping with Safety Wear override for hi-vis-vest, idempotent rerun, follow-ups, invariants). §28.4 pkey-rename gotcha added earlier (session 3b follow-up). Session 3b: §27 rewritten to cover both sync + embed crons (rename sync_runs→job_runs, job_type column, embed failure policy, per-route env var table); §§28.2 / 28.3 production-vs-local latency + PowerShell 100s timeout. §27 originally added earlier 24 April 2026 (session 3a). §28 opened earlier 24 April 2026 with §28.1 PostgREST 1000-row cap. §§26.10.x added earlier 24 April 2026 (session 2). §26 added 24 April 2026 (session 1). §§19-25 added 23 April 2026 for Buy Now / shared auth gate / transactional email / scroll management / quote total pre-insert / compact product page layout / forgot password. §§2, 3, 8.4, 10, 11, 12, 13, 18 refreshed.*
+*Last updated: 1 September 2026 — AI anonymous-quota rework: FingerprintJS removed (PECR consent avoidance, no cookie banner needed) and replaced with a random `crypto.randomUUID()` stored in the visitor's `localStorage` (clearable — accepted trade-off); IP-hash fallback when localStorage is unavailable. Added a hard server-side per-IP rate limit (60 req/IP/hour) on `/api/ai/chat` via `ai_ip_rate_limits` + `check_and_increment_ip_rate_limit` RPC, enforced before identity/provider calls, independent of any client value, applying to signed-in and anonymous alike — this is the real cost guard (a rotating `visitor_id` previously bypassed the IP fallback for unlimited searches; a direct-to-API bot never produced a fingerprint anyway). `VISITOR_HASH_SALT` RETAINED — now salts the IP hash (fallback + rate limiter). Provider spend caps (Anthropic/OpenAI dashboards) are the ultimate ceiling. Docs corrected: §32.1, §32.6, §32.9, §32.10, §49.5, §49.6, §49.8 + `.env.example`. Shipped PR #105; this doc pass is the §32.6/§49 follow-up flagged there. The historical session-5 record below (which pins `@fingerprintjs/fingerprintjs 5.2.0`) is left as a dated record; the package is no longer a dependency. Earlier 11 May 2026 — session 5.1: §32.12 added — system prompt v2 (no emojis, no em dashes) + NEAR-MISS REASONING section. v1 prompt body scrubbed of em dashes so the model isn't modelled on a style it's told to avoid. Verified via scripts/verify-session-5-1.js: three probes (bamboo eco-products, decline-jokes-about-competitors, 12oz cotton bags) all returned zero emojis + zero em dashes; the 12oz probe exercised the three-step near-miss pattern verbatim. Earlier 11 May 2026 — session 5: §32 AI Assistant added. First customer-facing surface — POST /api/ai/chat (Anthropic Sonnet 4.6, prompt-cached system prompt + tools, manual tool-use loop dispatching to /api/search-products and /api/find-alternatives via Bearer CRON_SECRET). New tables ai_conversations + ai_quotas; new profiles.ai_chat_enabled boolean. Anonymous quota: 5 searchProducts/24h rolling per visitor_id_hash (SHA-256). Signed-in unlimited. Feature-flag gating: anon via VITE_AI_CHAT_PUBLIC_ENABLED (start false), signed-in via profiles.ai_chat_enabled (manual seed). Minimal AIChatWidget mounted in App.jsx; session 6 polishes UI. Pinned @anthropic-ai/sdk 0.95.1, @fingerprintjs/fingerprintjs 5.2.0. Verification ALL PASS end-to-end after Anthropic credit top-up: A (auth contract 4/4), B (vague → clarification), C (precise → search + synthesis), D (out-of-scope → polite decline), E (5/24h quota cap), F (alternatives free), I (persistence), J (feature flag matrix). Cache hit ratio 66.0% across 12 verification turns. §32.4 explicitly notes the modern cache_control pattern (no anthropic-beta header). §32.11 added for the pre-launch profiles auto-create follow-up. Session 4b (earlier 11 May 2026): §31 Hybrid Search Layer added. Two new serverless endpoints (POST /api/search-products, POST /api/find-alternatives) on the existing Bearer CRON_SECRET pattern; scoring is RRF(k=60) over vector + tsvector ranks with core 1.30× and pgifts-direct 1.05× multipliers (core retuned 1.15 → 1.30 during verification — Query-C diagnostic captured in retune migration). New columns: is_core_product, core_priority, lead_time_days, express_available, in_stock, plus a STORED tsvector + GIN index. 8 PGifts-Direct hero SKUs seeded as is_core_product=true. Laltex parser extended with parseLeadTimeDays + express_available derivation from Supplier='Fast Fit'. No frontend, no AI, no UI — those are sessions 5+. Session 4a.1 (earlier 11 May 2026): §27 rewritten to clarify sync is per-supplier (one cron per feed) and embed is supplier-agnostic (one cron spans every supplier_products row). Embed module renamed laltex-embed.js → catalogue-embed.js; CLI renamed embed-laltex-catalogue.js → embed-catalogue.js; cron route renamed /api/cron/embed-laltex → /api/cron/embed-catalogue (vercel.json + smoke-test updated). New migration 20260511_job_runs_supplier_id_nullable.sql drops NOT NULL on job_runs.supplier_id with a CHECK keeping it required for job_type='sync'. §26.11 supplier ontology table updated. New invariants added in §27.8. Session 4a (24 April 2026): §26.11 Multi-supplier product ontology added; §30 PGifts Direct Migration added (mirror strategy, field mapping, approved 25-row category mapping with Safety Wear override for hi-vis-vest, idempotent rerun, follow-ups, invariants). §28.4 pkey-rename gotcha added earlier (session 3b follow-up). Session 3b: §27 rewritten to cover both sync + embed crons (rename sync_runs→job_runs, job_type column, embed failure policy, per-route env var table); §§28.2 / 28.3 production-vs-local latency + PowerShell 100s timeout. §27 originally added earlier 24 April 2026 (session 3a). §28 opened earlier 24 April 2026 with §28.1 PostgREST 1000-row cap. §§26.10.x added earlier 24 April 2026 (session 2). §26 added 24 April 2026 (session 1). §§19-25 added 23 April 2026 for Buy Now / shared auth gate / transactional email / scroll management / quote total pre-insert / compact product page layout / forgot password. §§2, 3, 8.4, 10, 11, 12, 13, 18 refreshed.*
 *Update this file at the end of every significant session.*
 
 ---
@@ -2108,10 +2108,13 @@ flips himself on as the initial tester.
 
 1. **Identify caller.** Signed-in path: extract Bearer token, validate
    via `${supabaseUrl}/auth/v1/user` with the anon key. Anonymous path:
-   hash `visitor_id` (SHA-256, with optional `VISITOR_HASH_SALT`); if
-   the field is present but hashing fails, fall back to an IP hash so
-   adblocker'd users aren't blocked. Field MUST be in the body —
-   complete absence is 401.
+   hash `visitor_id` (a random `crypto.randomUUID()` the browser stores
+   in `localStorage`; SHA-256, with optional `VISITOR_HASH_SALT`); if
+   the field is present but empty/unusable (localStorage unavailable),
+   fall back to an IP hash so those users aren't blocked. Field MUST be
+   in the body — complete absence is 401. Note: a hard per-IP rate limit
+   (§32.6, §49.5) runs BEFORE this step, keyed on IP only and independent
+   of `visitor_id`.
 2. **Quota pre-check.** Anonymous only — read `ai_quotas` and
    compute remaining. Does NOT increment yet (we only burn quota
    when the model actually invokes `searchProducts`). Signed-in
@@ -2264,15 +2267,25 @@ change — not an "oversight" to fix.
 
 Visitor identity hashing
 (`scripts/lib/ai-quota.js` → `hashVisitorId`):
-- Input: FingerprintJS visitor ID, sent in the chat body's
-  `visitor_id` field
+- Input: a random `crypto.randomUUID()` the browser generates once and
+  keeps in `localStorage` (`pg_ai_visitor_id`), sent in the chat body's
+  `visitor_id` field. This is NOT a device fingerprint — FingerprintJS
+  was removed (see "Identifier: FingerprintJS removed" below).
 - Hash: `SHA-256(SALT + visitorId)`, where `SALT = process.env.VISITOR_HASH_SALT || ''`
-- Storage: hex-digest only — the raw fingerprint never lands in
-  the DB
+- Storage: hex-digest only — the raw id never lands in the DB
+- Fallback: when `localStorage` is unavailable or no id is supplied,
+  the server hashes the source IP instead (`hashIpFallback`) so the
+  quota still applies. A *missing* `visitor_id` field (not merely an
+  empty value) is a 401.
 
-`VISITOR_HASH_SALT` defaults to empty. Add a salt before the
-public launch to prevent rainbow-table attacks on anyone with
-read access to `ai_quotas`. Hardening follow-up §32.9.
+**`VISITOR_HASH_SALT` is retained and still in use — do NOT treat it as
+dead config** just because it was introduced alongside the removed
+fingerprinting. It salts the IP hash used by BOTH the quota IP fallback
+AND the per-IP rate limiter (§49.5), where it prevents rainbow-table
+recovery of source IPs (a small, brute-forceable space) by anyone with
+read access to `ai_quotas` / `ai_ip_rate_limits`. It also salts the
+`visitor_id` hash. Defaults to empty; set a 32-byte hex value in
+production (rotation note in §32.9).
 
 Window logic: when an incoming check arrives more than
 `QUOTA_WINDOW_MS` (24h) after `window_started_at`, the row is
@@ -2282,10 +2295,37 @@ application code, not a Postgres function — math is debuggable
 and the chat endpoint can decide before paying an Anthropic
 round-trip.
 
-Race window: two simultaneous turns from the same fingerprint
+Race window: two simultaneous turns from the same visitor
 hitting the 5th search can both increment, landing the counter
 at 6. Acceptable — the next call still blocks at remaining=0.
 At 5/24h limits this is theoretical, not load-bearing.
+
+**Identifier: FingerprintJS removed (why, not just what).**
+The anonymous quota identifier is a `crypto.randomUUID()` in the
+visitor's `localStorage`, not a FingerprintJS device fingerprint.
+- **Why removed:** device fingerprinting requires consent under PECR,
+  and the quota is not "strictly necessary" for browsing products.
+  Dropping it means the site needs **no cookie banner** — the only
+  client storage left is the sign-in session (strictly necessary) and
+  this random id (functional, non-fingerprinting).
+- **Accepted trade-off:** `localStorage` is clearable, so a determined
+  user can reset their allowance and get more free searches. Judged not
+  worth defending — someone clearing browser storage for five more
+  product searches was never going to convert.
+- **Fingerprinting never defended the real cost risk anyway:** a bot
+  posting directly to the API never runs the client JavaScript, so it
+  never produced a fingerprint. The **per-IP rate limit (§49.5)** is
+  what actually bounds spend.
+- **Rotating-`visitor_id` hole, now closed:** previously a client that
+  sent a fresh random `visitor_id` each request got a fresh 5/24h every
+  time (effectively unlimited searches), and chat turns are free anyway.
+  The per-IP rate limit closes this — it is keyed on IP only and runs
+  before identity resolution, so a rotating or absent `visitor_id`
+  cannot evade it.
+- **Ultimate ceiling:** account-level monthly **spend caps in the
+  Anthropic and OpenAI dashboards** sit outside the application and are
+  the final backstop (a distributed botnet across many IPs is bounded by
+  those, not by the per-IP limit).
 
 ### 32.7 Tool result slimming
 
@@ -2343,9 +2383,11 @@ routing it through the chat context.
   Tracked separately in §32.11.
 - **`VISITOR_HASH_SALT` rotation.** Add a 32-byte hex value to
   Vercel Production env and `.env` before public launch. Changing
-  the salt rebases every existing `ai_quotas` row to a different
-  identity (everyone gets fresh quota) — fine on launch, but
-  document this if rotating later.
+  the salt rebases every existing `ai_quotas` AND `ai_ip_rate_limits`
+  row to a different identity (everyone gets fresh quota and a fresh
+  rate-limit window) — fine on launch, but document this if rotating
+  later. Note the salt is retained for IP hashing after FingerprintJS's
+  removal — see §32.6.
 - **Set `VITE_AI_CHAT_PUBLIC_ENABLED=true` for public launch.**
   Until then the widget stays invisible to anonymous users.
 - **End-to-end verification needs Anthropic credit balance.**
@@ -2384,9 +2426,10 @@ routing it through the chat context.
   would burn customers' daily allowance on small talk and
   defeat the point of having an assistant for product
   discovery.
-- **Do NOT store the raw FingerprintJS visitor ID in the DB.**
-  Hash it via `hashVisitorId()` first. The raw value should
-  never leave the chat endpoint's request body.
+- **Do NOT store the raw `visitor_id` in the DB.** (It is the random
+  `localStorage` id, no longer a FingerprintJS fingerprint.) Hash it via
+  `hashVisitorId()` first. The raw value should never leave the chat
+  endpoint's request body.
 - **Do NOT save partial conversations.** The PATCH to
   `ai_conversations` happens AFTER the agentic loop finishes —
   if the loop throws, the row stays at its prior committed
@@ -4035,40 +4078,70 @@ See CLAUDE.md §32.6 for the full design.
 
 Enforced server-side in [`api/ai/chat.js`](../api/ai/chat.js); the
 widget surfaces the remaining count but does not enforce. Signed-in
-users skip the quota entirely (always allowed).
+users skip the 5/24h search quota entirely (always allowed) — but NOT
+the per-IP rate limit below.
 
-**Identification:** FingerprintJS visitor ID → SHA-256 (with optional
-`VISITOR_HASH_SALT`). IP-hash fallback when FingerprintJS fails.
+**Identification:** the anonymous `visitor_id` is a random
+`crypto.randomUUID()` stored in the browser's `localStorage` → SHA-256
+(with optional `VISITOR_HASH_SALT`). IP-hash fallback when `localStorage`
+is unavailable or no id is supplied. (FingerprintJS was removed — see
+§32.6 for the why.)
+
+**Hard per-IP rate limit (the actual cost guard).** A server-side limit
+of **60 requests per IP per hour** is enforced on `/api/ai/chat` via the
+`ai_ip_rate_limits` table + `check_and_increment_ip_rate_limit` RPC
+(atomic, row-locked, fixed window; `scripts/lib/ai-rate-limit.js`,
+constants `RATE_LIMIT_MAX` / `RATE_LIMIT_WINDOW_SECONDS`). It runs
+**before identity resolution and any Anthropic/OpenAI call**, keyed on
+source IP only, so it is **independent of anything the client sends** —
+a rotating or absent `visitor_id` cannot evade it. It applies to
+**signed-in users as well as anonymous ones** (a compromised account
+cannot run up unbounded spend from one host; real customers never
+approach 60/hr). Over-limit → HTTP 429 (`{ error: 'rate_limited',
+message, retry_after_seconds, window_resets_at }` + `Retry-After`),
+rendered in the widget as a calm assistant message, not an error. Fails
+OPEN on a limiter DB error (assistant stays up; provider spend caps are
+the hard ceiling). Rejections increment `ai_ip_rate_limits.rejected_count`
+and log detail; to see it firing:
+```sql
+SELECT ip_hash, request_count, rejected_count, window_started_at, last_rejected_at
+  FROM ai_ip_rate_limits WHERE rejected_count > 0
+  ORDER BY last_rejected_at DESC NULLS LAST LIMIT 50;
+```
 
 ### 49.6 Known rate-limit gaps — tech debt (open follow-ups)
 
-Three known limitations were deliberately deferred to focused
-follow-up PRs rather than scoped into the Ava launch. Dave's Anthropic
-Console spend cap is the line of last defence for all three:
+Of the three limitations originally flagged here, items 1 and 3 are now
+**addressed** by the per-IP rate limit (§49.5); item 2 is **partially**
+addressed. Dave's Anthropic/OpenAI Console spend caps remain the line of
+last defence.
 
-1. **Anonymous bypass via `visitor_id` rotation.** An adversary
-   POSTing directly to `/api/ai/chat` with a fresh random `visitor_id`
-   per request gets fresh quota each time. **Fix:** count against both
-   the fingerprint-hash bucket AND the IP-hash bucket in parallel; if
-   either exceeds, refuse. ~15 LOC change to `checkSearchQuota` +
-   `incrementQuota`.
+1. **Anonymous bypass via `visitor_id` rotation. — ADDRESSED.** An
+   adversary POSTing to `/api/ai/chat` with a fresh random `visitor_id`
+   per request used to get fresh search quota each time. The hard per-IP
+   rate limit (§49.5, 60/IP/hour, keyed on IP only, before identity)
+   now bounds this regardless of `visitor_id`.
 
-2. **Per-account rate limit for signed-in users.** Currently
-   unlimited. A compromised / abusive signed-in account could rack up
-   thousands of LLM calls per day. **Fix:** introduce a parallel
-   `ai_quotas_users` table (or extend the existing one with a
-   nullable `user_id`) and a `SIGNED_IN_DAILY_LIMIT` constant.
-   Suggested initial value: **50/day**. ~80 LOC.
+2. **Per-account rate limit for signed-in users. — PARTIALLY
+   ADDRESSED.** Signed-in users are now subject to the per-IP rate
+   limit (§49.5), so a compromised account is bounded per host. A
+   *distributed* abuser (one account across many IPs) is still not
+   per-account-bounded. **Optional future fix:** a parallel
+   `ai_quotas_users` table (or a nullable `user_id` on the existing
+   one) + a `SIGNED_IN_DAILY_LIMIT` constant (suggested **50/day**).
+   ~80 LOC. Provider spend caps are the ceiling until then.
 
-3. **Counter for `findAlternatives` + general chat turns.** Today
-   only `searchProducts` increments the quota. A visitor could send
-   1,000 small-talk turns / day at ~$0.01 each. **Fix:** add a
-   separate (lower-priority, lower-frequency) turn-counter quota.
-   Suggested initial value: **30 turns/day** for anon, **higher cap
-   for signed-in**. ~40 LOC.
+3. **Counter for `findAlternatives` + general chat turns. —
+   ADDRESSED for cost bounding.** Only `searchProducts` increments the
+   *search* quota, but the per-IP rate limit (§49.5) counts **every**
+   `/api/ai/chat` request — greetings, `findAlternatives`, and chat
+   turns included — so the "1,000 small-talk turns/day" runaway is now
+   bounded at 60/IP/hour. A separate finer-grained turn quota is no
+   longer needed for cost; revisit only if per-visitor fairness (as
+   opposed to per-IP cost) becomes a concern.
 
-Each is a focused PR; do not bundle with feature work that has its own
-review risk surface.
+Any further hardening is a focused PR; do not bundle with feature work
+that has its own review risk surface.
 
 ### 49.7 `ava.png` optimisation (tech debt)
 
@@ -4096,7 +4169,8 @@ PR; flagged here as a follow-up. Tooling: any image optimiser
   Wrapped in `{false && (…)}` for future restore, not stashed
   elsewhere. JSX must survive in the file.
 - **Do NOT scope rate-limit hardening (§49.6) into unrelated PRs.**
-  Each of the three follow-ups is its own scope and review.
+  The remaining follow-up (per-account signed-in cap) is its own scope
+  and review; items 1 and 3 are already closed by the per-IP limit (§49.5).
 
 ---
 
