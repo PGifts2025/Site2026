@@ -211,6 +211,75 @@ Deno.serve(async (req: Request) => {
       return jsonResponse(200, { received: true, order_id: orderId });
     }
 
+    case "charge.refunded": {
+      // Fires on both full AND partial refunds. The charge object carries the
+      // payment_intent and the CUMULATIVE amount_refunded. We match the order
+      // by payment_intent_id (charge.refunded has no checkout session id) and
+      // delegate all DB work to apply_refund_atomic, which is idempotent +
+      // monotonic and updates soft-deleted orders too. See CLAUDE.md §17 /
+      // the migration 20260901_orders_refund_tracking.sql.
+      const charge = event.data.object as Stripe.Charge;
+
+      const paymentIntentId =
+        typeof charge.payment_intent === "string"
+          ? charge.payment_intent
+          : charge.payment_intent?.id ?? null;
+
+      if (!paymentIntentId) {
+        console.warn(
+          `[stripe-webhook] event ${event.id} charge ${charge.id} has no payment_intent — ignoring`,
+        );
+        return jsonResponse(200, { received: true, skipped: "no_payment_intent" });
+      }
+
+      // Stripe amounts are in the smallest currency unit (pence).
+      const refundedPounds = (charge.amount_refunded ?? 0) / 100;
+      const chargePounds =
+        typeof charge.amount === "number" ? charge.amount / 100 : null;
+
+      const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+      const { data, error: rpcError } = await supabase.rpc(
+        "apply_refund_atomic",
+        {
+          p_payment_intent_id: paymentIntentId,
+          p_refunded_amount: refundedPounds,
+          p_charge_amount: chargePounds,
+        },
+      );
+
+      if (rpcError) {
+        console.error(
+          `[stripe-webhook] apply_refund_atomic error for event ${event.id}:`,
+          rpcError,
+        );
+        // 500 so Stripe retries transient DB failures.
+        return jsonResponse(500, { error: "Refund RPC failed" });
+      }
+
+      // Set-returning RPC → array of rows.
+      const result = Array.isArray(data) ? data[0] : data;
+
+      if (!result || !result.order_id) {
+        // No order matched this payment_intent (e.g. a charge not from PGifts).
+        // Acknowledge so Stripe stops retrying — there is nothing to do.
+        console.warn(
+          `[stripe-webhook] event ${event.id} charge ${charge.id} pi=${paymentIntentId} matched no order — ignoring`,
+        );
+        return jsonResponse(200, { received: true, skipped: "no_order_match" });
+      }
+
+      console.log(
+        `[stripe-webhook] event ${event.id} refund applied=${result.applied} order=${result.order_id} status=${result.new_status} refunded=£${refundedPounds}`,
+      );
+      return jsonResponse(200, {
+        received: true,
+        order_id: result.order_id,
+        applied: result.applied,
+        payment_status: result.new_status,
+      });
+    }
+
     default: {
       // Acknowledge events we haven't subscribed for — keeps the endpoint
       // generous if the Stripe Dashboard subscription is broadened later
