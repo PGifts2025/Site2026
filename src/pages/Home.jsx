@@ -894,7 +894,11 @@ const PromoGiftsApp = () => {
       )}
       {/* end Blog section — temporarily hidden, see CLAUDE.md §49 */}
 
-      {/* Footer */}
+      {/* Footer moved to the global <SiteFooter /> (src/components/SiteFooter.jsx),
+          rendered in App.jsx on every route so the Companies Act disclosure and
+          the /privacy + /terms links appear site-wide. Kept here hidden with
+          {false && (...)} to avoid a second, competing footer on the homepage. */}
+      {false && (
       <footer className="bg-gray-800 text-white py-6 sm:py-8 lg:py-12">
         <div className="max-w-7xl mx-auto px-4">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 sm:gap-8">
@@ -1013,6 +1017,7 @@ const PromoGiftsApp = () => {
           </div>
         </div>
       </footer>
+      )}
     </div>
   );
 };

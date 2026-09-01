@@ -637,6 +637,12 @@ const CustomerQuotes = ({ user }) => {
               )}
 
               {/* Actions */}
+              {quote.status !== 'converted' && (
+                <p className="px-5 pt-4 -mb-2 text-xs text-gray-500 text-right">
+                  By paying you agree to our{' '}
+                  <Link to="/terms" className="text-blue-700 underline hover:text-blue-900">Terms of Sale</Link>.
+                </p>
+              )}
               <div className="flex items-center justify-end space-x-3 px-5 py-4 bg-gray-50 border-t border-gray-100">
                 {quote.status === 'converted' ? (
                   <span className="text-sm text-purple-600 font-semibold">Converted to order</span>

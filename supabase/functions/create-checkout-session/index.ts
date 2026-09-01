@@ -94,6 +94,15 @@ Deno.serve(async (req: Request) => {
     );
     params.append("cancel_url", `${siteUrl}/account/quotes`);
     params.append("metadata[quote_id]", quote_id);
+    // Visible, non-blocking Terms of Sale link on the Stripe-hosted checkout
+    // page. Deliberately NOT the required-checkbox variant
+    // (consent_collection[terms_of_service]='required'): the customer already
+    // sees a Terms link at Pay Now, so a second required tick is friction for
+    // nothing. Stripe renders the Markdown link in custom_text messages.
+    params.append(
+      "custom_text[after_submit][message]",
+      `By completing your order you agree to our [Terms of Sale](${siteUrl}/terms).`
+    );
     if (email) {
       params.append("customer_email", email);
     }
