@@ -480,10 +480,45 @@ const AdminOrderDetail = ({ user, adminRole }) => {
             <div className="space-y-2">
               <div className="flex justify-between text-sm">
                 <span className="text-gray-600">Status</span>
-                <span className="font-semibold capitalize">
-                  {order.payment_status || 'Pending'}
+                <span className={`font-semibold ${
+                  order.payment_status === 'refunded' ? 'text-rose-700'
+                    : order.payment_status === 'partially_refunded' ? 'text-orange-700'
+                    : order.payment_status === 'failed' ? 'text-red-700'
+                    : ''
+                }`}>
+                  {order.payment_status === 'partially_refunded'
+                    ? 'Partially refunded'
+                    : (order.payment_status
+                        ? order.payment_status.charAt(0).toUpperCase() + order.payment_status.slice(1)
+                        : 'Pending')}
                 </span>
               </div>
+              {(order.payment_status === 'refunded' ||
+                order.payment_status === 'partially_refunded') && (
+                <>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-600">Refunded amount</span>
+                    <span className="font-semibold">
+                      {order.refunded_amount != null
+                        ? new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' }).format(order.refunded_amount)
+                        : '—'}
+                      {order.refunded_amount != null && order.total_amount != null && (
+                        <span className="text-gray-500 font-normal">
+                          {' '}of {new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' }).format(order.total_amount)}
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                  {order.refunded_at && (
+                    <div className="flex justify-between text-sm">
+                      <span className="text-gray-600">Refunded on</span>
+                      <span className="font-semibold">
+                        {new Date(order.refunded_at).toLocaleString('en-GB')}
+                      </span>
+                    </div>
+                  )}
+                </>
+              )}
               <div className="flex justify-between text-sm">
                 <span className="text-gray-600">Method</span>
                 <span className="font-semibold capitalize">

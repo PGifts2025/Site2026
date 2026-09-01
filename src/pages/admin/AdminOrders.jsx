@@ -278,6 +278,33 @@ const AdminOrders = ({ user, adminRole }) => {
     }).format(amount || 0);
   };
 
+  // Colour-coded payment badge. A partial refund is shown distinctly from a
+  // full one (and never as plain "Paid"), with the refunded amount so the
+  // state is unambiguous at a glance.
+  const getPaymentBadge = (order) => {
+    const status = order?.payment_status || 'pending';
+    const refunded = order?.refunded_amount;
+    switch (status) {
+      case 'paid':
+        return { cls: 'bg-green-100 text-green-800', label: 'Paid' };
+      case 'processing':
+        return { cls: 'bg-yellow-100 text-yellow-800', label: 'Processing' };
+      case 'failed':
+        return { cls: 'bg-red-100 text-red-800', label: 'Failed' };
+      case 'refunded':
+        return { cls: 'bg-rose-100 text-rose-800', label: 'Refunded' };
+      case 'partially_refunded':
+        return {
+          cls: 'bg-orange-100 text-orange-800',
+          label: refunded != null
+            ? `Part. refunded ${formatCurrency(refunded)}`
+            : 'Partially refunded',
+        };
+      default:
+        return { cls: 'bg-gray-100 text-gray-700', label: 'Pending' };
+    }
+  };
+
   const formatDate = (dateString) => {
     return new Date(dateString).toLocaleDateString('en-GB', {
       day: 'numeric',
@@ -369,6 +396,7 @@ const AdminOrders = ({ user, adminRole }) => {
       'Status',
       'Artwork Status',
       'Payment Status',
+      'Refunded Amount',
       'Subtotal (ex VAT)',
       'VAT',
       'Total',
@@ -401,6 +429,7 @@ const AdminOrders = ({ user, adminRole }) => {
           o.status,
           o.artwork_status,
           o.payment_status,
+          o.refunded_amount,
           o.subtotal,
           o.tax_amount,
           o.total_amount,
@@ -723,9 +752,14 @@ const AdminOrders = ({ user, adminRole }) => {
                         })()}
                       </td>
                       <td className="px-6 py-4">
-                        <span className="text-xs px-2 py-1 bg-gray-100 text-gray-700 rounded">
-                          {order.payment_status || 'Pending'}
-                        </span>
+                        {(() => {
+                          const pb = getPaymentBadge(order);
+                          return (
+                            <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded ${pb.cls}`}>
+                              {pb.label}
+                            </span>
+                          );
+                        })()}
                       </td>
                       <td className="px-6 py-4 text-sm font-semibold text-gray-900 text-right">
                         {formatCurrency(order.total_amount)}
