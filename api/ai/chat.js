@@ -56,6 +56,12 @@ import {
   incrementQuota,
   ANON_DAILY_LIMIT,
 } from '../../scripts/lib/ai-quota.js';
+import {
+  checkIpRateLimit,
+  getClientIp,
+  RATE_LIMIT_MAX,
+  RATE_LIMIT_WINDOW_SECONDS,
+} from '../../scripts/lib/ai-rate-limit.js';
 
 export const config = {
   maxDuration: 60, // seconds — typical turn 3–8s; tool-call turns can hit ~15s
@@ -311,6 +317,39 @@ export default async function handler(req, res) {
   const v = validateBody(body);
   if (!v.ok) return res.status(400).json({ error: v.error });
 
+  // 2b. Hard per-IP rate limit — the real cost backstop. Enforced BEFORE any
+  //     identity resolution or Anthropic call, keyed on source IP only, so it
+  //     applies whether or not a visitor_id is present and to signed-in and
+  //     anonymous alike. This is what bounds a bot that rotates visitor_id or
+  //     sends none. See scripts/lib/ai-rate-limit.js.
+  const clientIp = getClientIp(req);
+  try {
+    const rl = await checkIpRateLimit({ supabaseUrl, serviceRoleKey, ip: clientIp });
+    if (rl.unkeyed) {
+      console.warn('[ai/chat] rate limit: no derivable client IP — allowing (unkeyed)');
+    } else if (!rl.allowed) {
+      const resetMs = rl.windowResetsAt ? Date.parse(rl.windowResetsAt) - Date.now() : RATE_LIMIT_WINDOW_SECONDS * 1000;
+      const retryAfterSeconds = Math.max(1, Math.ceil(resetMs / 1000));
+      console.warn(
+        `[ai/chat] IP rate limit EXCEEDED ip_hash=${rl.ipHash?.slice(0, 12)}… count=${rl.currentCount}/${RATE_LIMIT_MAX} window=${RATE_LIMIT_WINDOW_SECONDS}s resets_at=${rl.windowResetsAt} signed_in_bearer=${typeof req.headers?.authorization === 'string' && req.headers.authorization.startsWith('Bearer ')}`,
+      );
+      res.setHeader('Retry-After', String(retryAfterSeconds));
+      return res.status(429).json({
+        error: 'rate_limited',
+        message:
+          "You've reached the limit for the assistant for now. Please try again a little later" +
+          ' — or sign in for uninterrupted access.',
+        retry_after_seconds: retryAfterSeconds,
+        window_resets_at: rl.windowResetsAt,
+      });
+    }
+  } catch (rlErr) {
+    // Fail OPEN on a rate-limiter DB error: a transient limiter outage must
+    // not take the assistant down. The provider spend caps (Anthropic/OpenAI)
+    // remain the hard ceiling. Logged so Dave can spot limiter failures.
+    console.error('[ai/chat] IP rate-limit check failed — allowing this request:', rlErr?.message);
+  }
+
   // 3. Identify caller — signed-in JWT or anonymous visitor.
   let userId = null;
   let visitorHash = null;
@@ -327,11 +366,12 @@ export default async function handler(req, res) {
   if (!userId) {
     // Spec: "if neither [JWT nor visitor_id] available: 401".
     // The visitor_id FIELD must be present in the body (even if its
-    // value is null/empty because FingerprintJS failed). Without that,
-    // the client never tried to identify itself and we reject. The
-    // IP-hash fallback below ONLY kicks in to rescue clients whose
-    // FingerprintJS produced a value the server can't use (adblocker
-    // mangling, exotic browsers, hash error) — see CLAUDE.md §32.6.
+    // value is null/empty because localStorage was unavailable). Without
+    // that, the client never tried to identify itself and we reject. The
+    // IP-hash fallback below ONLY kicks in to rescue clients that could
+    // not supply a stored id (private mode, storage disabled). The hard
+    // per-IP rate limit above (step 2b) is the identifier-independent
+    // cost backstop regardless of any of this.
     const visitorFieldPresent = body != null && 'visitor_id' in body;
     if (!visitorFieldPresent) {
       return res.status(401).json({ error: 'No identity — provide a Bearer Supabase JWT or visitor_id in the body' });

@@ -12,9 +12,9 @@
  * and so a chat endpoint can decide whether to allow the call BEFORE
  * paying an Anthropic round-trip.
  *
- * Visitor hashing: the raw FingerprintJS visitor_id never leaves the
- * server in plaintext. We SHA-256 it (with the optional VISITOR_HASH_SALT
- * env var) and use the hex digest as the key. CLAUDE.md §32.6.
+ * Visitor hashing: the raw visitor_id (a random id the browser stores in
+ * localStorage) is not stored in plaintext. We SHA-256 it (with the optional
+ * VISITOR_HASH_SALT env var) and use the hex digest as the key. CLAUDE.md §32.6.
  */
 
 import crypto from 'node:crypto';
@@ -43,10 +43,10 @@ export function hashVisitorId(rawVisitorId) {
 }
 
 /**
- * Fallback hash when FingerprintJS fails (adblocker, exotic browser,
- * client error). Hashes the request's source IP — far less stable than
- * a real fingerprint, but better than 0 protection. Two-line defensive
- * fallback per the session 5 spec.
+ * Fallback hash when the browser supplies no usable visitor_id (private
+ * mode, storage disabled). Hashes the request's source IP — less stable
+ * than the stored id, but better than 0 protection. Also reused to key the
+ * hard per-IP rate limit (scripts/lib/ai-rate-limit.js).
  *
  * @param {string|null|undefined} ip
  * @returns {string|null} hashed value, or null if no IP is available

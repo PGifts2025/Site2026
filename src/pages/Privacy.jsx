@@ -35,7 +35,7 @@ function Privacy() {
         <LI><strong>Delivery details:</strong> the delivery address, recipient name, phone number, and any delivery instructions you give.</LI>
         <LI><strong>Artwork you upload:</strong> logos, designs, and print-ready files you send us for your order. These may themselves contain personal data or third-party material, so please only upload what you are entitled to use (see our <a href="/terms" className="text-blue-700 underline hover:text-blue-900">Terms of Sale</a>).</LI>
         <LI><strong>AI assistant queries:</strong> the messages you type into our on-site AI assistant, and the search terms it uses to find products.</LI>
-        <LI><strong>Anonymous visitor identification:</strong> if you use the AI assistant without signing in, we generate a device identifier to apply fair-use limits. See "Cookies and tracking" below for exactly how this works.</LI>
+        <LI><strong>Anonymous usage identifier:</strong> if you use the AI assistant without signing in, we store a random identifier in your browser, and process your IP address, to apply fair-use limits. See "Cookies and tracking" below for exactly how this works.</LI>
         <LI><strong>Payment information:</strong> your card payment is handled entirely by Stripe. We never receive or store your card number; we keep only a payment reference and the amount.</LI>
         <LI><strong>Technical data:</strong> your IP address and standard request logs, generated automatically when you visit the site.</LI>
       </UL>
@@ -60,7 +60,6 @@ function Privacy() {
         <LI><strong>Resend</strong>:sends our transactional emails (order confirmations, artwork notifications, sign-in emails). Receives your email address and the relevant order details.</LI>
         <LI><strong>Anthropic</strong>:provides the AI model behind the on-site assistant. It receives the messages you send to the assistant.</LI>
         <LI><strong>OpenAI</strong>:used separately from the assistant to turn your product-search wording into a form we can match against our catalogue. It receives your search query text. This is a distinct provider from the assistant above.</LI>
-        <LI><strong>FingerprintJS</strong>:provides the code for the anonymous device identification used for AI fair-use limits. This runs entirely in your browser and does not receive your data (described under "Cookies and tracking").</LI>
       </UL>
 
       <H2>How long we keep it</H2>
@@ -85,10 +84,10 @@ function Privacy() {
         international transfers: the EU Standard Contractual Clauses together with
         the UK Addendum (also called the UK International Data Transfer Addendum),
         issued by the Information Commissioner's Office under section 119A of the
-        Data Protection Act 2018. Our anonymous-visitor identification
-        (FingerprintJS) runs entirely in your own browser and sends nothing to its
-        provider, so it does not involve an international transfer; only the
-        resulting one-way hash is stored, in our UK database.
+        Data Protection Act 2018. Our anonymous-usage identifier is a random
+        value created and stored in your own browser; it is not sent to any third
+        party, so it does not involve an international transfer, and only its
+        one-way hash is stored, in our UK database.
       </P>
 
       <H2>Your rights</H2>
@@ -111,15 +110,16 @@ function Privacy() {
         the site working and cannot be switched off without breaking sign-in.
       </P>
       <P>
-        <strong>Device fingerprinting (FingerprintJS).</strong> When you use the
-        AI assistant without signing in, we use FingerprintJS to build a device
-        identifier from characteristics of your browser and device (a "device
-        fingerprint"), which we use to apply fair-use limits to the anonymous
-        assistant. This is <strong>not</strong> a cookie: it is derived from your
-        device's own characteristics, so it <strong>cannot be removed by clearing
-        your cookies</strong>, and clearing your browsing data does not reset it.
-        We convert the identifier into a one-way hash before storing it, and we
-        never store the raw fingerprint. Signing in avoids anonymous fingerprinting.
+        <strong>Anonymous fair-use limits.</strong> When you use the AI assistant
+        without signing in, we apply fair-use limits in two ways. First, we store
+        a random identifier in your browser's local storage. This is not a device
+        fingerprint and is not derived from your device's characteristics; it is
+        under your control, and you can clear it at any time by clearing your
+        browser's site data (doing so simply gives you a fresh anonymous
+        allowance). Second, our server applies a limit based on your IP address,
+        which does not rely on anything stored in your browser. We store only a
+        one-way hash of the identifier and of the IP address, never the raw
+        values. Signing in removes these anonymous limits.
       </P>
 
       <H2>Complaints</H2>
