@@ -60,7 +60,7 @@ function Privacy() {
         <LI><strong>Resend</strong>:sends our transactional emails (order confirmations, artwork notifications, sign-in emails). Receives your email address and the relevant order details.</LI>
         <LI><strong>Anthropic</strong>:provides the AI model behind the on-site assistant. It receives the messages you send to the assistant.</LI>
         <LI><strong>OpenAI</strong>:used separately from the assistant to turn your product-search wording into a form we can match against our catalogue. It receives your search query text. This is a distinct provider from the assistant above.</LI>
-        <LI><strong>FingerprintJS</strong>:provides the anonymous device identification used for AI fair-use limits (described under "Cookies and tracking").</LI>
+        <LI><strong>FingerprintJS</strong>:provides the code for the anonymous device identification used for AI fair-use limits. This runs entirely in your browser and does not receive your data (described under "Cookies and tracking").</LI>
       </UL>
 
       <H2>How long we keep it</H2>
@@ -71,10 +71,24 @@ function Privacy() {
         <LI><strong>AI assistant conversations:</strong> retained to operate and improve the service and to investigate misuse; ask us via <MailLink address={HELPDESK} /> if you want a conversation removed.</LI>
       </UL>
 
-      <H2>Where your data is held</H2>
+      <H2>Where your data is held, and international transfers</H2>
       <P>
-        Your personal data is stored in the United Kingdom. Our database and file
-        storage are hosted in London.
+        Your stored personal data is held in the United Kingdom: our database and
+        file storage (Supabase) are hosted in London. Some of the providers that
+        help run the site operate in the United States, so a limited amount of
+        your data is processed there even though the main database stays in the
+        UK: <strong>Vercel</strong> processes your IP address and request logs,{' '}
+        <strong>Anthropic</strong> receives the messages you send to the AI
+        assistant, and <strong>OpenAI</strong> receives your product-search
+        wording. For these transfers, each of these providers' published
+        data-processing terms relies on the UK's recognised safeguard for
+        international transfers: the EU Standard Contractual Clauses together with
+        the UK Addendum (also called the UK International Data Transfer Addendum),
+        issued by the Information Commissioner's Office under section 119A of the
+        Data Protection Act 2018. Our anonymous-visitor identification
+        (FingerprintJS) runs entirely in your own browser and sends nothing to its
+        provider, so it does not involve an international transfer; only the
+        resulting one-way hash is stored, in our UK database.
       </P>
 
       <H2>Your rights</H2>
