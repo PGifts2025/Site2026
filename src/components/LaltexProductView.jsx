@@ -65,21 +65,16 @@ import {
   ON_VIEW_FRESHNESS_MS,
 } from '../utils/stockDisplay';
 import AboveCeilingNotice from './AboveCeilingNotice';
+import { formatGBP } from '../utils/currency';
 
 // ---------------------------------------------------------------------------
 // Pricing helpers
 // ---------------------------------------------------------------------------
 
-/**
- * Format a GBP value for display. Always two decimal places, never
- * carries upstream precision (£0.2395) into the UI as £2.720 or
- * £2.7. Stored values keep full precision for tier math; this is
- * applied at the last possible moment.
- */
-export const formatGBP = (value) => {
-  if (value == null || !Number.isFinite(value)) return '—';
-  return `£${value.toFixed(2)}`;
-};
+// GBP display formatting lives in utils/currency (en-GB, thousands
+// separator, always two decimals). Re-exported for existing importers.
+// Stored values keep full precision for tier math; format at render only.
+export { formatGBP };
 
 /**
  * Friendly display label for a PrintDetails entry.
@@ -1473,7 +1468,7 @@ const LaltexProductView = ({ product }) => {
             <div className="bg-gray-50 rounded-lg p-4 mb-6 text-sm">
               <p className="font-semibold text-gray-900">{quoteSuccess.productName}</p>
               <p className="text-gray-600">
-                {quoteSuccess.quantity} units @ £{quoteSuccess.unitPrice} each
+                {quoteSuccess.quantity} units @ {formatGBP(quoteSuccess.unitPrice)} each
               </p>
             </div>
             <div className="flex space-x-3">

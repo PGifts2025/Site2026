@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Star, Heart, Share2, ShoppingCart, Check, Zap, Shield, Truck, ChevronLeft, ChevronRight, Plus, Minus } from 'lucide-react';
 import { useCart } from '../context/CartContext';
+import { formatGBP } from '../utils/currency';
 
 const ProductPageTemplate = ({ productData }) => {
   const navigate = useNavigate();
@@ -276,11 +277,11 @@ const ProductPageTemplate = ({ productData }) => {
             <div className={`bg-gradient-to-br from-green-50 to-emerald-50 rounded-2xl p-6 border border-green-200 ${animatePrice ? 'scale-105' : ''} transition-transform`}>
               <div className="flex items-baseline justify-between mb-2">
                 <span className="text-sm text-gray-600">Unit Price:</span>
-                <span className="text-2xl font-bold text-green-600">£{currentTier.price.toFixed(2)}</span>
+                <span className="text-2xl font-bold text-green-600">{formatGBP(currentTier.price)}</span>
               </div>
               <div className="flex items-baseline justify-between pt-2 border-t border-green-200">
                 <span className="text-sm font-semibold text-gray-900">Total:</span>
-                <span className="text-3xl font-bold text-green-700">£{totalPrice}</span>
+                <span className="text-3xl font-bold text-green-700">{formatGBP(totalPrice)}</span>
               </div>
             </div>
 

@@ -13,6 +13,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import AboveCeilingNotice from './AboveCeilingNotice';
+import { formatGBP } from '../utils/currency';
 import {
   Heart,
   Share2,
@@ -1435,10 +1436,10 @@ const ProductDetailPage = ({ productSlug, identifier }) => {
 
           {/* Product Images */}
           <div className="lg:col-span-5 w-full">
-            <div className="lg:sticky lg:top-24">
-              {/* Badge */}
+            <div className="relative lg:sticky lg:top-24">
+              {/* Badge — z-20 so it sits above the main image (whose <img> layers are z-10) */}
               {product.badge && (
-                <div className="absolute top-4 left-4 z-10">
+                <div className="absolute top-4 left-4 z-20 pointer-events-none">
                   <span className="bg-gradient-to-r from-orange-500 to-red-500 text-white px-4 py-2 rounded-full text-sm font-bold shadow-lg">
                     {product.badge}
                   </span>
@@ -1560,7 +1561,7 @@ const ProductDetailPage = ({ productSlug, identifier }) => {
             {/* Basic Info */}
             <div>
               <h1 className="text-2xl lg:text-4xl font-bold text-gray-900 mb-2">{product.name}</h1>
-              {product.subtitle && <p className="text-xl text-gray-600 mb-4">{product.subtitle}</p>}
+              {product.subtitle && <p className="text-xl lg:text-2xl font-semibold text-gray-800 leading-snug mb-4">{product.subtitle}</p>}
 
               {product.description && <p className="text-gray-700 leading-relaxed">{product.description}</p>}
             </div>
@@ -1942,7 +1943,7 @@ const ProductDetailPage = ({ productSlug, identifier }) => {
                             <div>
                               <span className="text-sm font-medium text-gray-700">Print second side</span>
                               {bagSecondSideDelta != null && (
-                                <span className="text-sm text-gray-500 ml-1">(+£{bagSecondSideDelta.toFixed(2)}/unit)</span>
+                                <span className="text-sm text-gray-500 ml-1">(+{formatGBP(bagSecondSideDelta)}/unit)</span>
                               )}
                             </div>
                           </label>
@@ -2089,12 +2090,12 @@ const ProductDetailPage = ({ productSlug, identifier }) => {
                           <span className="text-sm text-gray-600">Price per unit (ex VAT)</span>
                         </div>
                         <div className={`text-3xl font-bold text-blue-600 transition-all duration-300 ${animatePrice ? 'scale-110' : 'scale-100'}`}>
-                          £{effectivePricePerUnit.toFixed(2)}
+                          {formatGBP(effectivePricePerUnit)}
                         </div>
                         <div className="mt-4 pt-4 border-t border-gray-200">
-                          <div className="flex justify-between items-center">
-                            <span className="text-gray-600">Total (ex VAT)</span>
-                            <span className="text-2xl font-bold text-gray-900">£{effectiveTotalPrice}</span>
+                          <div className="flex flex-wrap justify-between items-center gap-x-2">
+                            <span className="text-sm text-gray-600 whitespace-nowrap">Total (ex VAT)</span>
+                            <span className="text-2xl font-bold text-gray-900 whitespace-nowrap ml-auto">{formatGBP(effectiveTotalPrice)}</span>
                           </div>
                           <p className="text-xs text-gray-400 mt-1 text-left">Prices exclude VAT. VAT is added at checkout.</p>
                           {/* Print breakdown for clothing model */}
@@ -2179,7 +2180,7 @@ const ProductDetailPage = ({ productSlug, identifier }) => {
             <p className="text-gray-600 mb-4">Quote {quoteSuccess.quoteNumber}</p>
             <div className="bg-gray-50 rounded-lg p-4 mb-6 text-sm">
               <p className="font-semibold text-gray-900">{quoteSuccess.productName}</p>
-              <p className="text-gray-600">{quoteSuccess.quantity} units @ £{quoteSuccess.unitPrice} each</p>
+              <p className="text-gray-600">{quoteSuccess.quantity} units @ {formatGBP(quoteSuccess.unitPrice)} each</p>
             </div>
             <div className="flex space-x-3">
               <button

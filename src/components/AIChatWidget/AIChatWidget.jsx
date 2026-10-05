@@ -28,6 +28,7 @@ import { useNavigate } from 'react-router-dom';
 
 import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../services/supabaseService';
+import { formatGBP } from '../../utils/currency';
 
 const PUBLIC_ENABLED = String(import.meta.env.VITE_AI_CHAT_PUBLIC_ENABLED ?? '').toLowerCase() === 'true';
 
@@ -478,9 +479,9 @@ function ProductCard({ product }) {
         ? (pricingArr.find((t) => Number(t.min) >= moq) ?? pricingArr[0])
         : pricingArr[0]);
   const priceLabel = product.unit_price_at_quantity != null && !product.unit_price_at_quantity_is_poa
-    ? `£${Number(product.unit_price_at_quantity).toFixed(2)}/unit`
+    ? `${formatGBP(Number(product.unit_price_at_quantity))}/unit`
     : tier
-      ? `From £${Number(tier.price).toFixed(2)} (${tier.min}+)`
+      ? `From ${formatGBP(Number(tier.price))} (${tier.min}+)`
       : product.unit_price_at_quantity_is_poa
         ? 'POA'
         : null;
