@@ -15,6 +15,35 @@ import { supabaseConfig, isMockAuth } from '../config/supabase';
 // Initialize Supabase client - singleton pattern
 let supabaseClient = null;
 
+// Guest design identity (crypto.randomUUID, persisted in localStorage).
+// A function declaration so it is hoisted: the client below is created at
+// module load, before getSessionId further down this file is initialised.
+function readDesignSessionId() {
+  if (typeof window === 'undefined') return null;
+  try {
+    let sessionId = localStorage.getItem('design_session_id');
+    if (!sessionId) {
+      sessionId = crypto.randomUUID();
+      localStorage.setItem('design_session_id', sessionId);
+    }
+    return sessionId;
+  } catch {
+    return null;
+  }
+}
+
+// user_designs RLS lets a guest (no user_id) see only rows whose session_id
+// matches this header (CLAUDE.md §62.3). Added to PostgREST calls only:
+// Edge Functions set their own CORS allow-list and would reject the header.
+function fetchWithDesignSession(input, init = {}) {
+  const url = typeof input === 'string' ? input : input?.url || '';
+  const sessionId = url.includes('/rest/v1/') ? readDesignSessionId() : null;
+  if (!sessionId) return fetch(input, init);
+  const headers = new Headers(init.headers || (typeof input === 'object' ? input.headers : undefined));
+  headers.set('x-design-session', sessionId);
+  return fetch(input, { ...init, headers });
+}
+
 /**
  * Get or initialize Supabase client (singleton)
  * This ensures only ONE client instance exists across the entire app
@@ -47,6 +76,9 @@ export function getSupabaseClient() {
     auth: {
       persistSession: true,
       autoRefreshToken: true,
+    },
+    global: {
+      fetch: fetchWithDesignSession,
     },
   });
 
@@ -1693,16 +1725,7 @@ export const loadProductVariants = async (productKey) => {
  * Get or generate session ID for anonymous users
  * @returns {string} Session ID
  */
-export const getSessionId = () => {
-  if (typeof window === 'undefined') return null;
-
-  let sessionId = localStorage.getItem('design_session_id');
-  if (!sessionId) {
-    sessionId = crypto.randomUUID();
-    localStorage.setItem('design_session_id', sessionId);
-  }
-  return sessionId;
-};
+export const getSessionId = () => readDesignSessionId();
 
 /**
  * Generate thumbnail from Fabric.js canvas
@@ -2202,12 +2225,13 @@ export const deleteUserDesign = async (designId) => {
 };
 
 /**
- * Migrate anonymous designs to user account
- * @param {string} sessionId - Session ID to migrate
- * @param {string} userId - User ID to migrate to
+ * Move this device's guest designs into the signed-in user's account.
+ * Takes no arguments: claim_guest_designs reads the guest session from the
+ * x-design-session header and the user from the JWT. Extra arguments from
+ * older callers are ignored.
  * @returns {Promise<number>} Number of designs migrated
  */
-export const migrateSessionDesignsToUser = async (sessionId, userId) => {
+export const migrateSessionDesignsToUser = async () => {
   if (isMockAuth) {
     console.log('Mock mode: Would migrate designs from session to user');
     return 0;
@@ -2216,10 +2240,7 @@ export const migrateSessionDesignsToUser = async (sessionId, userId) => {
   try {
     const client = getSupabaseClient();
 
-    const { data, error } = await client.rpc('migrate_session_designs_to_user', {
-      p_session_id: sessionId,
-      p_user_id: userId
-    });
+    const { data, error } = await client.rpc('claim_guest_designs');
 
     if (error) throw error;
 
