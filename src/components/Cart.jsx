@@ -1,6 +1,7 @@
 import React from 'react';
 import { X, Plus, Minus, Trash2, ShoppingBag, ArrowRight } from 'lucide-react';
 import { useCart } from '../context/CartContext';
+import { formatGBP } from '../utils/currency';
 import { useNavigate } from 'react-router-dom';
 
 const Cart = () => {
@@ -105,7 +106,7 @@ const Cart = () => {
                         </p>
                       )}
                       <p className="text-sm font-bold text-blue-600 mt-2">
-                        £{item.price.toFixed(2)}
+                        {formatGBP(item.price)}
                       </p>
 
                       {/* Quantity Controls */}
@@ -150,11 +151,11 @@ const Cart = () => {
             <div className="space-y-2 mb-4">
               <div className="flex justify-between text-sm text-gray-600">
                 <span>Subtotal:</span>
-                <span>£{totals.subtotal}</span>
+                <span>{formatGBP(totals.subtotal)}</span>
               </div>
               <div className="flex justify-between text-sm text-gray-600">
                 <span>VAT (20%):</span>
-                <span>£{cartVAT}</span>
+                <span>{formatGBP(cartVAT)}</span>
               </div>
               <div className="flex justify-between text-sm text-gray-500 italic">
                 <span>Shipping:</span>
@@ -162,7 +163,7 @@ const Cart = () => {
               </div>
               <div className="flex justify-between text-lg font-bold text-gray-900 pt-2 border-t border-gray-300">
                 <span>Total:</span>
-                <span>£{cartTotal}</span>
+                <span>{formatGBP(cartTotal)}</span>
               </div>
             </div>
 

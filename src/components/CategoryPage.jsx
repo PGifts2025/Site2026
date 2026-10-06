@@ -4,6 +4,7 @@ import { ChevronRight, Zap, Shield, Clock, Loader } from 'lucide-react';
 import { supabase } from '../services/supabaseService';
 import { getCuratedCategoryProducts } from '../services/productCatalogService';
 import AvaPromptCard from './AvaPromptCard';
+import { formatGBP } from '../utils/currency';
 
 // ---------------------------------------------------------------------------
 // CategoryPage — shared component rendered by all 11 category routes
@@ -387,7 +388,7 @@ const CategoryPage = ({ categorySlug }) => {
                           <>
                             <span className="text-sm text-gray-500">From</span>
                             <span className="text-2xl font-bold text-green-600 ml-2">
-                              £{product.lowestPrice.toFixed(2)}
+                              {formatGBP(product.lowestPrice)}
                             </span>
                           </>
                         )}
@@ -464,7 +465,7 @@ const CategoryPage = ({ categorySlug }) => {
                       {lowestTier != null && (
                         <div className="flex items-baseline mb-4">
                           <span className="text-sm text-gray-500">From</span>
-                          <span className="text-xl font-bold text-green-600 ml-2">£{lowestTier.toFixed(2)}</span>
+                          <span className="text-xl font-bold text-green-600 ml-2">{formatGBP(lowestTier)}</span>
                         </div>
                       )}
                       <button

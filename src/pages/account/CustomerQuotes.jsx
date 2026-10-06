@@ -7,6 +7,7 @@ import { supabaseConfig } from '../../config/supabase';
 import DeliveryAddressForm from '../../components/DeliveryAddressForm';
 import { buildAccountSnapshot, accountHasAddress } from '../../lib/deliveryValidation';
 import { formatSizeBreakdown } from '../../utils/laltexSizes';
+import { formatGBP } from '../../utils/currency';
 
 /**
  * Render `quote_items.print_areas` (jsonb) as a short descriptor for
@@ -375,7 +376,7 @@ const CustomerQuotes = ({ user }) => {
   };
 
   const formatCurrency = (amount) => {
-    return `£${parseFloat(amount || 0).toFixed(2)}`;
+    return formatGBP(parseFloat(amount || 0));
   };
 
   const getStatusBadge = (status) => {
