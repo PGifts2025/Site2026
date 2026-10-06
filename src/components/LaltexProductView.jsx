@@ -661,6 +661,9 @@ const LaltexProductView = ({ product }) => {
         .insert({
           quote_id: quote.id,
           product_id: null, // Laltex products aren't in catalog_products
+          // Real product key for the server-side price-floor check in
+          // create-checkout-session (never keyed on product_name).
+          supplier_product_id: product.id,
           product_name: product.name,
           quantity,
           unit_price: +unitPrice.toFixed(4),

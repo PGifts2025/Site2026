@@ -551,6 +551,40 @@ Do not change the schema of quote_items, orders, or any other table.
 - [ ] Stripe dashboard shows the test payment
 - [ ] Test with Ocean Octopus product first (simple flat pricing)
 
+### 16.10 Server-side price verification — what is and isn't checked
+
+Customers cannot write prices or totals directly (`20261007_quote_payment_security.sql`,
+§62): `quotes` UPDATE is limited to `shipping_address` / `po_number` / `notes`,
+`quote_items` has no customer UPDATE at all, quantity edits and combining go
+through `set_quote_item_quantity()` / `combine_quotes()` (SECURITY DEFINER,
+ownership via `auth.uid()`), and `recompute_quote_total` maintains the totals.
+Price-setting still happens at **INSERT** (add to quote), so `create-checkout-session`
+re-validates every line before charging, keyed on `product_id` /
+`supplier_product_id`, never on names:
+
+| Product kind | How identified | At insert | At checkout |
+|---|---|---|---|
+| **Tier-priced catalog** (15 products: water-bottle, chi-cup, pens, power, cables, notebooks, tea towel) | `catalog_pricing_tiers` only — no `catalog_print_pricing`, no `bag_print_pricing` rows (`is_tier_priced_product()`) | `quote_items_server_price` trigger **overwrites** `unit_price` from the current tier, enforces the MOQ (lowest tier), nulls `taxable_net_unit` | **Exact**: qty ≥ lowest tier, `unit_price` = matching tier, no `taxable_net_unit` |
+| **Clothing** (5) | has `catalog_print_pricing` rows | client price kept | **Floor only**: ≥ min of `total_sell_price` / `garment_cost` / tier prices |
+| **Bags** (5) | has `bag_print_pricing` rows | client price kept | **Floor only**: ≥ min `unit_cost` (sell ≥ cost) |
+| **Laltex** | `product_id` NULL, `supplier_product_id` → `supplier_products` | client price kept | **Floor only**: ≥ min tier `sell_price`; `taxable_net_unit` allowed only for `ZERO_RATED_PRODUCT_CODES` and within `0..unit_price` |
+
+Always, for every quote: caller must own it (session JWT, not the anon key),
+status `draft`, ≥ 1 line, positive integer quantities and prices, and
+`total_amount` must equal the total recomputed from the lines.
+
+**Known gap.** Clothing, bag and Laltex prices come from client-side pricing
+engines (print matrix, bag build-up model, Laltex print + delivery + margin) that
+are not ported server-side. The floor stops £0.01-style tampering but not a
+modest under-price (e.g. a 50-unit T-shirt line at £2.10 instead of £6.49 passes).
+Closing it means porting those engines to SQL/Edge, or pricing those lines in a
+SECURITY DEFINER RPC at insert. `ZERO_RATED_PRODUCT_CODES` is duplicated in
+`create-checkout-session` and `src/utils/vat.js` — keep them in sync.
+
+**Rollback** (if ever needed): run `20261007_quote_payment_security.down.sql` in
+the SQL Editor, revert the merge, and redeploy the previous
+`create-checkout-session` (`git checkout <previous main sha> -- supabase/functions/create-checkout-session && supabase functions deploy create-checkout-session`).
+
 ---
 
 ## 17. ORDER FLOW — COMPLETE ARCHITECTURE (as of April 2026)
@@ -5992,7 +6026,8 @@ trigger replaced it) · 1c `is_admin()` → `team_members` + policy rewrites ·
 | `user_designs` | owner by `auth.uid()`; guest by `x-design-session` header; admin read | same | owner: `user_id = auth.uid()`; guest: `user_id IS NULL AND session_id = guest_session_id()` |
 | `catalog_print_pricing` | everyone | none | SELECT `true` |
 | `profiles`, `uploads`, `visual_proofs` | none (unused) | none | RLS on, no policies, no client grants |
-| `quotes`, `quote_items` | — | — | see `20261007_quote_payment_security.sql` (PR fix/quote-payment-security) |
+| `quotes` | own (HeaderBar, dashboard, My Quotes); admin | INSERT own; UPDATE own `shipping_address`/`po_number`/`notes` only (column grants); DELETE own drafts; totals via trigger | SELECT own-or-admin · INSERT own · UPDATE own-or-admin · DELETE own draft · client-insert trigger forces `draft` |
+| `quote_items` | own; admin | INSERT/DELETE into own **draft** quote; no UPDATE (quantity via `set_quote_item_quantity()`, moves via `combine_quotes()`) | SELECT own-or-admin · INSERT/DELETE own draft · tier-priced lines re-priced by `quote_items_server_price` (§16.10) |
 
 **Guest designs.** The guest identity is `localStorage.design_session_id`
 (`crypto.randomUUID()`). `supabaseService`'s single client adds it as the
@@ -6021,9 +6056,6 @@ GRANT INSERT, UPDATE, DELETE, TRUNCATE ON public.catalog_print_pricing, public.p
 
 ### 62.5 Known gaps / follow-ups
 
-- `quotes` / `quote_items` still have RLS off until PR fix/quote-payment-security
-  lands (anon access already revoked by containment 1b; signed-in users can still
-  read/write any quote until then).
 - Frontend admin *UI* checks still read `user_metadata.is_admin` — UI only, the
   database enforces the real rule: `productCatalogService.js` `isCurrentUserAdmin()`
   (10 call sites + `PrintAreaAdmin.jsx`), `supabaseService.js` two helpers. Switch
