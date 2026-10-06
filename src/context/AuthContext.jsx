@@ -28,6 +28,17 @@ export const AuthProvider = ({ children }) => {
         if (session?.user) {
           setUser(session.user);
           setIsAuthenticated(true);
+          if (event === 'SIGNED_IN') {
+            // Move any designs made as a guest on this device into the account.
+            // Deferred: awaiting Supabase calls inside onAuthStateChange can
+            // deadlock the auth client.
+            setTimeout(() => {
+              supabase.rpc('claim_guest_designs').then(({ data, error }) => {
+                if (error) console.warn('[AuthContext] claim_guest_designs failed:', error.message);
+                else if (data) console.log(`[AuthContext] Claimed ${data} guest design(s)`);
+              });
+            }, 0);
+          }
         } else {
           setUser(null);
           setIsAuthenticated(false);
@@ -93,32 +104,20 @@ export const AuthProvider = ({ children }) => {
           // /account. window.location.origin keeps this correct on localhost,
           // Vercel previews, and production. See audit-email-verification-flow.md.
           emailRedirectTo: `${window.location.origin}/auth/callback`,
+          // handle_new_customer_profile (auth.users trigger) builds the
+          // customer_profiles row from these. The browser can't insert it:
+          // with email confirmation on there is no session yet, and anon has
+          // no access to customer_profiles (CLAUDE.md §62.3).
           data: {
             first_name: firstName,
-            last_name: lastName
+            last_name: lastName,
+            company_name: companyName || null,
+            phone: phone || null
           }
         }
       });
 
       if (authError) throw authError;
-
-      // 2. Create customer profile
-      const { error: profileError } = await supabase
-        .from('customer_profiles')
-        .insert({
-          id: authData.user.id,
-          email: email,
-          first_name: firstName,
-          last_name: lastName,
-          company_name: companyName || null,
-          phone: phone || null,
-          created_at: new Date().toISOString()
-        });
-
-      if (profileError) {
-        console.error('[AuthContext] Error creating customer profile:', profileError);
-        // Don't throw - user is created, profile creation can be retried
-      }
 
       console.log('[AuthContext] Sign up successful:', authData.user.email);
       return { data: authData, error: null };

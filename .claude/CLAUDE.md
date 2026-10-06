@@ -399,6 +399,7 @@ All three route to `/account/quotes` on success, with a flash banner `"Quote cre
 - ❌ Edit `supabase/email-templates/auth/*.html` by hand — they're generated. Edit `_bodies/*.js` or `_shell.html` and run `npm run build:email-templates` (§21)
 - ❌ Revert `createQuoteFromDesign`'s pre-insert `total_amount` computation to `0` — the trigger is a safety net, not a substitute (§23)
 - ❌ Change pricing margins (22/20/18%) without explicit instruction
+- ❌ Create a `public` table without `ENABLE ROW LEVEL SECURITY`, or authorise anything on `user_metadata` / `raw_user_meta_data` (user-editable) — admin is `team_members` via `is_admin()` (§62)
 - ❌ Change Hi-Vis or T-shirt colour_variant resolution logic without instruction
 - ❌ Delete or truncate catalog_print_pricing (252 rows, hard to regenerate)
 - ❌ Run clearCatalogData() — deletes all catalogue data
@@ -5926,3 +5927,119 @@ Each function's `verify_jwt` must match the table above. Or per function:
 on and that function is dead — redeploy. The one-time proof that the config is
 durable: run a PLAIN `supabase functions deploy stripe-webhook` (NO flag) from a
 clean merged `main`, then re-query — `verify_jwt` must still be `false`.
+
+---
+
+## 62. DATABASE ACCESS CONTROL — RLS, GRANTS, ADMIN SOURCE OF TRUTH
+
+### 62.1 Incident (6 Oct 2026)
+
+Found while dry-running the quote-payment-security PR:
+
+- **10 public tables had RLS disabled** (created in the Dashboard, where RLS is
+  off by default): `orders`, `order_items`, `customer_profiles`, `quotes`,
+  `quote_items`, `profiles`, `uploads`, `visual_proofs`, `catalog_print_pricing`,
+  `user_designs`. Their policies existed but were inert, and `anon`/`authenticated`
+  held Supabase's default full table grants — anyone with the public anon key
+  could read and write every row (orders, addresses, profiles, clothing prices).
+- **`is_admin()` trusted `raw_user_meta_data.is_admin`**, which every user can set
+  on themselves (`auth.signUp({ options: { data } })` / `auth.updateUser`). Any
+  self-registered account was an admin for every `is_admin` policy, including
+  read access to all customer artwork in the `order-artwork` bucket.
+  `apparel_colors` / `product_template_colors` had the same flaw via
+  `user_metadata.role`.
+- `product_template_variants` had `INSERT`/`UPDATE` policies of `true` for
+  `public`, plus write policies for any signed-in user.
+
+Personal data present at the time: owner and tester accounts only — no real
+customers (confirmed by Dave).
+
+**Containment applied directly to production the same day** (each step smoke-
+tested; codified idempotently in section 0 of `20261006_rls_core_tables.sql`):
+1a revoke client writes on the 5 tables the browser never writes · 1b revoke all
+`anon` access to the private tables (sign-up's anon profile INSERT kept until the
+trigger replaced it) · 1c `is_admin()` → `team_members` + policy rewrites ·
+1d `catalog-images` bucket capped at 2 MB, png/jpeg/webp.
+
+### 62.2 Rules — DO NOT BREAK
+
+- **Every table in `public` must have RLS enabled.** A table created in the
+  Dashboard/SQL Editor starts with RLS OFF and full grants to `anon` and
+  `authenticated`. Always `ALTER TABLE … ENABLE ROW LEVEL SECURITY` in the same
+  migration that creates it. Check (must return 0 rows):
+  `SELECT relname FROM pg_class WHERE relnamespace = 'public'::regnamespace AND relkind = 'r' AND NOT relrowsecurity;`
+- **Admin = `team_members`** (active `super_admin`/`staff`), via
+  `public.is_admin(uuid)`. Never authorise on `user_metadata` /
+  `raw_user_meta_data` — it is user-editable.
+- `is_admin()` is NOT executable by `anon`. Any policy that calls it must be
+  scoped `TO authenticated`, or anonymous reads of that table will error with
+  "permission denied for function is_admin".
+- `anon` gets grants only for genuine anonymous paths: catalog reads
+  (`catalog_*`, `catalog_print_pricing`, templates/variants/colours/print areas),
+  guest designs (`user_designs`, header-scoped), and design-thumbnail uploads.
+- Clients never get `TRUNCATE` (it bypasses RLS).
+- **Migrations are applied in the SQL Editor (§52), never `supabase db push`** —
+  `supabase_migrations.schema_migrations` records only 3 historic versions, so
+  `db push` would try to replay ~100 migrations against production.
+
+### 62.3 Table map (after `20261006_rls_core_tables.sql`)
+
+| Table | Clients that read | Clients that write | Policy |
+|---|---|---|---|
+| `orders` | own (account pages, artwork modal); admin (all) | own: `shipping_address`, `po_number`, `artwork_status` (pending/uploaded only); admin: anything | SELECT own-or-admin · UPDATE own · ALL admin · `orders_customer_update_guard` trigger rejects any other column change by a non-admin |
+| `order_items` | own; admin | none (`confirm_payment_atomic`, service role) | SELECT own-or-admin |
+| `customer_profiles` | own; admin | trigger `handle_new_customer_profile` on `auth.users` INSERT (sign-up metadata: first/last name, company, phone); own UPDATE | SELECT own-or-admin · UPDATE own · INSERT own (authenticated only) |
+| `user_designs` | owner by `auth.uid()`; guest by `x-design-session` header; admin read | same | owner: `user_id = auth.uid()`; guest: `user_id IS NULL AND session_id = guest_session_id()` |
+| `catalog_print_pricing` | everyone | none | SELECT `true` |
+| `profiles`, `uploads`, `visual_proofs` | none (unused) | none | RLS on, no policies, no client grants |
+| `quotes`, `quote_items` | — | — | see `20261007_quote_payment_security.sql` (PR fix/quote-payment-security) |
+
+**Guest designs.** The guest identity is `localStorage.design_session_id`
+(`crypto.randomUUID()`). `supabaseService`'s single client adds it as the
+`x-design-session` header **on `/rest/v1/` requests only** (`fetchWithDesignSession`)
+— Edge Functions set their own CORS allow-list and would reject the header on
+preflight. `public.guest_session_id()` reads it from `request.headers`. On
+`SIGNED_IN`, `AuthContext` calls `claim_guest_designs()` (SECURITY DEFINER; uses
+`auth.uid()` and the header, never parameters), deferred with `setTimeout`
+because awaiting Supabase inside `onAuthStateChange` can deadlock.
+
+### 62.4 Containment reversal (for the record — never run casually)
+
+```sql
+-- 1d
+UPDATE storage.buckets SET file_size_limit = NULL, allowed_mime_types = NULL WHERE id = 'catalog-images';
+-- 1b (restores the post-1a state)
+GRANT ALL ON public.orders, public.quotes, public.quote_items TO anon;
+GRANT SELECT, REFERENCES, TRIGGER ON public.order_items, public.profiles, public.uploads, public.visual_proofs TO anon;
+GRANT SELECT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON public.customer_profiles TO anon;
+-- 1a
+GRANT INSERT, UPDATE, DELETE, TRUNCATE ON public.catalog_print_pricing, public.profiles,
+  public.uploads, public.visual_proofs, public.order_items TO anon, authenticated;
+-- 1c: restore is_admin() body `raw_user_meta_data->>'is_admin'` + EXECUTE to PUBLIC,
+--     and the 7 dropped policies (definitions in the PR fix/rls-core-tables body).
+```
+
+### 62.5 Known gaps / follow-ups
+
+- `quotes` / `quote_items` still have RLS off until PR fix/quote-payment-security
+  lands (anon access already revoked by containment 1b; signed-in users can still
+  read/write any quote until then).
+- Frontend admin *UI* checks still read `user_metadata.is_admin` — UI only, the
+  database enforces the real rule: `productCatalogService.js` `isCurrentUserAdmin()`
+  (10 call sites + `PrintAreaAdmin.jsx`), `supabaseService.js` two helpers. Switch
+  them to `team_members` (as `AdminGuard` already does).
+- `logos` / `uploads` buckets: public-read, 8 old test files, timestamp filenames
+  (guessable). No code writes to them. Retire, or use UUID names if reused.
+- `design_approvals` / `order_status_history` have `public`-role policies calling
+  `is_admin()`; anonymous reads now error instead of returning nothing. No code
+  reads either table.
+- `Designer.jsx`'s commented-out `migrateSessionDesignsToUser` call — the
+  `migrate_session_designs_to_user` RPC never existed; the wrapper now calls
+  `claim_guest_designs()` and the live claim runs from `AuthContext`.
+
+### 62.6 Verification
+
+`scripts/verify/rls_core_tables.sql` — paste into the SQL Editor after applying
+the migration. One DO block, always rolled back; 28 checks covering guest designs
+(right/wrong/no header), claim on sign-in, the sign-up trigger, customer vs admin
+order access, the order-update guard, and the private tables.
