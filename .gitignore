@@ -62,3 +62,7 @@ docs/*.pdf
 *.xlsx
 *.xls
 .env*.local
+
+/*.png
+/diff*.txt
+scripts/diagnostic/
