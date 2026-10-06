@@ -41,7 +41,8 @@ const CustomerQuotes = ({ user }) => {
   const [loading, setLoading] = useState(true);
   const [quotes, setQuotes] = useState([]);
   const [deletingId, setDeletingId] = useState(null);
-  const [productMinQtys, setProductMinQtys] = useState({});
+  const [lineInfo, setLineInfo] = useState({ products: {}, suppliers: {} });
+  const [qtyErrors, setQtyErrors] = useState({}); // { [itemId]: message }
   const [payingQuoteId, setPayingQuoteId] = useState(null);
   const [payError, setPayError] = useState(null); // { quoteId, message }
   // Delivery (PR B): the customer's account address (for the snapshot
@@ -125,26 +126,50 @@ const CustomerQuotes = ({ user }) => {
 
       setQuotes(data || []);
 
-      // Fetch min order quantities for all products in these quotes
-      const productIds = [...new Set(
-        (data || []).flatMap(q => (q.quote_items || []).map(item => item.product_id))
-      )].filter(Boolean);
+      // Per-line editing info. Only tier-priced catalog products can change
+      // quantity here (the set_quote_item_quantity RPC re-prices them
+      // server-side); clothing, bags and Laltex lines link to their product
+      // page instead. Keyed on product_id / supplier_product_id, never names.
+      const allItems = (data || []).flatMap(q => q.quote_items || []);
+      const productIds = [...new Set(allItems.map(i => i.product_id).filter(Boolean))];
+      const supplierIds = [...new Set(allItems.map(i => i.supplier_product_id).filter(Boolean))];
+      const none = Promise.resolve({ data: [] });
 
-      if (productIds.length > 0) {
-        const { data: tierData } = await supabase
-          .from('catalog_pricing_tiers')
-          .select('catalog_product_id, min_quantity')
-          .in('catalog_product_id', productIds)
-          .order('min_quantity', { ascending: true });
+      const [productsRes, tiersRes, printRes, bagRes, suppliersRes] = await Promise.all([
+        productIds.length ? supabase.from('catalog_products').select('id, slug').in('id', productIds) : none,
+        productIds.length
+          ? supabase.from('catalog_pricing_tiers').select('catalog_product_id, min_quantity').in('catalog_product_id', productIds)
+          : none,
+        productIds.length
+          ? supabase.from('catalog_print_pricing').select('catalog_product_id').in('catalog_product_id', productIds)
+          : none,
+        productIds.length
+          ? supabase.from('bag_print_pricing').select('catalog_product_id').in('catalog_product_id', productIds)
+          : none,
+        supplierIds.length
+          ? supabase.from('supplier_products').select('id, supplier_product_code').in('id', supplierIds)
+          : none,
+      ]);
 
-        const minQtyMap = {};
-        tierData?.forEach(tier => {
-          if (!minQtyMap[tier.catalog_product_id]) {
-            minQtyMap[tier.catalog_product_id] = tier.min_quantity;
-          }
-        });
-        setProductMinQtys(minQtyMap);
-      }
+      const engineDriven = new Set(
+        [...(printRes.data || []), ...(bagRes.data || [])].map(r => r.catalog_product_id)
+      );
+      const info = {};
+      (productsRes.data || []).forEach(p => {
+        const mins = (tiersRes.data || [])
+          .filter(t => t.catalog_product_id === p.id)
+          .map(t => t.min_quantity);
+        info[p.id] = {
+          href: `/products/${p.slug}`,
+          editable: mins.length > 0 && !engineDriven.has(p.id),
+          moq: mins.length ? Math.min(...mins) : null,
+        };
+      });
+      const supplierHrefs = {};
+      (suppliersRes.data || []).forEach(sp => {
+        supplierHrefs[sp.id] = `/products/${sp.supplier_product_code}`;
+      });
+      setLineInfo({ products: info, suppliers: supplierHrefs });
     } catch (error) {
       console.error('[CustomerQuotes] Error fetching quotes:', error);
     } finally {
@@ -229,36 +254,14 @@ const CustomerQuotes = ({ user }) => {
       const targetId = sorted[0].id;
       const otherIds = sorted.slice(1).map(q => q.id);
 
-      // 1. Move quote_items from the other quotes into the target.
-      const { error: moveErr } = await supabase
-        .from('quote_items')
-        .update({ quote_id: targetId })
-        .in('quote_id', otherIds);
-      if (moveErr) throw moveErr;
-
-      // 2. Recalculate the target's total from its (now merged) items.
-      const { data: allItems, error: itemsErr } = await supabase
-        .from('quote_items')
-        .select('quantity, unit_price')
-        .eq('quote_id', targetId);
-      if (itemsErr) throw itemsErr;
-      const newTotal = (allItems || []).reduce(
-        (sum, i) => sum + (i.quantity || 0) * (i.unit_price || 0),
-        0
-      );
-
-      const { error: updateErr } = await supabase
-        .from('quotes')
-        .update({ total_amount: newTotal })
-        .eq('id', targetId);
-      if (updateErr) throw updateErr;
-
-      // 3. Delete the now-empty other quotes.
-      const { error: delErr } = await supabase
-        .from('quotes')
-        .delete()
-        .in('id', otherIds);
-      if (delErr) throw delErr;
+      // Ownership/draft checks, the item move, the total recompute (via the
+      // quote_items trigger) and deleting the emptied quotes all happen
+      // server-side — customers can't write quote totals directly.
+      const { error: combineErr } = await supabase.rpc('combine_quotes', {
+        p_target_id: targetId,
+        p_other_ids: otherIds,
+      });
+      if (combineErr) throw combineErr;
 
       setSelectedQuoteIds(new Set());
       setCombineConfirmOpen(false);
@@ -327,16 +330,23 @@ const CustomerQuotes = ({ user }) => {
 
       const anonKey = supabaseConfig.anonKey || import.meta.env.VITE_SUPABASE_ANON_KEY;
 
+      // The function verifies quote ownership from this token, so it must be
+      // the user's session JWT — the anon key identifies nobody.
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) {
+        setPayError({ quoteId: quote.id, message: 'Your session has expired. Please sign in again to pay.' });
+        setPayingQuoteId(null);
+        return;
+      }
+
       const res = await fetch(`${functionsUrl}/create-checkout-session`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${anonKey}`,
+          'Authorization': `Bearer ${session.access_token}`,
+          'apikey': anonKey,
         },
-        body: JSON.stringify({
-          quote_id: quote.id,
-          customer_email: user?.email || null,
-        }),
+        body: JSON.stringify({ quote_id: quote.id }),
       });
 
       const data = await res.json();
@@ -534,55 +544,77 @@ const CustomerQuotes = ({ user }) => {
                               Sizes: {formatSizeBreakdown(item.size_breakdown)}
                             </div>
                           )}
-                          <div className="flex items-center gap-2 mt-1">
+                          <div className="flex flex-wrap items-center gap-2 mt-1">
                             <label className="text-sm text-gray-500">Qty:</label>
-                            <input
-                              type="number"
-                              min="1"
-                              defaultValue={item.quantity || ''}
-                              placeholder={productMinQtys[item.product_id] ? `Min. ${productMinQtys[item.product_id]}` : 'Enter qty'}
-                              className="w-20 px-2 py-1 text-sm border border-gray-300 rounded"
-                              onBlur={async (e) => {
-                                const newQty = parseInt(e.target.value);
-                                const minQty = productMinQtys[item.product_id] || 1;
+                            {(() => {
+                              const pInfo = item.product_id ? lineInfo.products[item.product_id] : null;
+                              const editable = quote.status === 'draft' && pInfo?.editable;
+                              if (!editable) {
+                                const href = item.product_id
+                                  ? pInfo?.href
+                                  : lineInfo.suppliers[item.supplier_product_id];
+                                return (
+                                  <>
+                                    <span className="text-sm font-medium text-gray-900">
+                                      {(item.quantity || 0).toLocaleString('en-GB')}
+                                    </span>
+                                    {quote.status === 'draft' && (href ? (
+                                      <Link to={href} className="text-xs text-blue-600 hover:underline">
+                                        Change quantity on the product page
+                                      </Link>
+                                    ) : (
+                                      <span className="text-xs text-gray-500">Change quantity on the product page</span>
+                                    ))}
+                                  </>
+                                );
+                              }
+                              return (
+                                <input
+                                  type="number"
+                                  min={pInfo.moq || 1}
+                                  defaultValue={item.quantity || ''}
+                                  placeholder={pInfo.moq ? `Min. ${pInfo.moq.toLocaleString('en-GB')}` : 'Enter qty'}
+                                  className="w-24 px-2 py-1 text-sm border border-gray-300 rounded"
+                                  onBlur={async (e) => {
+                                    const newQty = parseInt(e.target.value, 10);
+                                    if (!newQty || newQty === item.quantity) return;
 
-                                if (!newQty || newQty < 1) return;
+                                    if (pInfo.moq && newQty < pInfo.moq) {
+                                      setQtyErrors(prev => ({
+                                        ...prev,
+                                        [item.id]: `Minimum order for this product is ${pInfo.moq.toLocaleString('en-GB')} units.`,
+                                      }));
+                                      e.target.value = item.quantity;
+                                      return;
+                                    }
 
-                                if (newQty < minQty) {
-                                  alert(`Minimum order quantity for this product is ${minQty} units.`);
-                                  e.target.value = minQty;
-                                  return;
-                                }
-
-                                if (newQty === item.quantity) return;
-
-                                // Find correct unit price for this quantity
-                                const { data: tierData } = await supabase
-                                  .from('catalog_pricing_tiers')
-                                  .select('min_quantity, max_quantity, price_per_unit')
-                                  .eq('catalog_product_id', item.product_id)
-                                  .order('min_quantity', { ascending: true });
-
-                                let unitPrice = item.unit_price;
-                                if (tierData) {
-                                  const matchedTier = tierData.find(tier =>
-                                    newQty >= tier.min_quantity &&
-                                    (tier.max_quantity === null || newQty <= tier.max_quantity)
-                                  );
-                                  if (matchedTier) unitPrice = matchedTier.price_per_unit;
-                                }
-
-                                await supabase
-                                  .from('quote_items')
-                                  .update({ quantity: newQty, unit_price: unitPrice })
-                                  .eq('id', item.id);
-                                fetchQuotes();
-                              }}
-                            />
+                                    // Server re-checks ownership + MOQ and sets the tier price.
+                                    const { error: qtyErr } = await supabase.rpc('set_quote_item_quantity', {
+                                      p_item_id: item.id,
+                                      p_quantity: newQty,
+                                    });
+                                    if (qtyErr) {
+                                      setQtyErrors(prev => ({ ...prev, [item.id]: qtyErr.message }));
+                                      e.target.value = item.quantity;
+                                      return;
+                                    }
+                                    setQtyErrors(prev => {
+                                      const next = { ...prev };
+                                      delete next[item.id];
+                                      return next;
+                                    });
+                                    fetchQuotes();
+                                  }}
+                                />
+                              );
+                            })()}
                             <span className="text-sm text-gray-500">
                               @ {formatCurrency(item.unit_price)} each
                             </span>
                           </div>
+                          {qtyErrors[item.id] && (
+                            <p className="text-xs text-red-600 mt-1" role="alert">{qtyErrors[item.id]}</p>
+                          )}
                         </div>
                         {item.quantity && item.unit_price ? (
                           <p className="font-semibold text-gray-900 ml-4">{formatCurrency(lineTotal)}</p>

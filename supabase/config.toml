@@ -23,7 +23,8 @@ project_id = "cbcevjhvgmxrxeeyldza"
 verify_jwt = true
 
 [functions.create-checkout-session]
-# Browser (Pay Now, CustomerQuotes) POSTs with `Authorization: Bearer <anonKey>`.
+# Browser (Pay Now, CustomerQuotes) POSTs with the user's session JWT; the
+# function also calls auth.getUser() and checks quote ownership in-function.
 verify_jwt = true
 
 [functions.send-artwork-received-email]

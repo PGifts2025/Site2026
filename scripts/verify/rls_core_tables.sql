@@ -60,7 +60,7 @@ BEGIN
   r := r || format(E'R9 claim returned=%s, design now owned by B=%s [expect 1,1]\n', n, m);
   EXECUTE 'SET LOCAL ROLE authenticated';
 
-  SELECT count(*) INTO n FROM orders;                              r := r || format(E'R10 customer sees orders=%s [expect 5 own]\n', n);
+  SELECT count(*) INTO n FROM orders;                              r := r || format(E'R10 customer sees orders=%s [expect 4: own, excl. 1 soft-deleted]\n', n);
   SELECT count(*) INTO n FROM order_items;                         r := r || format(E'R11 customer sees order_items=%s [expect own only]\n', n);
   SELECT count(*) INTO n FROM customer_profiles;                   r := r || format(E'R12 customer sees profiles=%s [expect 1]\n', n);
   SELECT id INTO o FROM orders WHERE customer_id = B ORDER BY created_at LIMIT 1;
