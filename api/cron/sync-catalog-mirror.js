@@ -17,10 +17,12 @@
 import { syncCatalogMirror } from '../../scripts/lib/catalog-mirror.js';
 import { processCategoryImages } from '../../scripts/lib/category-images.js';
 
-const MAX_DURATION_S = 300;
+// Vercel reads `config` statically: maxDuration MUST be a literal number (an
+// identifier fails the build with 'Unhandled type: "Identifier"').
 export const config = {
-  maxDuration: MAX_DURATION_S, // mirror takes seconds; the image step uses the rest
+  maxDuration: 300, // seconds — mirror takes seconds; the image step uses the rest
 };
+const MAX_DURATION_S = 300; // keep equal to config.maxDuration (used for the image time budget)
 // Stop starting new image work this long before the function limit.
 const IMAGE_SAFETY_MARGIN_MS = 45_000;
 
