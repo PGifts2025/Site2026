@@ -113,33 +113,34 @@ const supabase = isMockAuth ? null : getSupabaseClient();
 // Export the singleton instance for direct use in auth contexts
 export { supabase };
 
+// Admin = an active super_admin/staff row in team_members — the same rule as
+// the database's is_admin() and AdminGuard (CLAUDE.md §62.2, §64). Never
+// user_metadata: users can edit their own. UI gating only; RLS enforces.
+const ADMIN_ROLES = ['super_admin', 'staff'];
+
 /**
- * Check if user is admin
- * @param {string} userId - User ID to check
- * @returns {Promise<boolean>} True if user is admin
+ * Check whether a user is an admin (team_members). Under RLS a signed-in user
+ * can read only their own team_members row, so this is reliable for the
+ * current user; for anyone else it returns false unless the caller is admin.
+ * @param {string} userId
+ * @returns {Promise<boolean>}
  */
 export const isUserAdmin = async (userId) => {
-  if (isMockAuth) {
-    // In mock mode, return true for testing
-    return true;
-  }
-
+  if (isMockAuth) return true;
   if (!userId) return false;
-
   try {
     const client = getSupabaseClient();
     const { data, error } = await client
-      .from('auth.users')
-      .select('raw_user_meta_data')
-      .eq('id', userId)
-      .single();
-
+      .from('team_members')
+      .select('role')
+      .eq('user_id', userId)
+      .eq('is_active', true)
+      .maybeSingle();
     if (error) {
       console.error('Error checking admin status:', error);
       return false;
     }
-
-    return data?.raw_user_meta_data?.is_admin === true;
+    return ADMIN_ROLES.includes(data?.role);
   } catch (error) {
     console.error('Error in isUserAdmin:', error);
     return false;
@@ -147,24 +148,17 @@ export const isUserAdmin = async (userId) => {
 };
 
 /**
- * Get current user's admin status
- * @returns {Promise<boolean>} True if current user is admin
+ * Check whether the signed-in user is an admin (team_members).
+ * @returns {Promise<boolean>}
  */
 export const isCurrentUserAdmin = async () => {
-  if (isMockAuth) {
-    return true;
-  }
-
+  if (isMockAuth) return true;
   try {
     const client = getSupabaseClient();
     const { data: { user } } = await client.auth.getUser();
-    
-    if (!user) return false;
-    
-    return user.user_metadata?.is_admin === true || 
-           user.raw_user_meta_data?.is_admin === true;
+    return user ? isUserAdmin(user.id) : false;
   } catch (error) {
-    console.error('Error checking current user admin status:', error);
+    console.error('Error checking admin status:', error);
     return false;
   }
 };

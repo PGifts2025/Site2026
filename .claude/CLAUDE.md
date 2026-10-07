@@ -3,6 +3,11 @@
 > **Read this entire file before making any changes.**
 > This file exists to prevent regressions. Many things in this codebase were
 > hard-won fixes. Breaking them wastes hours of work.
+>
+> 🔒 **Security rules — §64.** No dashboard-created tables (migrations with RLS +
+> policies only) · admin only via `is_admin()`/`team_members` · service-role key never
+> client-side · `npm run security:check` before any DB PR, output in the PR body ·
+> money verified server-side.
 
 ---
 
@@ -26,7 +31,7 @@ print, build quotes, and place orders.
 | Database / Auth / Storage | Supabase (PostgreSQL 17 + Auth + Storage + Edge Functions in Deno) |
 | Design canvas | Fabric.js |
 | 3D previews | Three.js / React Three Fiber |
-| Payments | Stripe Checkout via Edge Function + `confirm_payment_atomic` RPC (LIVE, currently `pk_test_`/`sk_test_` — rotate before go-live per §17.6) |
+| Payments | Stripe Checkout via Edge Function + `confirm_payment_atomic` RPC (**LIVE keys in use** since Aug 2026 — `cs_live_` sessions; see §64.2. Test payments → staging) |
 | Transactional email | Resend — both the Supabase Auth sender (custom SMTP, see §21) and the Edge Function emails (confirm-payment, send-artwork-received). Sender addresses: `hello@promo-gifts.co` (auth), `orders@promo-gifts.co` (orders), `artwork@promo-gifts.co` (artwork-received reply-to) |
 | Routing | react-router-dom v7 with `ScrollToTop` helper + `scrollRestoration='manual'` (see §22) |
 | Deployment | GitHub → Vercel (auto on push) |
@@ -6063,10 +6068,8 @@ GRANT INSERT, UPDATE, DELETE, TRUNCATE ON public.catalog_print_pricing, public.p
 
 ### 62.5 Known gaps / follow-ups
 
-- Frontend admin *UI* checks still read `user_metadata.is_admin` — UI only, the
-  database enforces the real rule: `productCatalogService.js` `isCurrentUserAdmin()`
-  (10 call sites + `PrintAreaAdmin.jsx`), `supabaseService.js` two helpers. Switch
-  them to `team_members` (as `AdminGuard` already does).
+- ~~Frontend admin UI checks read `user_metadata.is_admin`~~ — **fixed 7 Oct 2026**:
+  `isCurrentUserAdmin()` / `isUserAdmin()` read `team_members` (§64.1 rule 2).
 - `logos` / `uploads` buckets: public-read, 8 old test files, timestamp filenames
   (guessable). No code writes to them. Retire, or use UUID names if reused.
 - `design_approvals` / `order_status_history` have `public`-role policies calling
@@ -6133,3 +6136,73 @@ mojibake (`â€¦`, `Ëœ`, stray `\x90`/`\x9d` bytes). Designer.jsx was cleane
 (`×` ×, `←` ←, `→` →, `⚠` ⚠) or lucide icons, so a
 mis-encoded save can't break them; keep logs ASCII (`[OK]`, `[WARN]`, `[ERROR]`).
 The old `fix-chars.js` repair script (blind byte replacements) was deleted on 7 Oct 2026 — don't resurrect it.
+
+---
+
+## 64. SECURITY RULES — READ BEFORE ANY DATABASE, AUTH OR PAYMENT CHANGE
+
+Written after the 6 Oct 2026 incident (`docs/security/incidents.md`, §62). These are
+not suggestions.
+
+### 64.1 The rules
+1. **No tables created in the Supabase dashboard.** Every table comes from a migration
+   that **enables RLS and defines its policies in the same file** — start from
+   `supabase/templates/migration_template.sql` (+ `.down.sql`). The `rls_auto_enable`
+   event trigger turns RLS on for any new `public` table as a safety net (and strips
+   client `TRUNCATE`), but a table with no policies is deny-all and fails the check.
+2. **Admin rights only from `is_admin()` / `team_members`.** Never `user_metadata`,
+   `raw_user_meta_data` or JWT claims a user can influence — in SQL, Edge Functions,
+   `api/` or the frontend (`isCurrentUserAdmin()` / `isUserAdmin()` in
+   `supabaseService.js` read `team_members`, like `AdminGuard`).
+3. **Service-role key server-side only** — never in `src/`, never `VITE_`-prefixed,
+   never committed, never in GitHub secrets, never pasted into chat/PRs/issues.
+4. **Run `npm run security:check` before opening any PR that touches the database**
+   (migrations, policies, grants, functions, buckets) and **paste its table into the PR
+   body**. CI runs it on every PR, on `main` and nightly.
+5. **Prices and totals are verified server-side; the client is never trusted for money**
+   (§16.10: tier-priced lines are re-priced by trigger, `create-checkout-session`
+   recomputes totals and checks ownership/prices/floors before charging).
+
+### 64.2 Also required
+- Database changes in PRs go under **"⚠️ DATABASE STEPS — DO BEFORE MERGING"** at the top
+  of the PR body; apply via SQL Editor and verify **before** merging (§52). Never
+  `supabase db push` (§62.2).
+- Policies calling `is_admin()` are `TO authenticated`. `SECURITY DEFINER` functions pin
+  `search_path`, `REVOKE EXECUTE … FROM PUBLIC, anon`, and take identity from `auth.uid()`.
+- Writes that target specific rows check that a row was written (`assertRowsWritten`, §63.1).
+- New allow-list entries in `scripts/security-check.mjs` need a one-line reason and a
+  reviewer's agreement in the PR.
+- A rollback (`.down.sql`) must never re-open access that a security fix closed.
+- Stripe is **live** (`STRIPE_SECRET_KEY` is a live key; `cs_live_` sessions). Test
+  payments belong on the staging project with Stripe test keys, not production.
+
+### 64.3 `npm run security:check`
+`scripts/security-check.mjs` — 11 checks, prints a PASS/FAIL table, exits 1 on any FAIL:
+
+| # | Check |
+|---|---|
+| 1 | Every `public` table has RLS |
+| 2 | No RLS table without policies (allow-list: `profiles`, `uploads`, `visual_proofs` — service-role only) |
+| 3 | No `TRUNCATE` granted to `anon`/`authenticated` |
+| 4 | No write policy open to `anon`/`authenticated` (`true` or missing `USING`/`WITH CHECK`) |
+| 5 | No policy reads user metadata |
+| 6 | No function reads user metadata (allow-list: `handle_new_customer_profile()` — copies sign-up fields, grants nothing) |
+| 7 | No `SECURITY DEFINER` function executable by `anon` |
+| 8 | Buckets non-admins can upload to have size + MIME limits (fails if a bucket isn't visible) |
+| 9 | `rls_auto_enable` event trigger present and enabled |
+| 10 | **Real** anon-key HTTP reads of `orders`, `order_items`, `quotes`, `quote_items`, `customer_profiles`, `profiles`, `uploads`, `visual_proofs`, `user_designs`, `team_members` return nothing |
+| 11 | No service-role JWT, `sb_secret_` or `VITE_*SERVICE_ROLE*` in `src/` or the built bundle |
+
+**Access:** CI uses the read-only `security_check` role through the IPv4 pooler
+(`SECURITY_CHECK_DATABASE_URL` GitHub secret). The role can read system catalogues and,
+via `public.security_check_buckets()`, bucket limits — it **cannot** read `orders`,
+`customer_profiles` or `auth.users`, and its sessions are read-only. Locally the script
+falls back to `SUPABASE_ACCESS_TOKEN` from `site/.env` (Management API).
+
+**Workflow:** `.github/workflows/security-check.yml` — needs secret
+`SECURITY_CHECK_DATABASE_URL` and variables `SUPABASE_URL`, `SUPABASE_ANON_KEY`.
+
+### 64.4 Related documents
+- `docs/security/incidents.md` — incident log (add an entry for any future incident).
+- `docs/security/secrets-audit.md` — every secret, where it lives, rotation plan.
+- `docs/security/dashboard-settings.md` — dashboard settings to review by hand.

@@ -1,0 +1,63 @@
+# Database & client security guardrails — CLAUDE.md §64.
+#
+# Repository settings needed (Settings → Secrets and variables → Actions):
+#   Secrets   SECURITY_CHECK_DATABASE_URL  read-only `security_check` role via the IPv4 pooler
+#   Variables SUPABASE_URL                 https://<project-ref>.supabase.co   (public value)
+#             SUPABASE_ANON_KEY            the anon key (public — already in the site bundle)
+# NEVER add the service-role key here: the check needs nothing beyond the above.
+name: security-check
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 3 * * *'   # nightly, 03:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  security-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      # Build with the public client env so the bundle scan sees real output.
+      - name: Build
+        run: npm run build
+        env:
+          VITE_SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
+
+      - name: security:check
+        run: |
+          set -o pipefail
+          npm run -s security:check | tee security-check.txt
+        env:
+          SECURITY_CHECK_DATABASE_URL: ${{ secrets.SECURITY_CHECK_DATABASE_URL }}
+          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo '### security:check'
+            echo '```'
+            cat security-check.txt 2>/dev/null || echo 'security:check did not produce output'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -13,7 +13,7 @@
  */
 
 import { isMockAuth } from '../config/supabase';
-import { getSupabaseClient as getSharedClient } from './supabaseService';
+import { getSupabaseClient as getSharedClient, isCurrentUserAdmin as isTeamAdmin } from './supabaseService';
 import { sortSizes, sizeLabel } from '../utils/laltexSizes';
 
 // =====================================================================
@@ -123,19 +123,8 @@ export const isCurrentUserAdmin = async () => {
   if (isMockAuth) {
     return true;
   }
-
-  try {
-    const client = getSupabaseClient();
-    const { data: { user } } = await client.auth.getUser();
-
-    if (!user) return false;
-
-    return user.user_metadata?.is_admin === true ||
-           user.raw_user_meta_data?.is_admin === true;
-  } catch (error) {
-    console.error('Error checking admin status:', error);
-    return false;
-  }
+  // team_members, never user_metadata (users can edit their own) — §64
+  return isTeamAdmin();
 };
 
 /**
