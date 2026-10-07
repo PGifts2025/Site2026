@@ -6132,4 +6132,4 @@ mojibake (`â€¦`, `Ëœ`, stray `\x90`/`\x9d` bytes). Designer.jsx was cleane
 7 Oct 2026. For **user-visible** non-ASCII characters in JS/JSX use escapes
 (`×` ×, `←` ←, `→` →, `⚠` ⚠) or lucide icons, so a
 mis-encoded save can't break them; keep logs ASCII (`[OK]`, `[WARN]`, `[ERROR]`).
-`fix-chars.js` at the repo root is an obsolete one-off repair script — don't run it.
+The old `fix-chars.js` repair script (blind byte replacements) was deleted on 7 Oct 2026 — don't resurrect it.
