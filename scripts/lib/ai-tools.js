@@ -79,7 +79,7 @@ export const SEARCH_PRODUCTS_TOOL = {
       product_indicator: {
         type: 'string',
         description:
-          'Filter by Laltex editorial indicator. Common values: "Clearance", "Best Seller", "Eco-Friendly", "New". Useful for "show me your best sellers" or "show me clearance items".',
+          'Filter by product label. Our own range uses "Our Pick", "Full Wrap Print", "Recycled", "Eco-Friendly", "New", "Compact"; the wider range uses "Clearance", "Made To Order", "Set Item". Use "Our Pick" for "what do you recommend" or "your best sellers" (we do not publish sales rankings), "Clearance" for clearance items.',
       },
       limit: {
         type: 'integer',

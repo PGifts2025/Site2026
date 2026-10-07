@@ -199,7 +199,8 @@ const PromoGiftsApp = () => {
     fetchFeaturedProducts();
   }, []);
 
-  // Fetch best seller products for HOT PRODUCTS section
+  // Fetch "Our Pick" products for the HOT PRODUCTS section. No sales yet, so no
+  // "Best Seller" badges (owner, 9 Oct 2026); make that automatic from orders later.
   useEffect(() => {
     const fetchHotProducts = async () => {
       try {
@@ -214,7 +215,7 @@ const PromoGiftsApp = () => {
             catalog_product_images(image_url, thumbnail_url, is_primary, image_type),
             catalog_pricing_tiers(min_quantity, price_per_unit)
           `)
-          .eq('badge', 'Best Seller')
+          .eq('badge', 'Our Pick')
           .eq('status', 'active')
           .limit(8);
 
@@ -403,13 +404,13 @@ const PromoGiftsApp = () => {
         </div>
       </section>
 
-      {/* Best Sellers Slider */}
+      {/* Our Picks slider (featured products) */}
       <section className="py-10 relative overflow-hidden bg-gray-50">
         <div className="absolute inset-0 bg-gradient-to-br from-gray-100/50 via-blue-50/30 to-purple-50/50"></div>
         
         <div className="max-w-7xl mx-auto px-4 relative z-10">
           <div className="text-center mb-12">
-            <h2 className="text-3xl font-bold text-gray-900 mb-2">Best Selling Products</h2>
+            <h2 className="text-3xl font-bold text-gray-900 mb-2">Our Picks</h2>
             <p className="text-gray-600">Premium promotional items for your brand</p>
           </div>
 
