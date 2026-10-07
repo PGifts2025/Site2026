@@ -1170,6 +1170,7 @@ const CARD_COLUMNS = [
   'category',
   'sub_category',
   'minimum_order_qty',
+  'lead_time_days', // category feature strip (CategoryPage buildCategoryFeatures)
   'is_retired',
   'margin_pct_override',
   'margin_last_applied_at',
@@ -1258,7 +1259,7 @@ const _getCuratedCategoryProductsUncached = async (categorySlug) => {
     const client = getSupabaseClient();
     const { data: curationRows, error: curationError } = await client
       .from('category_product_curation')
-      .select('supplier_product_code, position')
+      .select('supplier_product_code, position, card_image_url, card_image_checked_at')
       .eq('category_slug', categorySlug)
       .order('position', { ascending: true });
 
@@ -1287,6 +1288,9 @@ const _getCuratedCategoryProductsUncached = async (categorySlug) => {
         return {
           code: row.supplier_product_code,
           position: row.position,
+          // Server-checked card image (scripts/check-curated-images.mjs, §65.7).
+          cardImageUrl: row.card_image_url || null,
+          cardImageChecked: row.card_image_checked_at != null,
           supplier: supplierRow.supplier || null,
           // explicit 'laltex' so normaliseProduct doesn't need raw_payload
           // (excluded from CARD_COLUMNS for payload savings)

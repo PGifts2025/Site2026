@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ChevronRight, Zap, Shield, Clock, Loader } from 'lucide-react';
+import { ChevronRight, Zap, FileCheck, Clock, Loader } from 'lucide-react';
 import { supabase } from '../services/supabaseService';
 import { getCuratedCategoryProducts } from '../services/productCatalogService';
 import AvaPromptCard from './AvaPromptCard';
@@ -27,79 +27,108 @@ import { formatGBP } from '../utils/currency';
 //     (CLAUDE.md §50.2 — ItemImages may carry mockup branding).
 // ---------------------------------------------------------------------------
 
-// Per-category Ava copy. Keyed by `categorySlug`. Future categories add
-// entries here when they get seeded. Missing entries fall back to the
-// generic copy in resolveAvaCopy below.
-//
-// Each entry provides three strings (no nesting, easy to grep + extend):
-//   - prefill          → the text injected into the chat input on click
-//   - welcomeMessage   → first assistant message after the chat opens
-//   - placeholderText  → bubble copy on the card itself
+// Per-category Ava copy, keyed by `categorySlug` (CLAUDE.md §65.7).
+//   - examples       → 2–3 example prompts, written as real customer needs.
+//                      Each one was run through Ava before shipping and kept only
+//                      if she answered it accurately (MOQs, prices, no invented
+//                      claims). Re-check them when you change one.
+//   - welcomeMessage → first assistant message when the chat opens.
 const AVA_COPY = {
   'bags': {
-    prefill: "Natural cotton shopper bag under £2 for 500 units",
+    examples: [
+      '200 tote bags for a trade show, one-colour logo, under £3 each',
+      'Recycled cotton bags for a charity fun run, around 300',
+      'Sturdy canvas bags for a bookshop, 100 with a full-colour design',
+    ],
     welcomeMessage:
       "Hi! What kind of bag are you looking for? Let me know your budget, quantity, or any specific features (cotton, jute, recycled, branded, drawstring…).",
-    placeholderText: "Ask Ava to narrow these down — e.g. 'natural cotton shoppers under £2'",
   },
   'cables': {
-    prefill: "USB-C charging cables for 250 units",
+    examples: [
+      '50 charging cables for a work event, full-colour logo on one side',
+      'Eco-friendly charging cables for 200 sustainability conference delegates',
+      'A charging cable under £5 each that people will actually keep',
+    ],
     welcomeMessage:
       "Hi! What kind of cable are you looking for? Let me know your quantity, output requirements (USB-A, USB-C, multi-port), or any specific features (recycled materials, with keyring, branded…).",
-    placeholderText: "Ask Ava to narrow these down — e.g. 'multi-charging cables under £5'",
   },
   'clothing': {
-    prefill: "Polo shirts under £10 for 100 units",
+    examples: [
+      'T-shirts for 40 event staff with a one-colour logo on the front',
+      'Polo shirts for a 15-person hospitality team, logo on the chest',
+      'Hoodies for a sports club, about 60, under £20 each',
+    ],
     welcomeMessage:
       "Hi! What kind of clothing are you looking for? Let me know your budget, quantity, garment type (polo, t-shirt, hoodie, jacket…), or any specific features.",
-    placeholderText: "Ask Ava to narrow these down — e.g. 'unisex hoodies under £15'",
   },
   'cups': {
-    prefill: "Can you show me some travel mugs under £7 for 250 units",
+    examples: [
+      'Travel mugs for 250 conference delegates, under £7 each',
+      'Reusable coffee cups with our logo for 100 staff',
+      'Full-colour ceramic mugs for 50 client gifts',
+    ],
     welcomeMessage:
       "Hi! What kind of cup are you looking for? Let me know your budget, quantity, or any specific features (metal, ceramic, ceramic with handle, full-wrap print…).",
-    placeholderText: "Ask Ava to narrow these down — e.g. 'travel mugs under £7'",
   },
   'hi-vis': {
-    prefill: "Hi-vis vests for 50 units",
+    examples: [
+      'Hi-vis vests with our logo for 30 event marshals',
+      'Reflective high-visibility bags for a school road-safety campaign, 200',
+    ],
     welcomeMessage:
       "Hi! What kind of hi-vis item are you after? Let me know your quantity and use case (event staff, construction, charity walk…).",
-    placeholderText: "Ask Ava to find the right hi-vis option for you",
   },
   'notebooks': {
-    prefill: "A5 recycled notebooks under £3 for 100 units",
+    examples: [
+      'A5 notebooks for 100 conference delegates, logo on the cover',
+      'Recycled notebooks under £3 each, around 250',
+      'A6 pocket notebooks for an exhibition giveaway, 500',
+    ],
     welcomeMessage:
       "Hi! What kind of notebook are you looking for? Let me know your size (A4, A5, A6), budget, quantity, or any specific features (recycled, with pen, gift sets, hardback…).",
-    placeholderText: "Ask Ava to narrow these down — e.g. 'recycled A5 notebooks under £3'",
   },
   'pens': {
-    prefill: "Recycled pens under £1 for 500 units",
-    // welcomeMessage explicitly mentions pencils + gift sets because
-    // the Pens curated list (sorted TPC DESC -> TPCPN DESC -> PN DESC)
-    // surfaces pencils mixed throughout and gift sets at the end. Ava
-    // search is the recommended path to find them — see CLAUDE.md §56
-    // discovery notes.
+    examples: [
+      '500 pens for a trade show, under £1 each',
+      'Recycled pens for an eco campaign, around 1,000',
+      'Premium pens for 50 client gifts, around £5 each',
+    ],
     welcomeMessage:
       "Hi! What kind of pen are you looking for? Let me know your budget, quantity, or any specific features (recycled, metal, gift sets, pencils, fountain pens…).",
-    placeholderText: "Ask Ava to narrow these down — e.g. 'metal ballpoint pens under £2'",
   },
   'power': {
-    prefill: "USB power banks under £8 for 100 units",
+    examples: [
+      'Power banks for 100 conference delegates, under £15 each',
+      'Eco-friendly power bank for a sustainability event, about 200',
+      'A premium travel gift for 25 senior clients',
+    ],
     welcomeMessage:
-      "Hi! What kind of power product are you looking for? Power banks, wireless chargers, USB drives? Let me know your budget, quantity, or any specific features.",
-    placeholderText: "Ask Ava to narrow these down — e.g. 'wireless chargers under £10'",
+      "Hi! What kind of power product are you looking for? Power banks, wireless chargers or travel adapters? Let me know your budget, quantity, or any specific features.",
   },
   'speakers': {
-    prefill: "Bluetooth speakers under £15 for 50 units",
+    examples: [
+      'Bluetooth speakers for 50 client gifts, under £15 each',
+      'Portable speakers for a summer festival giveaway, 200',
+    ],
     welcomeMessage:
       "Hi! What kind of speaker are you looking for? Let me know your budget, quantity, or any specific features (Bluetooth range, waterproof, mini portable, premium audio…).",
-    placeholderText: "Ask Ava to narrow these down — e.g. 'portable Bluetooth speakers under £15'",
+  },
+  'tea-towels': {
+    examples: [
+      'Tea towels with a full-colour design for a charity fundraiser, 100',
+      'Tea towels for a museum gift shop, 250, printed edge to edge with our illustration',
+    ],
+    welcomeMessage:
+      "Hi! Tell me how many tea towels you need, what they're for and your design, and I'll recommend the right option and price it for you.",
   },
   'water-bottles': {
-    prefill: "Show me water bottles under £5 at 250 units",
+    examples: [
+      'Metal water bottles for 150 staff, logo printed, under £8 each',
+      'Recycled plastic sports bottles for a fun run, 500',
+      'Full-wrap printed bottles with our artwork, 1,000',
+    ],
     welcomeMessage:
       "Hi! What kind of water bottle are you looking for? Let me know your budget, quantity, or any specific features (metal, recycled, with a logo on the lid…).",
-    placeholderText: "Ask Ava to narrow these down — e.g. 'metal bottles under £5'",
   },
 };
 
@@ -108,9 +137,8 @@ function resolveAvaCopy(categorySlug, categoryName) {
   if (explicit) return explicit;
   const lowerSingular = (categoryName || categorySlug || 'products').toString().toLowerCase();
   return {
-    prefill: `Help me find a ${lowerSingular}`,
+    examples: [],
     welcomeMessage: `Hi! What kind of ${lowerSingular} are you looking for?`,
-    placeholderText: `Ask Ava to narrow these ${lowerSingular} down`,
   };
 }
 
@@ -119,6 +147,105 @@ function resolveAvaCopy(categorySlug, categoryName) {
 // contract and the per-step reveal matches the §55 chat pagination
 // rhythm.
 const CURATED_INITIAL_VISIBLE = 16;
+// Feature strip: lead times above this (working days) count as "longer".
+const FAST_LEAD_MAX_WORKING_DAYS = 10;
+
+// Image URLs for a curated card, in display order (colour 0 plain image first,
+// CLAUDE.md §50.2). When scripts/check-curated-images.mjs has checked the row,
+// its verified image leads (or the card is hidden if none worked); otherwise
+// the card walks this list on load errors and is hidden when none load (§65.7).
+function curatedImageCandidates({ normalised, cardImageUrl, cardImageChecked }) {
+  if (cardImageChecked && !cardImageUrl) return [];
+  const colours = normalised?.colours || [];
+  const urls = [
+    ...colours.flatMap((c) => [...(c?.plainImages || []), ...(c?.images || [])]),
+    ...(normalised?.images || []).map((i) => i?.url),
+  ].filter(Boolean);
+  return [...new Set(cardImageUrl ? [cardImageUrl, ...urls] : urls)];
+}
+
+// Calendar days -> working days (PGifts Direct lead times are calendar days, §65.2).
+const toWorkingDays = (calendarDays) => Math.ceil((Number(calendarDays) * 5) / 7);
+
+function formatWeeksOrDays(minDays, maxDays) {
+  const lo = minDays ?? maxDays;
+  const hi = maxDays ?? minDays;
+  const weeks = lo % 7 === 0 && hi % 7 === 0;
+  const a = weeks ? lo / 7 : lo;
+  const b = weeks ? hi / 7 : hi;
+  const unit = weeks ? 'weeks' : 'days';
+  return a === b ? `${a} ${unit}` : `${a}–${b} ${unit}`;
+}
+
+/**
+ * The three feature boxes, derived from what this category actually sells so
+ * every claim is true (owner, 9 Oct 2026). Returns an array of
+ * { key, title, text } — the turnaround box is dropped when no product in the
+ * category has a known lead time.
+ */
+function buildCategoryFeatures(products, curated) {
+  const moqs = [];
+  const leads = []; // working days
+  const slowDirect = [];
+  for (const p of products) {
+    const tierMins = (p.catalog_pricing_tiers || []).map((t) => Number(t.min_quantity)).filter(Number.isFinite);
+    const moq = tierMins.length ? Math.min(...tierMins) : Number(p.min_order_quantity);
+    if (Number.isFinite(moq) && moq > 0) moqs.push(moq);
+    if (p.lead_time_days_max != null) {
+      const wd = toWorkingDays(p.lead_time_days_min ?? p.lead_time_days_max);
+      leads.push(wd);
+      if (toWorkingDays(p.lead_time_days_max) > FAST_LEAD_MAX_WORKING_DAYS) {
+        slowDirect.push(`The ${p.name} takes ${formatWeeksOrDays(p.lead_time_days_min, p.lead_time_days_max)}.`);
+      }
+    }
+  }
+  let slowSupplier = false;
+  for (const { normalised } of curated) {
+    const moq = Number(normalised?.minimumOrderQty);
+    if (Number.isFinite(moq) && moq > 0) moqs.push(moq);
+    const lt = Number(normalised?.leadTimeDays);
+    if (normalised?.leadTimeDays != null && Number.isFinite(lt)) {
+      leads.push(lt);
+      if (lt > FAST_LEAD_MAX_WORKING_DAYS) slowSupplier = true;
+    }
+  }
+
+  const features = [];
+  if (leads.length) {
+    const fastest = Math.min(...leads);
+    const atFastest = leads.filter((d) => d === fastest).length / leads.length;
+    const lead = atFastest >= 0.25
+      ? `Many items ready in ${fastest} working days from artwork approval.`
+      : `Items from ${fastest} working days from artwork approval.`;
+    const extra = [...slowDirect, slowSupplier ? 'Some take longer; the lead time is shown on each product.' : null]
+      .filter(Boolean).join(' ');
+    features.push({
+      key: 'turnaround',
+      title: fastest <= 7 ? 'Fast Turnaround' : 'Clear Lead Times',
+      text: extra ? `${lead} ${extra}` : lead,
+    });
+  }
+  features.push({
+    key: 'proof',
+    title: 'Proof Before Print',
+    text: 'We send a visual proof for your approval before production starts.',
+  });
+  if (moqs.length) {
+    const min = Math.min(...moqs);
+    features.push({
+      key: 'minimums',
+      title: min <= 50 ? 'Low Minimums' : 'Minimum Orders',
+      text: `Order quantities from ${min.toLocaleString('en-GB')} units`,
+    });
+  }
+  return features;
+}
+
+const FEATURE_STYLE = {
+  turnaround: { Icon: Zap, bg: 'bg-blue-100', fg: 'text-blue-600' },
+  proof: { Icon: FileCheck, bg: 'bg-green-100', fg: 'text-green-600' },
+  minimums: { Icon: Clock, bg: 'bg-purple-100', fg: 'text-purple-600' },
+};
 const CURATED_LOAD_MORE_STEP = 16;
 
 const CategoryPage = ({ categorySlug }) => {
@@ -132,6 +259,9 @@ const CategoryPage = ({ categorySlug }) => {
   // fetch so the PGifts Direct rendering path stays untouched.
   const [curatedProducts, setCuratedProducts] = useState([]);
   const [visibleCuratedCount, setVisibleCuratedCount] = useState(CURATED_INITIAL_VISIBLE);
+  // The feature strip is derived from BOTH pools, so it waits for the curated
+  // fetch to settle (else e.g. /pens briefly shows only the Edge pens' 100 MOQ).
+  const [curatedSettled, setCuratedSettled] = useState(false);
 
   useEffect(() => {
     fetchCategoryData();
@@ -140,26 +270,56 @@ const CategoryPage = ({ categorySlug }) => {
   useEffect(() => {
     if (!categorySlug) return;
     let cancelled = false;
+    setCuratedSettled(false);
     getCuratedCategoryProducts(categorySlug)
       .then((rows) => {
         if (cancelled) return;
         setCuratedProducts(rows);
         setVisibleCuratedCount(CURATED_INITIAL_VISIBLE); // reset on slug change
+        setImageIndex({});
+        setImagelessCodes(new Set());
+        setCuratedSettled(true);
       })
       .catch((err) => {
         if (cancelled) return;
         console.error('[CategoryPage] curated fetch failed:', err);
         setCuratedProducts([]); // graceful degrade — existing path unaffected
+        setCuratedSettled(true);
       });
     return () => { cancelled = true; };
   }, [categorySlug]);
 
+  // Image fallback (§65.7): index into each card's candidate list, and the
+  // codes whose candidates all failed (hidden from the grid).
+  const [imageIndex, setImageIndex] = useState({});
+  const [imagelessCodes, setImagelessCodes] = useState(() => new Set());
+
   const hasCuration = curatedProducts.length > 0;
-  const visibleCuratedProducts = useMemo(
-    () => curatedProducts.slice(0, visibleCuratedCount),
-    [curatedProducts, visibleCuratedCount],
+  const displayableCurated = useMemo(
+    () => curatedProducts
+      .map((item) => ({ ...item, imageCandidates: curatedImageCandidates(item) }))
+      .filter((item) => item.imageCandidates.length > 0 && !imagelessCodes.has(item.code)),
+    [curatedProducts, imagelessCodes],
   );
-  const moreCuratedRemaining = curatedProducts.length - visibleCuratedCount;
+  const visibleCuratedProducts = useMemo(
+    () => displayableCurated.slice(0, visibleCuratedCount),
+    [displayableCurated, visibleCuratedCount],
+  );
+  const moreCuratedRemaining = displayableCurated.length - visibleCuratedCount;
+  const categoryFeatures = useMemo(
+    () => buildCategoryFeatures(products, displayableCurated),
+    [products, displayableCurated],
+  );
+
+  const handleCuratedImageError = (code, candidateCount) => {
+    setImageIndex((prev) => {
+      const next = (prev[code] ?? 0) + 1;
+      if (next >= candidateCount) {
+        setImagelessCodes((s) => new Set(s).add(code));
+      }
+      return { ...prev, [code]: next };
+    });
+  };
 
   const fetchCategoryData = async () => {
     try {
@@ -275,59 +435,42 @@ const CategoryPage = ({ categorySlug }) => {
       </header>
 
       <div className="max-w-7xl mx-auto px-6 py-12">
-        {/* Ava widget — appears below the page title, ABOVE the feature
-            strip. Data-gated on category having seeded curation rows
-            (CLAUDE.md §56). Categories without curation render exactly
-            as they do today — no widget, no curated grid, no Load more. */}
-        {hasCuration && (() => {
+        {/* Ava advisor card — below the page title, ABOVE the feature strip,
+            on every category (§65.7). Example prompts open the chat with the
+            question already sent. */}
+        {(() => {
           const avaCopy = resolveAvaCopy(categorySlug, category.name);
           return (
             <div className="mb-8">
-              <AvaPromptCard
-                prefill={avaCopy.prefill}
-                welcomeMessage={avaCopy.welcomeMessage}
-                placeholderText={avaCopy.placeholderText}
-              />
+              <AvaPromptCard examples={avaCopy.examples} welcomeMessage={avaCopy.welcomeMessage} />
             </div>
           );
         })()}
 
-        {/* Features Banner */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
-          <div className="bg-white rounded-2xl p-6 shadow-md border border-gray-200 flex items-start space-x-4">
-            <div className="bg-blue-100 p-3 rounded-xl">
-              <Zap className="h-6 w-6 text-blue-600" />
-            </div>
-            <div>
-              <h3 className="font-semibold text-gray-900 mb-1">Fast Delivery</h3>
-              <p className="text-sm text-gray-600">Quick turnaround on bulk orders</p>
-            </div>
-          </div>
-          <div className="bg-white rounded-2xl p-6 shadow-md border border-gray-200 flex items-start space-x-4">
-            <div className="bg-green-100 p-3 rounded-xl">
-              <Shield className="h-6 w-6 text-green-600" />
-            </div>
-            <div>
-              <h3 className="font-semibold text-gray-900 mb-1">Quality Guaranteed</h3>
-              <p className="text-sm text-gray-600">Premium materials and finishes</p>
-            </div>
-          </div>
-          <div className="bg-white rounded-2xl p-6 shadow-md border border-gray-200 flex items-start space-x-4">
-            <div className="bg-purple-100 p-3 rounded-xl">
-              <Clock className="h-6 w-6 text-purple-600" />
-            </div>
-            <div>
-              <h3 className="font-semibold text-gray-900 mb-1">Low Minimums</h3>
-              <p className="text-sm text-gray-600">Order quantities from 25 units</p>
-            </div>
-          </div>
+        {/* Feature strip — derived from this category's real minimums and lead
+            times so every claim is true (§65.7). */}
+        <div className={`grid grid-cols-1 ${categoryFeatures.length === 3 ? 'md:grid-cols-3' : 'md:grid-cols-2'} gap-6 mb-12 min-h-[96px]`}>
+          {curatedSettled && categoryFeatures.map(({ key, title, text }) => {
+            const { Icon, bg, fg } = FEATURE_STYLE[key];
+            return (
+              <div key={key} className="bg-white rounded-2xl p-6 shadow-md border border-gray-200 flex items-start space-x-4">
+                <div className={`${bg} p-3 rounded-xl`}>
+                  <Icon className={`h-6 w-6 ${fg}`} />
+                </div>
+                <div>
+                  <h3 className="font-semibold text-gray-900 mb-1">{title}</h3>
+                  <p className="text-sm text-gray-600">{text}</p>
+                </div>
+              </div>
+            );
+          })}
         </div>
 
         {/* Unified products grid (CLAUDE.md §56).
             PGifts Direct products and curated Laltex products render in
             a single 4-column grid for visual continuity — no row break
             between the two pools, no empty cells. PGifts Direct cards
-            come first (preserving the existing "Best Seller" badge +
+            come first (preserving the product's badge +
             full description), then Laltex cards append in curation
             order. Each card retains its own JSX treatment + click
             target (catalog slug route for PGifts Direct; /products/<code>
@@ -418,13 +561,8 @@ const CategoryPage = ({ categorySlug }) => {
                   /products/<code> (generic supplier route in App.jsx,
                   NOT /<categorySlug>/<slug> which is PGifts Direct
                   only). */}
-              {hasCuration && visibleCuratedProducts.map(({ code, normalised }) => {
-                const colour0 = normalised?.colours?.[0];
-                const thumb =
-                  colour0?.plainImages?.[0]
-                  || colour0?.images?.[0]
-                  || normalised?.images?.[0]?.url
-                  || null;
+              {hasCuration && visibleCuratedProducts.map(({ code, normalised, imageCandidates }) => {
+                const thumb = imageCandidates[imageIndex[code] ?? 0] || null;
                 // Normalised pricingTiers per productCatalogService.normaliseProduct:
                 // each entry has { minQty, maxQty, pricePerUnit, isPoa, ... }.
                 // pricePerUnit = sell_price (margin baked) with raw price fallback;
@@ -452,6 +590,7 @@ const CategoryPage = ({ categorySlug }) => {
                           alt={normalised?.name || code}
                           className="w-full h-full object-contain group-hover:scale-110 transition-transform duration-300"
                           loading="lazy"
+                          onError={() => handleCuratedImageError(code, imageCandidates.length)}
                         />
                       ) : (
                         <div className="text-7xl group-hover:scale-110 transition-transform duration-300">📦</div>
@@ -493,7 +632,7 @@ const CategoryPage = ({ categorySlug }) => {
                 <button
                   type="button"
                   onClick={() => setVisibleCuratedCount((n) =>
-                    Math.min(n + CURATED_LOAD_MORE_STEP, curatedProducts.length))
+                    Math.min(n + CURATED_LOAD_MORE_STEP, displayableCurated.length))
                   }
                   className="px-8 py-3 rounded-xl bg-white border border-indigo-200 text-indigo-700 font-semibold hover:bg-indigo-50 hover:border-indigo-300 transition-colors shadow-sm"
                 >
