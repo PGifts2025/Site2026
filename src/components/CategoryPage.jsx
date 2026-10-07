@@ -103,7 +103,7 @@ const AVA_COPY = {
       'A premium travel gift for 25 senior clients',
     ],
     welcomeMessage:
-      "Hi! What kind of power product are you looking for? Power banks, wireless chargers, USB drives? Let me know your budget, quantity, or any specific features.",
+      "Hi! What kind of power product are you looking for? Power banks, wireless chargers or travel adapters? Let me know your budget, quantity, or any specific features.",
   },
   'speakers': {
     examples: [

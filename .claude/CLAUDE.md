@@ -6362,3 +6362,7 @@ Owner's rules after the customer-copy audit (`20261010_customer_copy_cleanup`,
   the RFID phone wallet from Power. Ava's upsell context for Ocean Octopus / Octopus Mini
   corrected (cables, no battery, ocean-reclaimed).
 - Ava quotes `lead_time_days` as working days and never converts it to weeks herself.
+- Ava never calls a product "the only" one after a category-filtered search (hi-vis vests sit
+  under both Safety Wear and Clothing); with one or two filtered hits she searches again
+  unfiltered. Twister USB removed from Power too; Mr Bio PD Long badge "Recycled" (53%
+  GRS-certified recycled plastic, also a feature bullet).
