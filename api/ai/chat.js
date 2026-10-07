@@ -759,6 +759,8 @@ function slimProduct(p) {
     pricing: pricingSummary,
     unit_price_at_quantity: p.unit_price_at_quantity,
     unit_price_at_quantity_is_poa: p.unit_price_at_quantity_is_poa,
+    below_minimum: p.below_minimum,
+    priced_at_quantity: p.priced_at_quantity,
     similarity: p.similarity != null ? Number(p.similarity.toFixed(4)) : null,
     final_score: p.final_score != null ? Number(p.final_score.toFixed(5)) : null,
     image_url: firstImage,

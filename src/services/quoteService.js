@@ -3,6 +3,8 @@
 // (per-tier price break), and product_templates.min_order_qty (designer-side). The buy/quote
 // flow uses catalog_products.min_order_quantity. A future task should reconcile these into a
 // single source of truth; do not paper over the divergence here.
+// Oct 2026 (CLAUDE.md §65.1): the first two now agree — MOQ = lowest tier, and the column was
+// reconciled to it; product_templates.min_order_qty is still separate.
 import { supabase } from './supabaseService';
 
 const CLOTHING_PRODUCTS = ['t-shirts', 'hoodie', 'sweatshirts', 'polo', 'hi-vis-vest'];

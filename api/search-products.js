@@ -236,9 +236,17 @@ export default async function handler(req, res) {
   // sell_price field) fall back to raw tier.price so search results stay
   // populated during the deploy window. Once recompute-laltex-margins.js
   // has run, sell_price is always present.
+  //
+  // Below the product's minimum order: price AT the minimum and flag it
+  // (below_minimum / priced_at_quantity) so Ava can say "the minimum for
+  // this is 1,000 — at 1,000 it's £x" instead of finding no price.
   if (Array.isArray(rows) && filters.quantity != null) {
-    const qty = filters.quantity;
     for (const r of rows) {
+      const moq = Number(r.minimum_order_qty);
+      const belowMinimum = Number.isFinite(moq) && moq > 0 && filters.quantity < moq;
+      const qty = belowMinimum ? moq : filters.quantity;
+      r.below_minimum = belowMinimum;
+      r.priced_at_quantity = qty;
       const tier = findTierForQuantity(r.product_pricing, qty);
       if (!tier || tier.is_poa) {
         r.unit_price_at_quantity = null;

@@ -478,8 +478,12 @@ function ProductCard({ product }) {
     : (Number.isFinite(moq) && moq > 0
         ? (pricingArr.find((t) => Number(t.min) >= moq) ?? pricingArr[0])
         : pricingArr[0]);
+  // Below the product's minimum the search prices AT the minimum
+  // (below_minimum / priced_at_quantity, CLAUDE.md §65.3) — say so on the card.
   const priceLabel = product.unit_price_at_quantity != null && !product.unit_price_at_quantity_is_poa
-    ? `${formatGBP(Number(product.unit_price_at_quantity))}/unit`
+    ? `${formatGBP(Number(product.unit_price_at_quantity))}/unit${product.below_minimum && product.priced_at_quantity
+      ? ` at ${Number(product.priced_at_quantity).toLocaleString('en-GB')} (min. order)`
+      : ''}`
     : tier
       ? `From ${formatGBP(Number(tier.price))} (${tier.min}+)`
       : product.unit_price_at_quantity_is_poa

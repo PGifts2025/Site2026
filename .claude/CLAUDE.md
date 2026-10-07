@@ -31,7 +31,7 @@ print, build quotes, and place orders.
 | Database / Auth / Storage | Supabase (PostgreSQL 17 + Auth + Storage + Edge Functions in Deno) |
 | Design canvas | Fabric.js |
 | 3D previews | Three.js / React Three Fiber |
-| Payments | Stripe Checkout via Edge Function + `confirm_payment_atomic` RPC (**LIVE keys in use** since Aug 2026 — `cs_live_` sessions; see §64.2. Test payments → staging) |
+| Payments | Stripe Checkout via Edge Function + `confirm_payment_atomic` RPC (**LIVE keys in use** since Aug 2026 — `cs_live_` sessions; see §64.2. No staging yet — §64.5) |
 | Transactional email | Resend — both the Supabase Auth sender (custom SMTP, see §21) and the Edge Function emails (confirm-payment, send-artwork-received). Sender addresses: `hello@promo-gifts.co` (auth), `orders@promo-gifts.co` (orders), `artwork@promo-gifts.co` (artwork-received reply-to) |
 | Routing | react-router-dom v7 with `ScrollToTop` helper + `scrollRestoration='manual'` (see §22) |
 | Deployment | GitHub → Vercel (auto on push) |
@@ -1676,7 +1676,7 @@ PGifts Direct (25) for a total of 1217 embedded products.
 | `available_colours` | Joined active `catalog_product_colors.color_name` | Comma-separated; feeds `buildEmbeddingSourceText()` |
 | `category` / `sub_category` | Approved mapping (see §30.4) | Two-level, Laltex-aligned where possible |
 | `supplier_division` | Literal `'PGifts Direct'` | Distinguishes from Laltex divisions (`PRE`, `BHQ`, etc.) |
-| `minimum_order_qty` | `catalog_products.min_order_quantity` | |
+| `minimum_order_qty` | lowest `catalog_pricing_tiers.min_quantity` (column if no tiers) | Disagreement with the column is logged as a sync warning (§65) |
 | `images` | `catalog_product_images.image_url` (primary first, then sort_order) | URL strings only; hosted on Supabase Storage not Laltex CDN |
 | `items` | `catalog_product_colors` → Laltex `Items[]` shape | Adds `HexValue` field (PGifts has hex, Laltex doesn't — retained as a bonus field) |
 | `product_pricing` | `catalog_pricing_tiers` → `{min_qty, max_qty, price, is_poa:false, note}` | Straight map |
@@ -1943,8 +1943,8 @@ into the RPC — no string concatenation of user input into SQL.
 | `filters.category` | string | Exact match (Laltex's canonical capitalisation). |
 | `filters.sub_category` | string | Exact match. |
 | `filters.supplierSlug` | string | `'laltex'` or `'pgifts-direct'`. |
-| `filters.minOrderQuantity` | integer | Products whose `minimum_order_qty` exceeds this are excluded (treats DB null as "no MOQ" = always passes). |
-| `filters.quantity` | integer | Sets the price-tier bracket for `maxUnitPrice`. **Required** if `maxUnitPrice` is set. |
+| `filters.minOrderQuantity` | integer | Products whose `minimum_order_qty` exceeds this are excluded (treats DB null as "no MOQ" = always passes). Ava must NOT set it from the customer's order size (§65.3). |
+| `filters.quantity` | integer | Prices each result (`unit_price_at_quantity`). Below a product's MOQ the price is taken AT the MOQ and the row is flagged `below_minimum` / `priced_at_quantity` (§65.3). **Required** if `maxUnitPrice` is set. |
 | `filters.maxUnitPrice` | number | POA rows always excluded when this is set. Without `quantity`, *any* tier below the ceiling qualifies; with `quantity`, only the tier whose range contains the qty is tested. |
 | `filters.maxLeadTimeDays` | integer | NULL `lead_time_days` rows are excluded when this filter is set (no signal to rank). |
 | `filters.inStockOnly` | boolean | Default **true**. |
@@ -5869,6 +5869,11 @@ implementations (`src/utils/screenPrintBase.js`, `scripts/lib/laltex-margin.js`,
 
 ### 60.4 Bags' stale `catalog_pricing_tiers` — KEEP, do not delete (follow-up 3)
 
+> **Update 8 Oct 2026 (PR 2, §65.1):** the 25–49 and 50–99 rows were deleted on all
+> five bags (owner: bag minimum is 100). The 100+ rows remain, so the "From £X.XX"
+> (cheapest tier) and the product-page fallback below are unaffected. Do not delete
+> the remaining rows for the reasons below.
+
 Both bags still carry 6 old flat `catalog_pricing_tiers` rows (12oz
 25→£5.99 … 1000+→£2.99; 5oz 25→£2.69 … 1000+→£1.34). Investigated PR#93 —
 they are **load-bearing**, not dead:
@@ -6174,7 +6179,7 @@ not suggestions.
   reviewer's agreement in the PR.
 - A rollback (`.down.sql`) must never re-open access that a security fix closed.
 - Stripe is **live** (`STRIPE_SECRET_KEY` is a live key; `cs_live_` sessions). Test
-  payments belong on the staging project with Stripe test keys, not production.
+  payments belong on a staging project with Stripe test keys (§64.5 — not built yet).
 
 ### 64.3 `npm run security:check`
 `scripts/security-check.mjs` — 11 checks, prints a PASS/FAIL table, exits 1 on any FAIL:
@@ -6206,3 +6211,75 @@ falls back to `SUPABASE_ACCESS_TOKEN` from `site/.env` (Management API).
 - `docs/security/incidents.md` — incident log (add an entry for any future incident).
 - `docs/security/secrets-audit.md` — every secret, where it lives, rotation plan.
 - `docs/security/dashboard-settings.md` — dashboard settings to review by hand.
+
+### 64.5 Staging — planned, NOT built
+A separate staging Supabase project (+ Stripe test keys, Vercel Preview env vars pointing at
+it) is planned for when the organisation moves to the Pro plan at launch; the Free plan's
+2-active-project limit blocks it today (decided 7 Oct 2026). **There is no staging
+environment** — Preview deployments still use production. Until it exists, every database
+change follows the current process:
+1. **Dry run** the migration against production inside a transaction that rolls itself back
+   (`BEGIN … ROLLBACK`, or a `DO` block ending in `RAISE EXCEPTION`) and check the result.
+2. **Apply and verify** it (SQL Editor / Management API, never `supabase db push`) and run
+   `npm run security:check` — **before** the PR is merged (§52).
+3. Put the SQL under **"⚠️ DATABASE STEPS — DO BEFORE MERGING"** at the top of the PR body,
+   with the verify output, and remind the owner in chat before merge.
+When staging is built, replace this section: migrations go to staging first, then production.
+
+---
+
+## 65. MINIMUM ORDER QUANTITIES, LEAD TIME AND THE AI MIRROR (PR 2, Oct 2026)
+
+### 65.1 MOQ source of truth = the lowest price tier
+- A product's minimum order is its **lowest `catalog_pricing_tiers.min_quantity`** — what
+  `ProductDetailPage`, `set_quote_item_quantity` and `create-checkout-session` (§16.10)
+  already enforce. `catalog_products.min_order_quantity` must **equal** it. Bags keep the
+  column as their page MOQ (§60.3) — their tiers now start at 100 too, so they agree.
+- 8 Oct 2026 (`20261008_moq_and_lead_time.sql`) reconciled the 12 products that
+  disagreed, on the owner's decisions: column → lowest tier for t-shirts, hoodie,
+  sweatshirts, polo (25), a5/a6 notebooks (50), edge-white (100); the five bags'
+  25–49/50–99 tiers deleted (minimum 100).
+- **When you change tiers or the column, keep them equal.** The daily mirror logs a
+  `min_order_quantity X disagrees with lowest tier Y` warning if they drift. Check:
+  ```sql
+  SELECT p.slug, p.min_order_quantity, min(t.min_quantity)
+    FROM catalog_products p JOIN catalog_pricing_tiers t ON t.catalog_product_id = p.id
+   GROUP BY p.id HAVING p.min_order_quantity IS DISTINCT FROM min(t.min_quantity);
+  ```
+
+### 65.2 Lead time
+- `catalog_products.lead_time_days_min` / `_max` — nullable, **calendar days** from artwork
+  approval (CHECK: both ≥ 0, min ≤ max). NULL = standard. Only water-bottle is set
+  (28–56, "4–8 weeks").
+- The mirror converts it for the AI: `supplier_products.lead_time_days` =
+  ⌈max × 5/7⌉ **working days** (the unit Laltex and the `maxLeadTimeDays` filter use), and
+  the mirrored `description` starts with `Lead time: 4–8 weeks from artwork approval.`
+  so Ava can quote the range verbatim.
+
+### 65.3 Ava and minimum orders
+- `/api/search-products`: when `quantity` < a product's `minimum_order_qty`, the result is
+  priced **at the MOQ** and flagged `below_minimum: true`, `priced_at_quantity: <moq>`.
+  `rpc_search_supplier_products`' `maxUnitPrice` filter judges such rows at the MOQ too,
+  so "200 bottles under £15" still returns the 1,000-minimum water bottle.
+- `findTierForQuantity` picks the **highest** `min_qty` tier containing the quantity —
+  open-ended ladders (`100+`, `250+`, …) used to return the first (dearest) tier.
+- System prompt "MINIMUM ORDER QUANTITIES AND LEAD TIMES": pass the customer's quantity
+  as `quantity`, never as `minOrderQuantity`; state the minimum and quote at it; never
+  waive it; use thousands separators; quote the `Lead time:` wording.
+
+### 65.4 The PGifts Direct mirror runs daily
+- `scripts/lib/catalog-mirror.js` mirrors the active `catalog_products` (+ tiers, print
+  matrix, colours, images, features, specs) into `supplier_products` (`pgifts-direct`).
+- **Daily at 03:30 UTC** via Vercel Cron `api/cron/sync-catalog-mirror.js` (`CRON_SECRET`,
+  service-role key server-side), after the 03:00 Laltex sync and before the 04:00 embed
+  cron, which re-embeds only rows whose source text changed.
+- **Why Vercel Cron** (not pg_cron / a GitHub Action): it reuses the exact JS shaping
+  with no SQL duplicate, sits beside the other three crons with the same auth and logs,
+  and needs no new secret anywhere (a GitHub Action would need the service-role key in
+  GitHub — forbidden by §64.1 rule 3).
+- **Why daily matters:** both search RPCs drop rows with `last_synced_at` older than
+  **14 days**. The mirror was last run by hand on 15 May 2026, so all 25 PGifts Direct
+  products were invisible to Ava from ~29 May until this PR. If the cron fails for two
+  weeks, they vanish again — check the Vercel cron logs if Ava stops suggesting them.
+- Manual run: `node scripts/migrate-catalog-to-supplier-products.js [--dry-run]`.
+  Inactive products are not mirrored; their old rows age out after 14 days.

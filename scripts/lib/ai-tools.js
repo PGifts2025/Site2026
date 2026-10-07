@@ -45,12 +45,12 @@ export const SEARCH_PRODUCTS_TOOL = {
       minOrderQuantity: {
         type: 'integer',
         description:
-          'Maximum acceptable minimum-order quantity. Excludes products whose MOQ exceeds this number. Use when the customer\'s order size is small.',
+          'Maximum acceptable minimum-order quantity. Excludes products whose MOQ exceeds this number. Use ONLY when the customer explicitly asks to see just products they can order at or below a quantity. Do NOT set it from the customer\'s stated order size: pass that as `quantity`, so products with a higher minimum still appear (flagged below_minimum) and you can tell the customer the minimum.',
       },
       quantity: {
         type: 'integer',
         description:
-          'Order quantity, used to pick the applicable price tier when maxUnitPrice is set. REQUIRED if maxUnitPrice is provided.',
+          'The customer\'s order quantity. Prices every result at this quantity (unit_price_at_quantity); a product whose minimum is higher is priced at its minimum and flagged below_minimum. Also used with maxUnitPrice. REQUIRED if maxUnitPrice is provided.',
       },
       maxUnitPrice: {
         type: 'number',
