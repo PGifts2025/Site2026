@@ -262,7 +262,7 @@ const CustomerDesigns = ({ user }) => {
 
   return (
     <CustomerLayout user={user} pageTitle="My Designs">
-      <div className="mb-6 flex items-center justify-between">
+      <div className="mb-4 flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">My Designs</h1>
           <p className="text-gray-600 mt-1">Manage your saved designs</p>
@@ -303,13 +303,14 @@ const CustomerDesigns = ({ user }) => {
                 key={design.id}
                 className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden hover:shadow-md transition-shadow"
               >
-                {/* Thumbnail */}
-                <div className="aspect-square bg-gray-200 relative">
+                {/* Thumbnail — fixed height so a whole card (incl. buttons) fits on a
+                    1366×768 screen; contain so the product is never cropped. */}
+                <div className="h-48 bg-gray-100 relative">
                   {design.thumbnail_url ? (
                     <img
                       src={design.thumbnail_url}
                       alt={design.design_name}
-                      className="w-full h-full object-cover"
+                      className="w-full h-full object-contain p-2"
                     />
                   ) : (
                     <div className="w-full h-full flex items-center justify-center">
@@ -319,10 +320,10 @@ const CustomerDesigns = ({ user }) => {
                 </div>
 
                 {/* Info */}
-                <div className="p-4">
+                <div className="px-4 pt-3 pb-4">
                   {/* Design Name - Editable */}
                   {editingNameId === design.id ? (
-                    <div className="mb-3">
+                    <div className="mb-2">
                       <input
                         type="text"
                         value={editingName}
@@ -348,7 +349,7 @@ const CustomerDesigns = ({ user }) => {
                       </div>
                     </div>
                   ) : (
-                    <div className="flex items-start justify-between mb-3">
+                    <div className="flex items-start justify-between mb-1">
                       <h3 className="font-semibold text-gray-900 flex-1 mr-2">
                         {design.design_name || 'Untitled Design'}
                       </h3>
@@ -362,12 +363,13 @@ const CustomerDesigns = ({ user }) => {
                     </div>
                   )}
 
-                  {/* Product Info */}
-                  <p className="text-sm text-gray-600 mb-2">{productLabel}</p>
+                  {/* Product + colour on one line */}
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mb-1">
+                  <p className="text-sm text-gray-600">{productLabel}</p>
 
                   {/* Colour */}
                   {design.color_name && (
-                    <div className="flex items-center space-x-2 mb-2">
+                    <div className="flex items-center space-x-2">
                       {laltex ? (
                         laltexColourImage ? (
                           <img
@@ -387,50 +389,46 @@ const CustomerDesigns = ({ user }) => {
                       <span className="text-sm text-gray-600">{design.color_name}</span>
                     </div>
                   )}
+                  </div>
 
-                  {/* Print area */}
-                  {design.print_area && (
-                    <p className="text-xs text-gray-500 mb-3">{prettyPrintArea(design.print_area)}</p>
-                  )}
-
-                  {/* Last Modified */}
-                  <p className="text-xs text-gray-500 mb-4">
+                  {/* Print area · last modified */}
+                  <p className="text-xs text-gray-500 mb-3">
+                    {design.print_area && <>{prettyPrintArea(design.print_area)} · </>}
                     Modified {formatDate(design.updated_at)}
                   </p>
 
-                  {/* Actions */}
+                  {/* Actions — Add to Quote is the main next step (primary); Edit,
+                      Duplicate and Delete are labelled secondaries (stacked < 360px). */}
                   <div className="space-y-2">
-                    {/* Edit Button */}
-                    <Link
-                      to={editUrlFor(design)}
-                      className="w-full flex items-center justify-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-semibold"
+                    <button
+                      onClick={() => handleAddToQuote(design)}
+                      className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-semibold"
                     >
-                      <Palette className="h-4 w-4" />
-                      <span>Edit</span>
-                    </Link>
+                      <FileText className="h-4 w-4" />
+                      <span>Add to Quote</span>
+                    </button>
 
-                    {/* Secondary Actions */}
-                    <div className="grid grid-cols-3 gap-2">
+                    <div className="grid grid-cols-1 min-[360px]:grid-cols-3 gap-2">
+                      <Link
+                        to={editUrlFor(design)}
+                        className="flex items-center justify-center gap-1.5 px-2 py-2 border border-blue-600 text-blue-700 rounded-lg hover:bg-blue-50 transition-colors text-xs font-medium"
+                      >
+                        <Palette className="h-4 w-4 shrink-0" />
+                        <span>Edit</span>
+                      </Link>
                       <button
                         onClick={() => handleDuplicate(design)}
-                        className="flex items-center justify-center px-2 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors text-xs"
-                        title="Duplicate"
+                        className="flex items-center justify-center gap-1.5 px-2 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors text-xs font-medium"
                       >
-                        <Copy className="h-4 w-4" />
-                      </button>
-                      <button
-                        onClick={() => handleAddToQuote(design)}
-                        className="flex items-center justify-center px-2 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors text-xs"
-                        title="Add to Quote"
-                      >
-                        <FileText className="h-4 w-4" />
+                        <Copy className="h-4 w-4 shrink-0" />
+                        <span>Duplicate</span>
                       </button>
                       <button
                         onClick={() => handleDelete(design.id, design.design_name)}
-                        className="flex items-center justify-center px-2 py-2 border border-red-300 text-red-600 rounded-lg hover:bg-red-50 transition-colors text-xs"
-                        title="Delete"
+                        className="flex items-center justify-center gap-1.5 px-2 py-2 border border-red-300 text-red-600 rounded-lg hover:bg-red-50 transition-colors text-xs font-medium"
                       >
-                        <Trash2 className="h-4 w-4" />
+                        <Trash2 className="h-4 w-4 shrink-0" />
+                        <span>Delete</span>
                       </button>
                     </div>
                   </div>
