@@ -50,10 +50,13 @@ export const config = {
 // Mirror of the RPC's tunable constants. The RPC owns scoring; this
 // is informational (returned in query_metadata so a caller can see
 // what produced the ranking). Retuned 2026-05-11 — core 1.15 → 1.30
-// per session 4b Query-C diagnostic.
+// per session 4b Query-C diagnostic. 2026-10-09: the core boost applies only
+// to RELEVANT core rows (keyword match or similarity >= 0.40), and the keyword
+// half counts only for a real keyword match (CLAUDE.md §65.5).
 const SCORING = Object.freeze({
   rrf_k: 60,
   core_multiplier: 1.30,
+  core_min_similarity: 0.40,
   house_multiplier: 1.05,
   house_supplier_slug: 'pgifts-direct',
   staleness_days: 14,
