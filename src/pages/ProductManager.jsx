@@ -35,6 +35,7 @@ import {
   uploadTemplateImage,
   getApparelColors,
   getProductColors,
+  getProductVariants,
   assignColorToProduct,
   removeColorFromProduct,
   uploadColorPhoto,
@@ -529,11 +530,32 @@ const ProductManager = ({ adminRole } = {}) => {
     setMinOrderQty(product.minimum_order_quantity?.toString() || '50');
     setDescription(product.description || '');
 
-    // Load variants
-    // TODO: Load variants from database
-    setColorVariants([
+    // Load saved colour variants (one product_template_variants row per
+    // colour x view) and group them back into Step 2's per-colour shape.
+    let savedVariants = [];
+    try {
+      const rows = (await getProductVariants(product.id)) || [];
+      const byColour = new Map();
+      for (const r of rows) {
+        const v = byColour.get(r.color_name) || { name: r.color_name, colorCode: r.color_code, views: [], viewUrls: {} };
+        if (!v.views.includes(r.view_name)) v.views.push(r.view_name);
+        v.viewUrls[r.view_name] = r.template_url;
+        byColour.set(r.color_name, v);
+      }
+      savedVariants = [...byColour.values()].map((v, i) => ({
+        id: i + 1,
+        ...v,
+        templateUrl: v.viewUrls.front || v.viewUrls[v.views[0]] || null,
+        uploadedFile: null,
+      }));
+    } catch (err) {
+      console.error('[editProduct] Failed to load colour variants:', err);
+      showMessage('error', `Couldn't load this product's colours: ${err.message}`);
+    }
+    setColorVariants(savedVariants.length > 0 ? savedVariants : [
       { id: 1, name: '', colorCode: '#000000', templateUrl: product.template_url, uploadedFile: null, views: ['front'] }
     ]);
+    setExpandedVariants(savedVariants.length > 0 ? [] : [1]);
 
     setCurrentStep(1);
     setViewMode('edit');
@@ -2165,31 +2187,40 @@ const ProductManager = ({ adminRole } = {}) => {
     }
   };
 
+  // Persist Step 2 colour variants: one product_template_variants row per
+  // colour x view (unique on template + colour name + view). The Designer reads
+  // these for non-apparel products; apparel colours (product_template_colors)
+  // are managed separately in the colour-management dialog.
+  const saveColorVariants = async (templateId) => {
+    const incomplete = colorVariants
+      .map((v, i) => ({ v, label: v.name?.trim() || `Color ${i + 1}` }))
+      .filter(({ v }) => !v.name?.trim() || v.views.some((view) => !(v.viewUrls?.[view] || v.templateUrl)));
+    if (incomplete.length > 0) {
+      throw new Error(
+        `Add a name and a template image for every view of: ${incomplete.map(({ label }) => label).join(', ')}`
+      );
+    }
+
+    let saved = 0;
+    for (const variant of colorVariants) {
+      for (const view of variant.views) {
+        // Use the view-specific image if there is one, else the general template
+        await upsertProductVariant(templateId, variant.colorCode, view, {
+          colorName: variant.name.trim(),
+          templateUrl: variant.viewUrls?.[view] || variant.templateUrl,
+        });
+        saved++;
+      }
+    }
+    return saved;
+  };
+
   // Save Colors (Step 2 only)
   const handleSaveColors = async () => {
     try {
       setSaving(true);
-      // Delete existing colors (a failed clear must not be reported as saved)
-      const { error: clearError } = await supabase
-        .from('product_colors')
-        .delete()
-        .eq('product_template_id', editingProductId);
-      if (clearError) throw clearError;
-
-      // Insert new colors
-      const colorInserts = assignedColors.map(color => ({
-        product_template_id: editingProductId,
-        apparel_color_id: color.id
-      }));
-
-      if (colorInserts.length > 0) {
-        const { error } = await supabase
-          .from('product_colors')
-          .insert(colorInserts);
-
-        if (error) throw error;
-      }
-      showMessage('success', 'Colors saved successfully!');
+      const saved = await saveColorVariants(editingProductId);
+      showMessage('success', `Colors saved (${saved} colour/view ${saved === 1 ? 'entry' : 'entries'})`);
     } catch (error) {
       console.error('Error saving colors:', error);
       showMessage('error', `Failed to save colors: ${error.message}`);
@@ -2274,25 +2305,8 @@ const ProductManager = ({ adminRole } = {}) => {
       // Step 2: Save color variants with views and print areas
       console.log('[saveProduct] Step 2: Saving variants and print areas');
 
-      for (const variant of colorVariants) {
-        for (const view of variant.views) {
-          // Get view-specific URL if available, fallback to general templateUrl
-          const viewSpecificUrl = variant.viewUrls?.[view] || variant.templateUrl;
-
-          // Upsert variant
-          const variantData = await upsertProductVariant(
-            template.id,
-            variant.colorCode,
-            view,
-            {
-              colorName: variant.name,
-              templateUrl: viewSpecificUrl  // Use view-specific URL
-            }
-          );
-
-          console.log('[saveProduct] Variant saved:', variantData, 'URL:', viewSpecificUrl);
-        }
-      }
+      const savedVariants = await saveColorVariants(template.id);
+      console.log('[saveProduct] Variants saved:', savedVariants);
 
       // Step 3: Save print areas (view-based, not variant-based)
       console.log('═══ STEP 3: SAVING PRINT AREAS ═══');
