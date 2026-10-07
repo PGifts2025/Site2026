@@ -693,7 +693,7 @@ export default async function handler(req, res) {
 // CLAUDE.md §32.7 documents this trade-off.
 // ---------------------------------------------------------------------------
 
-function truncateForModel(payload) {
+export function truncateForModel(payload) {
   if (!payload || typeof payload !== 'object') return payload;
   if (Array.isArray(payload.results)) {
     return {

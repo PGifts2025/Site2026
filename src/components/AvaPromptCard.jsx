@@ -1,74 +1,80 @@
 import React from 'react';
+import { Sparkles } from 'lucide-react';
 
 /**
- * AvaPromptCard — reusable Ava prompt card for surfaces that want to
- * invite a customer into the AI chat with a contextual prefill.
+ * AvaPromptCard — category-page invitation to ask Ava for advice.
  *
- * Mirrors the inline Ava widget on Home.jsx (avatar + bubble + click
- * pattern) but parameterised by props so each surface can supply its
- * own copy. Click dispatches the `pgifts:open-chat` custom event that
- * AIChatWidget.jsx listens for — see CLAUDE.md §49 + §56.
+ * Positions Ava as a product advisor (not a filter): a headline, a subline
+ * and 2–3 example prompts written as real customer needs. Clicking an
+ * example opens the chat with that question already SENT (`autoSend`);
+ * clicking "Ask Ava" opens the chat with the category welcome message.
+ * Both dispatch the `pgifts:open-chat` event AIChatWidget listens for
+ * (CLAUDE.md §49, §56, §65.7).
  *
- * Used by:
- *   - CategoryPage.jsx — appears below the page title on categories
- *     that have seeded curation rows (gated on `hasCuration`).
- *
- * NOT used by:
- *   - Home.jsx — that surface still inlines its own typewriter version
- *     because the homepage cycles through multiple intent phrases via
- *     AvaTypewriter. Refactoring Home.jsx onto this component is a
- *     separate cleanup (out of scope for §56).
+ * Used by CategoryPage.jsx only. Home.jsx keeps its own Ava card.
  *
  * @param {object} props
- * @param {string} props.prefill - text injected into chat input on click
- * @param {string} props.welcomeMessage - rendered as the assistant's
- *   opening message in the chat panel after it opens
- * @param {string} props.placeholderText - shown in the bubble on the
- *   card itself (the call-to-action copy the customer sees)
+ * @param {string[]} props.examples - example prompts (checked against Ava's answers before shipping)
+ * @param {string} props.welcomeMessage - assistant opening message for the "Ask Ava" button
  */
-export default function AvaPromptCard({ prefill, welcomeMessage, placeholderText }) {
-  const handleClick = () => {
-    window.dispatchEvent(new CustomEvent('pgifts:open-chat', {
-      detail: { prefill, welcomeMessage },
-    }));
+export default function AvaPromptCard({ examples = [], welcomeMessage }) {
+  const openChat = (detail) => {
+    window.dispatchEvent(new CustomEvent('pgifts:open-chat', { detail }));
   };
 
   return (
-    <button
-      type="button"
-      onClick={handleClick}
-      aria-label="Open Ava AI assistant chat"
-      className="w-full rounded-2xl bg-gradient-to-r from-indigo-50 via-white to-purple-50 border border-indigo-100 shadow-md hover:shadow-lg transition-shadow p-5 sm:p-6 group cursor-pointer text-left"
+    <section
+      aria-label="Ask Ava, our product advisor"
+      className="w-full rounded-2xl bg-gradient-to-r from-indigo-50 via-white to-purple-50 border border-indigo-100 shadow-md p-5 sm:p-6"
     >
-      <div className="flex flex-col sm:flex-row items-center sm:items-stretch gap-4 sm:gap-6">
-        {/* Avatar */}
+      <div className="flex flex-col sm:flex-row items-center sm:items-start gap-4 sm:gap-6">
         <div className="flex-shrink-0">
-          <div className="w-16 h-16 sm:w-24 sm:h-24 rounded-full overflow-hidden ring-4 ring-indigo-100 shadow-md bg-white">
+          <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-full overflow-hidden ring-4 ring-indigo-100 shadow-md bg-white">
             <img
               src="/images/ava.png?v=2"
-              alt="Ava — PGifts AI assistant"
+              alt="Ava — PGifts product advisor"
               className="w-full h-full object-cover"
-              width="96"
-              height="96"
+              width="80"
+              height="80"
             />
           </div>
         </div>
 
-        {/* Bubble */}
-        <div className="flex-1 flex flex-col justify-center min-w-0">
-          <span className="text-xs sm:text-sm font-semibold text-indigo-700 mb-2 uppercase tracking-wide">
-            Ava — your PGifts assistant
-          </span>
-          <div className="bg-white rounded-xl rounded-tl-sm px-4 py-3 sm:px-5 sm:py-4 border border-indigo-100 shadow-sm">
-            <p className="text-sm sm:text-base text-gray-800">
-              {placeholderText}
-            </p>
-          </div>
-          <span className="text-xs text-gray-500 mt-2 group-hover:text-indigo-600 transition-colors">
-            Click to chat →
-          </span>
+        <div className="flex-1 min-w-0 text-center sm:text-left">
+          <h2 className="text-xl sm:text-2xl font-bold text-gray-900">Not sure which to choose? Ask Ava</h2>
+          <p className="text-sm sm:text-base text-gray-700 mt-1">
+            Tell her about your event, how many you need, your budget and how you&apos;d like it
+            printed — she&apos;ll recommend the right product and price it for you.
+          </p>
+
+          {examples.length > 0 && (
+            <div className="mt-4">
+              <p className="text-xs font-semibold text-indigo-700 uppercase tracking-wide mb-2">Try asking</p>
+              <div className="flex flex-col sm:flex-row sm:flex-wrap gap-2">
+                {examples.map((q) => (
+                  <button
+                    key={q}
+                    type="button"
+                    onClick={() => openChat({ prefill: q, welcomeMessage, autoSend: true })}
+                    className="text-left text-sm px-3 py-2 rounded-xl bg-white border border-indigo-200 text-indigo-900 hover:border-indigo-400 hover:bg-indigo-50 transition-colors shadow-sm"
+                  >
+                    “{q}”
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={() => openChat({ welcomeMessage })}
+            className="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 transition-colors"
+          >
+            <Sparkles className="h-4 w-4" />
+            Ask Ava your own question
+          </button>
         </div>
       </div>
-    </button>
+    </section>
   );
 }

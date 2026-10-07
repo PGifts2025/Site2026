@@ -6337,3 +6337,28 @@ Owner's rules after the customer-copy audit (`20261010_customer_copy_cleanup`,
   "White" (the trailing space had stopped the Designer defaulting the Water Bottle to white).
 - `/<category>-legacy` URLs redirect to the live category pages (dead placeholder pages
   removed).
+
+### 65.7 Category pages: Ava advisor, true feature strip, card images (9 Oct 2026)
+- **Ava card** (`AvaPromptCard`, all categories): "Not sure which to choose? Ask Ava" + 2–3
+  example prompts per category (`AVA_COPY` in `CategoryPage.jsx`). Clicking one dispatches
+  `pgifts:open-chat` with `autoSend: true`, so the question is sent immediately; "Ask Ava your
+  own question" opens with the welcome message. Home keeps its own card (no autoSend).
+  **Every example must be run through Ava before shipping** and kept only if her answer is
+  accurate (MOQs, prices, no invented claims); prompts that make her say "the only X" or quote
+  a print spec we can't price (front+back, embroidery) were dropped.
+- **Feature strip is derived, not hard-coded** (`buildCategoryFeatures`): lowest MOQ across
+  PGifts Direct (lowest tier) + curated Laltex (`minimum_order_qty`); turnaround from lead
+  times (Laltex working days; PGifts Direct calendar → working) — "Many items ready in N
+  working days", plus the named slow Direct product (e.g. "The Water Bottle takes 4–8
+  weeks") or "Some take longer…" for slow supplier items; dropped when no lead time is known
+  (Tea Towels). "Quality Guaranteed" (no such policy) → "Proof Before Print" (the order
+  confirmation's promise). Rendered only after the curated fetch settles.
+- **Card images:** Laltex's host answers missing images slowly (~20 s), so
+  `scripts/check-curated-images.mjs` checks every curated product's candidates server-side
+  and stores the first working one in `category_product_curation.card_image_url`
+  (`card_image_checked_at` set; NULL url = hidden). Unchecked rows fall back to a
+  client-side candidate walk. **Re-run the script after adding curation rows.**
+- Curation clean-up: removed the USB stick from Cables, dog-waste-bag dispensers from Bags,
+  the RFID phone wallet from Power. Ava's upsell context for Ocean Octopus / Octopus Mini
+  corrected (cables, no battery, ocean-reclaimed).
+- Ava quotes `lead_time_days` as working days and never converts it to weeks herself.

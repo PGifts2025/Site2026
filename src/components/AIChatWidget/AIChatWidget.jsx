@@ -87,10 +87,15 @@ export default function AIChatWidget() {
   const [error, setError] = useState(null);
   const scrollRef = useRef(null);
   const textareaRef = useRef(null);
+  // Optional auto-send for `pgifts:open-chat` with { autoSend: true } (category
+  // page example prompts). `send` is defined below the visibility early-return,
+  // so the effect reaches it through a ref rather than by closure.
+  const [pendingSend, setPendingSend] = useState(null);
+  const sendRef = useRef(null);
 
   // Listen for `pgifts:open-chat` from the homepage Ava card (and any
   // future programmatic opener). Detail shape:
-  //   { prefill?: string, welcomeMessage?: string }
+  //   { prefill?: string, welcomeMessage?: string, autoSend?: boolean }
   // Behaviour:
   //   - setOpen(true)
   //   - setInput(prefill) when provided (allows empty string to clear)
@@ -112,6 +117,11 @@ export default function AIChatWidget() {
           return [{ role: 'assistant', content: welcome, tool_calls: [], products: [] }, ...m];
         });
       }
+      // autoSend: send the prefill as the customer's first message once the
+      // panel is open (category example prompts). Home does not set it.
+      if (e?.detail?.autoSend === true && typeof e?.detail?.prefill === 'string' && e.detail.prefill.trim()) {
+        setPendingSend(e.detail.prefill);
+      }
       // Wait for the panel to mount (the {open && (...)} branch
       // renders the textarea conditionally).
       setTimeout(() => {
@@ -121,6 +131,13 @@ export default function AIChatWidget() {
     window.addEventListener('pgifts:open-chat', handler);
     return () => window.removeEventListener('pgifts:open-chat', handler);
   }, []);
+
+  useEffect(() => {
+    if (!pendingSend || !open || !sendRef.current) return;
+    const text = pendingSend;
+    setPendingSend(null);
+    sendRef.current(text);
+  }, [pendingSend, open]);
 
   // Auto-scroll to bottom when:
   //   (a) a new message arrives, OR
@@ -167,8 +184,8 @@ export default function AIChatWidget() {
     setError(null);
   };
 
-  const send = async () => {
-    const text = input.trim();
+  const send = async (override) => {
+    const text = (typeof override === 'string' ? override : input).trim();
     if (!text || sending) return;
     setInput('');
     setError(null);
@@ -239,6 +256,8 @@ export default function AIChatWidget() {
       setSending(false);
     }
   };
+
+  sendRef.current = send;
 
   const handleKey = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -434,7 +453,7 @@ export default function AIChatWidget() {
               />
               <button
                 type="button"
-                onClick={send}
+                onClick={() => send()}
                 disabled={sending || input.trim().length === 0}
                 style={sendBtnStyle}
               >
