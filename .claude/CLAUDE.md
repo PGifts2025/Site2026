@@ -6357,7 +6357,7 @@ Owner's rules after the customer-copy audit (`20261010_customer_copy_cleanup`,
   `scripts/check-curated-images.mjs` checks every curated product's candidates server-side
   and stores the first working one in `category_product_curation.card_image_url`
   (`card_image_checked_at` set; NULL url = hidden). Unchecked rows fall back to a
-  client-side candidate walk. **Re-run the script after adding curation rows.**
+  client-side candidate walk. (Now automatic nightly — §65.8.)
 - Curation clean-up: removed the USB stick from Cables, dog-waste-bag dispensers from Bags,
   the RFID phone wallet from Power. Ava's upsell context for Ocean Octopus / Octopus Mini
   corrected (cables, no battery, ocean-reclaimed).
@@ -6366,3 +6366,25 @@ Owner's rules after the customer-copy audit (`20261010_customer_copy_cleanup`,
   under both Safety Wear and Clothing); with one or two filtered hits she searches again
   unfiltered. Twister USB removed from Power too; Mr Bio PD Long badge "Recycled" (53%
   GRS-certified recycled plastic, also a feature bullet).
+
+### 65.8 Category-card thumbnails, made nightly (9 Oct 2026)
+- Laltex originals are 2000×2000, up to 1.2 MB: a category page pulled ~7.5–8 MB of images and
+  cards took 6–9 s (live, 16–20 s for the whole first screen). Cards now load a ~480px WebP
+  thumbnail (avg 4.7 KB, max 23 KB) from the public **`category-thumbs`** bucket
+  (`category_product_curation.card_thumb_url`, cache-busted `?v=<hash>`); fallbacks:
+  `card_image_url` (verified original), then the product's own candidates.
+- `scripts/lib/category-images.js` (`processCategoryImages`) does the check + thumbnail, once
+  per product code. It only works on rows that are **new** (`card_image_checked_at` NULL),
+  **changed** (`card_image_source_hash` ≠ hash of the candidate list), **stale** (> 30 days) or
+  missing a thumbnail; unchanged products are skipped (a quiet night takes ~2 s).
+- **Runs automatically** as step 2 of the 03:30 UTC cron `api/cron/sync-catalog-mirror.js`
+  (after the 03:00 Laltex sync, so new Laltex images are picked up the same night;
+  `maxDuration` 300 s, stops starting new work 45 s before the limit and carries the rest
+  over). Its failure never fails the mirror step; results are in the cron JSON (`images`).
+  Folded into the existing cron rather than a new function: the project has 11 functions
+  and Hobby allows 12.
+- Manual (backfill/debug only): `node scripts/check-curated-images.mjs [--all] [--dry-run]`.
+  The first full backfill made 699 thumbnails in ~3 min.
+- Bucket: public read, `image/webp` only, 300 KB limit, **no client write policies** —
+  written only by the service role. Rollback leaves the bucket (Supabase blocks SQL deletes
+  of storage objects); empty/delete it in the dashboard if ever needed.

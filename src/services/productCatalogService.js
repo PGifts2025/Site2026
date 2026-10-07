@@ -1259,7 +1259,7 @@ const _getCuratedCategoryProductsUncached = async (categorySlug) => {
     const client = getSupabaseClient();
     const { data: curationRows, error: curationError } = await client
       .from('category_product_curation')
-      .select('supplier_product_code, position, card_image_url, card_image_checked_at')
+      .select('supplier_product_code, position, card_image_url, card_image_checked_at, card_thumb_url')
       .eq('category_slug', categorySlug)
       .order('position', { ascending: true });
 
@@ -1290,6 +1290,8 @@ const _getCuratedCategoryProductsUncached = async (categorySlug) => {
           position: row.position,
           // Server-checked card image (scripts/check-curated-images.mjs, §65.7).
           cardImageUrl: row.card_image_url || null,
+          // ~480px WebP made nightly from cardImageUrl (§65.8) — what the grid loads.
+          cardThumbUrl: row.card_thumb_url || null,
           cardImageChecked: row.card_image_checked_at != null,
           supplier: supplierRow.supplier || null,
           // explicit 'laltex' so normaliseProduct doesn't need raw_payload
