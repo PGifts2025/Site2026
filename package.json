@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
+    "security:check": "node scripts/security-check.mjs",
     "preview": "vite preview",
     "seed-catalog": "node src/scripts/seedCatalogData.js",
     "build:email-templates": "node supabase/email-templates/build.mjs"
@@ -41,6 +42,7 @@
     "eslint-plugin-react-hooks": "^5.2.0",
     "eslint-plugin-react-refresh": "^0.4.20",
     "globals": "^16.2.0",
+    "pg": "^8.23.1",
     "postcss": "^8.5.6",
     "tailwindcss": "^3.4.1",
     "vite": "^7.0.0"
