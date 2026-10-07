@@ -1,17 +1,7 @@
 // src/App.jsx
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import Home from './pages/Home';
-import Clothing from './pages/Clothing';
-import Notebooks from './pages/Notebooks';
-import WaterBottles from './pages/WaterBottles';
-import Cups from './pages/Cups';
-import Bags from './pages/Bags';
-import HiVis from './pages/HiVis';
-import Power from './pages/Power';
-import Speakers from './pages/Speakers';
-import Pens from './pages/Pens';
-import TeaTowels from './pages/TeaTowels';
 import Designer from './pages/Designer';
 import DesignerV2 from './pages/DesignerV2';
 import ProductManager from './pages/ProductManager';
@@ -108,17 +98,17 @@ function App() {
             <Route path="/pens" element={<PensCategory />} />
             <Route path="/speakers" element={<SpeakersCategory />} />
 
-            {/* Legacy Static Category Pages (keeping for backwards compatibility) */}
-            <Route path="/clothing-legacy" element={<Clothing />} />
-            <Route path="/notebooks-legacy" element={<Notebooks />} />
-            <Route path="/water-bottles-legacy" element={<WaterBottles />} />
-            <Route path="/cups-legacy" element={<Cups />} />
-            <Route path="/bags-legacy" element={<Bags />} />
-            <Route path="/hi-vis-legacy" element={<HiVis />} />
-            <Route path="/power-legacy" element={<Power />} />
-            <Route path="/speakers-legacy" element={<Speakers />} />
-            <Route path="/pens-legacy" element={<Pens />} />
-            <Route path="/tea-towels-legacy" element={<TeaTowels />} />
+            {/* Old static category pages (placeholder content) — redirect to the live category pages */}
+            <Route path="/clothing-legacy" element={<Navigate to="/clothing" replace />} />
+            <Route path="/notebooks-legacy" element={<Navigate to="/notebooks" replace />} />
+            <Route path="/water-bottles-legacy" element={<Navigate to="/water-bottles" replace />} />
+            <Route path="/cups-legacy" element={<Navigate to="/cups" replace />} />
+            <Route path="/bags-legacy" element={<Navigate to="/bags" replace />} />
+            <Route path="/hi-vis-legacy" element={<Navigate to="/hi-vis" replace />} />
+            <Route path="/power-legacy" element={<Navigate to="/power" replace />} />
+            <Route path="/speakers-legacy" element={<Navigate to="/speakers" replace />} />
+            <Route path="/pens-legacy" element={<Navigate to="/pens" replace />} />
+            <Route path="/tea-towels-legacy" element={<Navigate to="/tea-towels" replace />} />
 
             {/* Tools */}
             <Route path="/designer" element={<Designer />} />
