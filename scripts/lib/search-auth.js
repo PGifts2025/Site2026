@@ -86,8 +86,10 @@ export async function callRpc({ supabaseUrl, serviceRoleKey, fn, body }) {
 
 /**
  * Given a parsed product_pricing array and a target quantity, find the
- * first tier whose [min_qty, max_qty] range contains the qty. Returns
- * the tier or null.
+ * tier whose [min_qty, max_qty] range contains the qty. When several
+ * contain it (open-ended "100+", "250+", ... ladders, e.g. edge-white and
+ * the notebooks) the one with the HIGHEST min_qty wins — the first match
+ * would quote the 100+ price at 1,000 units. Returns the tier or null.
  *
  * Tier shape (from laltex-parser.js parseProductPricing):
  *   { min_qty, max_qty, price, is_poa, note }
@@ -97,10 +99,13 @@ export async function callRpc({ supabaseUrl, serviceRoleKey, fn, body }) {
  */
 export function findTierForQuantity(productPricing, quantity) {
   if (!Array.isArray(productPricing) || quantity == null) return null;
+  let best = null;
   for (const tier of productPricing) {
     const lo = Number(tier?.min_qty ?? 0);
     const hi = tier?.max_qty == null ? Infinity : Number(tier.max_qty);
-    if (quantity >= lo && quantity <= hi) return tier;
+    if (quantity >= lo && quantity <= hi && (best == null || lo > Number(best.min_qty ?? 0))) {
+      best = tier;
+    }
   }
-  return null;
+  return best;
 }
