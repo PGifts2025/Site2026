@@ -5401,7 +5401,7 @@ const Designer = () => {
                         </button>
                       </div>
                       <p className="text-sm text-blue-600 font-medium mt-2 bg-blue-50 p-2 rounded">
-                        [TIP] Tip: Each print area has its own independent designs. Click a button to switch areas. Badges show design count per area.
+                        Tip: Each print area has its own independent designs. Click a button to switch areas. Badges show design count per area.
                       </p>
                     </div>
                   );
@@ -5512,7 +5512,7 @@ const Designer = () => {
                   </button>
                 </div>
                 <p className="text-xs text-gray-600 text-center mt-2 italic">
-                  [TIP] Use mouse wheel to zoom
+                  Tip: use the mouse wheel to zoom
                 </p>
               </div>
             </div>
@@ -5560,7 +5560,7 @@ const Designer = () => {
                     </button>
                   </div>
                   <p className="text-xs text-gray-600 text-center mt-2 italic">
-                    [TIP] Use mouse wheel to zoom
+                    Tip: use the mouse wheel to zoom
                   </p>
                 </div>
             </div>
