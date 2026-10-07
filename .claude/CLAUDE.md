@@ -1883,11 +1883,12 @@ exposure (if ever needed) gets its own auth layer; out of scope here.
 over two retrievers, multiplied by curation boosts:
 
 ```
-base_rrf = 1/(60 + vector_rank) + 1/(60 + tsvector_rank)
+base_rrf = 1/(60 + vector_rank) + (1/(60 + tsvector_rank) if keyword match (@@) else 0)
 final    = base_rrf
-           * (1.30 if is_core_product             else 1.0)
-           * (1.05 if supplier='pgifts-direct'    else 1.0)
+           * (1.30 if is_core_product AND relevant else 1.0)   -- relevant = keyword match OR similarity >= 0.40
+           * (1.05 if supplier='pgifts-direct'      else 1.0)
 ```
+(Relevance gate + keyword-match rule added 9 Oct 2026 — §65.5.)
 
 RRF was chosen over weighted-sum because cosine similarity (0–1) and
 `ts_rank` (unbounded) have wildly different score scales and any
@@ -3949,7 +3950,7 @@ cables") or asks for live-design-preview / Designer-compatible products
   definition of premium in the catalogue, and locking the search to
   25 products on subjective grounds defeats the cross-supplier
   retrieval the system is designed for.
-- **Do NOT touch HOUSE_MULTIPLIER (1.05) or CORE_MULTIPLIER (1.30 in
+- **Do NOT touch HOUSE_MULTIPLIER (1.05) or CORE_MULTIPLIER (1.30 in  *(9 Oct 2026: value unchanged, but the core boost now only applies to relevant rows — owner-approved, §65.5)*
   search, 1.15 in find-alternatives).** Dave's decision: the small
   house multiplier stays as a tiebreaker; the core multiplier
   legitimately surfaces Designer-integrated SKUs for design queries.
@@ -6283,3 +6284,28 @@ When staging is built, replace this section: migrations go to staging first, the
   weeks, they vanish again — check the Vercel cron logs if Ava stops suggesting them.
 - Manual run: `node scripts/migrate-catalog-to-supplier-products.js [--dry-run]`.
   Inactive products are not mirrored; their old rows age out after 14 days.
+
+### 65.5 Search ranking: featured (core) products top only when relevant (9 Oct 2026)
+Owner's rule: **core products should be at the top of a search if they are relevant to it.**
+`20261009_search_relevance_and_copy.sql` changed `rpc_search_supplier_products`:
+- The ×1.30 `CORE_MULTIPLIER` applies only when the core row is **relevant**: it matches every
+  query word (`search_tsv @@ query`) or its vector similarity is ≥ `CORE_MIN_SIMILARITY`
+  (0.40). Before, it applied to every core row, so in own-product searches (25 rows) the Chi
+  Cup topped "t-shirt" and power banks beat bags for "cotton tote bag".
+- The keyword half of RRF counts only for a real keyword match. `ts_rank` returns ~1e-20 for
+  non-matching rows, which then took keyword ranks in `supplier_product_code` order — an
+  arbitrary boost for alphabetically early codes (Chi Cup, 12oz bag).
+- All-supplier searches were unchanged except where that arbitrary boost had been doing the
+  work. "charging cable" still puts the four hero cables 1–4; "power bank" our five 1–5.
+- To make a core product surface for a term, give it **accurate** wording in its features
+  (owner-approved: Chi Cup "Insulated, reusable coffee cup and travel mug" — it is not a
+  ceramic mug; 12oz canvas "Reusable tote bag and shopping bag"). Features show as bullets
+  on the product page, so write them for customers.
+- **Product descriptions are customer-facing** (shown on the product page) and feed search:
+  never put pricing or internal notes in them. Five such notes were removed (tea towel,
+  polo, hoodie, sweatshirts, hi-vis vest).
+- Known, left alone: in own-product searches "t-shirt" ranks Tea Towel 2nd. The embedding
+  model rates "t-shirt" close to "tea towel" (0.48 vs polo shirt 0.55), and the clothing
+  listings are diluted by 65-name colour lists; capping colours did not change the order.
+- Changing descriptions/features: re-run the mirror and `node scripts/embed-catalogue.js`
+  (hash-gated) or wait for the 03:30 / 04:00 crons.
