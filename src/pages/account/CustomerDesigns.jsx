@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Palette, Edit2, Copy, Trash2, FileText, Loader } from 'lucide-react';
 import CustomerLayout from '../../components/customer/CustomerLayout';
-import { supabase, deleteUserDesign } from '../../services/supabaseService';
+import { supabase, deleteUserDesign, assertRowsWritten } from '../../services/supabaseService';
 import { createQuoteFromDesign } from '../../services/quoteService';
 import {
   getCatalogProductBySlug,
@@ -164,12 +164,14 @@ const CustomerDesigns = ({ user }) => {
     try {
       setSavingName(true);
 
-      const { error } = await supabase
-        .from('user_designs')
-        .update({ design_name: editingName.trim() })
-        .eq('id', designId);
-
-      if (error) throw error;
+      assertRowsWritten(
+        await supabase
+          .from('user_designs')
+          .update({ design_name: editingName.trim() })
+          .eq('id', designId)
+          .select('id'),
+        'new design name',
+      );
 
       setDesigns(
         designs.map((d) =>
@@ -215,6 +217,7 @@ const CustomerDesigns = ({ user }) => {
       }
       const { error } = await supabase.from('user_designs').insert(insert);
       if (error) throw error;
+      window.dispatchEvent(new Event('designCountChanged'));
       fetchDesigns();
     } catch (error) {
       console.error('[CustomerDesigns] Error duplicating:', error);
@@ -229,6 +232,7 @@ const CustomerDesigns = ({ user }) => {
 
     try {
       await deleteUserDesign(designId);
+      window.dispatchEvent(new Event('designCountChanged'));
       setDesigns(designs.filter((d) => d.id !== designId));
     } catch (error) {
       console.error('[CustomerDesigns] Error deleting:', error);

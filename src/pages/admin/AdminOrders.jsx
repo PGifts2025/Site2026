@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { Search, Filter, Download, Loader, Eye, Trash2, X } from 'lucide-react';
 import AdminLayout from '../../components/admin/AdminLayout';
-import { supabase } from '../../services/supabaseService';
+import { supabase, assertRowsWritten } from '../../services/supabaseService';
 import { formatSizeBreakdown } from '../../utils/laltexSizes';
 
 const AdminOrders = ({ user, adminRole }) => {
@@ -473,11 +473,14 @@ const AdminOrders = ({ user, adminRole }) => {
     setDeleteInFlight(true);
     setDeleteError(null);
     try {
-      const { error } = await supabase
-        .from('orders')
-        .update({ deleted_at: new Date().toISOString() })
-        .eq('id', deleteCandidate.id);
-      if (error) throw error;
+      assertRowsWritten(
+        await supabase
+          .from('orders')
+          .update({ deleted_at: new Date().toISOString() })
+          .eq('id', deleteCandidate.id)
+          .select('id'),
+        'order deletion',
+      );
 
       // Optimistic local update — drop the row from the in-memory list.
       // applyFilters fires via the `orders` dep and the row disappears

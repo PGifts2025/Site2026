@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { ArrowLeft, Loader, Package, User, MapPin, CreditCard, Image as ImageIcon, Download, FileImage, StickyNote, AlertTriangle } from 'lucide-react';
 import AdminLayout from '../../components/admin/AdminLayout';
-import { supabase, getArtworkSignedUrl, downloadArtworkFile } from '../../services/supabaseService';
+import { supabase, getArtworkSignedUrl, downloadArtworkFile, assertRowsWritten } from '../../services/supabaseService';
 import { supabaseConfig } from '../../config/supabase';
 import { validateDeliveryForApproval, DELIVERY_FIELD_LABELS } from '../../lib/deliveryValidation';
 import { formatSizeBreakdown } from '../../utils/laltexSizes';
@@ -163,11 +163,10 @@ const AdminOrderDetail = ({ user, adminRole }) => {
     // Capture prior status for first-transition email detection below.
     const priorStatus = order?.artwork_status;
     try {
-      const { error: statusError } = await supabase
-        .from('orders')
-        .update({ artwork_status: pendingStatus })
-        .eq('id', id);
-      if (statusError) throw statusError;
+      assertRowsWritten(
+        await supabase.from('orders').update({ artwork_status: pendingStatus }).eq('id', id).select('id'),
+        'artwork status',
+      );
 
       // When entering in_review or beyond, mark unreviewed artwork files
       // as reviewed so the timestamp reflects when the workflow advanced.
@@ -216,11 +215,10 @@ const AdminOrderDetail = ({ user, adminRole }) => {
     setSavingNotes(true);
     setNotesSaved(false);
     try {
-      const { error } = await supabase
-        .from('orders')
-        .update({ admin_notes: adminNotes || null })
-        .eq('id', id);
-      if (error) throw error;
+      assertRowsWritten(
+        await supabase.from('orders').update({ admin_notes: adminNotes || null }).eq('id', id).select('id'),
+        'notes',
+      );
       setNotesSaved(true);
       setTimeout(() => setNotesSaved(false), 2000);
     } catch (err) {

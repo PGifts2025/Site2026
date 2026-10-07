@@ -35,7 +35,10 @@ export const AuthProvider = ({ children }) => {
             setTimeout(() => {
               supabase.rpc('claim_guest_designs').then(({ data, error }) => {
                 if (error) console.warn('[AuthContext] claim_guest_designs failed:', error.message);
-                else if (data) console.log(`[AuthContext] Claimed ${data} guest design(s)`);
+                else if (data) {
+                  console.log(`[AuthContext] Claimed ${data} guest design(s)`);
+                  window.dispatchEvent(new Event('designCountChanged'));
+                }
               });
             }, 0);
           }
