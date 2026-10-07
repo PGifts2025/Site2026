@@ -71,6 +71,8 @@ import {
   isUserObject,
 } from '../utils/fabricCanvasManager';
 import { prettyPrintArea } from '../utils/printAreaFormat';
+import Toast from '../components/Toast';
+import { useToast } from '../hooks/useToast';
 import {
   isBucketADesignable,
   isPositionDesignable,
@@ -161,6 +163,7 @@ const DesignerV2 = () => {
   const [showMyDesigns, setShowMyDesigns] = useState(false);
   const [designName, setDesignName] = useState('');
   const [saveStatus, setSaveStatus] = useState(null);
+  const [toast, showToast, hideToast] = useToast();
   const [savingDesign, setSavingDesign] = useState(false);
 
   // -------- Auth gate (reused pattern from session 6) --------
@@ -905,7 +908,7 @@ const DesignerV2 = () => {
   const runSaveDesign = async () => {
     if (!canvas || !product || !user) return;
     if (!designName.trim()) {
-      alert('Please enter a design name');
+      showToast({ type: 'error', message: 'Please enter a design name.' });
       return;
     }
     setSavingDesign(true);
@@ -960,10 +963,12 @@ const DesignerV2 = () => {
       setSaveStatus('saved');
       setShowSaveModal(false);
       setTimeout(() => setSaveStatus(null), 2000);
+      showToast({ type: 'success', message: 'Design saved', link: { to: '/account/designs', label: 'View in My Designs' } });
+      window.dispatchEvent(new Event('designCountChanged'));
     } catch (err) {
       console.error('[DesignerV2] save failed:', err);
       setSaveStatus('error');
-      alert(`Save failed: ${err.message}`);
+      showToast({ type: 'error', message: `Couldn't save your design: ${err.message}` });
       setTimeout(() => setSaveStatus(null), 3000);
     } finally {
       setSavingDesign(false);
@@ -1100,6 +1105,7 @@ const DesignerV2 = () => {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-gray-100">
+      <Toast toast={toast} onClose={hideToast} />
       {/* Header — same visual chrome as v1's sticky header */}
       <header className="bg-white shadow-sm border-b sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-6 py-4">

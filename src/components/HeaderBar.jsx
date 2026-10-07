@@ -65,6 +65,39 @@ function HeaderBar() {
     return () => window.removeEventListener('quoteCountChanged', handler);
   }, [fetchQuoteCount]);
 
+  // Saved design count (owner's designs; guest designs are claimed on sign-in)
+  const [designCount, setDesignCount] = useState(0);
+
+  const fetchDesignCount = useCallback(async () => {
+    if (!user) {
+      setDesignCount(0);
+      return;
+    }
+    try {
+      const { count, error } = await supabase
+        .from('user_designs')
+        .select('id', { count: 'exact', head: true })
+        .eq('user_id', user.id);
+
+      if (!error) {
+        setDesignCount(count || 0);
+      }
+    } catch (err) {
+      console.error('[HeaderBar] Error fetching design count:', err);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    fetchDesignCount();
+  }, [fetchDesignCount]);
+
+  // Fired after a Designer save, a claim on sign-in, or a My Designs change
+  useEffect(() => {
+    const handler = () => fetchDesignCount();
+    window.addEventListener('designCountChanged', handler);
+    return () => window.removeEventListener('designCountChanged', handler);
+  }, [fetchDesignCount]);
+
   const handleSignOut = async () => {
     try {
       await signOut();
@@ -186,10 +219,30 @@ function HeaderBar() {
               )}
             </div>
 
+            {/* My Designs Button */}
+            {user && (
+              <Link
+                to="/account/designs"
+                aria-label={`My Designs (${designCount} saved)`}
+                className="flex items-center space-x-2 text-gray-700 hover:text-red-500 transition-colors relative"
+              >
+                <div className="relative">
+                  <Palette className="h-6 w-6" />
+                  {designCount > 0 && (
+                    <span className="absolute -top-2 -right-2 bg-blue-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center font-semibold">
+                      {designCount > 99 ? '99+' : designCount}
+                    </span>
+                  )}
+                </div>
+                <span className="hidden md:inline">My Designs</span>
+              </Link>
+            )}
+
             {/* Quotes Button */}
             {user && (
               <Link
                 to="/account/quotes"
+                aria-label={`Quotes (${quoteCount} draft)`}
                 className="flex items-center space-x-2 text-gray-700 hover:text-red-500 transition-colors relative"
               >
                 <div className="relative">

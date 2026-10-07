@@ -45,6 +45,23 @@ function fetchWithDesignSession(input, init = {}) {
 }
 
 /**
+ * PostgREST reports success when RLS (or a stale id) filters an UPDATE or
+ * DELETE down to zero rows, so the UI would say "Saved" while nothing changed.
+ * For writes that target specific rows, add `.select('id')` and pass the
+ * result here: a zero-row write becomes a visible error.
+ */
+export function assertRowsWritten(result, what = 'change') {
+  const { data, error } = result || {};
+  if (error) throw error;
+  if (!data || (Array.isArray(data) && data.length === 0)) {
+    const err = new Error(`Your ${what} could not be saved. It may have been changed or removed — please refresh and try again.`);
+    err.code = 'NO_ROWS_WRITTEN';
+    throw err;
+  }
+  return data;
+}
+
+/**
  * Get or initialize Supabase client (singleton)
  * This ensures only ONE client instance exists across the entire app
  */
@@ -155,48 +172,6 @@ export const isCurrentUserAdmin = async () => {
 // =====================================================
 // Product Template Operations
 // =====================================================
-
-// TEMPORARY TEST FUNCTION - bypasses RLS using service role
-export async function testProductTemplatesWithServiceRole() {
-  console.log('[TEST] Testing product_templates access with service role...');
-
-  // Create a client with service role (bypasses RLS)
-  const serviceRoleKey = import.meta.env.VITE_SUPABASE_SERVICE_ROLE_KEY;
-
-  if (!serviceRoleKey) {
-    console.error('[TEST] No service role key found in .env');
-    console.error('[TEST] Add VITE_SUPABASE_SERVICE_ROLE_KEY to .env file');
-    return { data: null, error: new Error('No service role key') };
-  }
-
-  const testClient = createClient(
-    import.meta.env.VITE_SUPABASE_URL,
-    serviceRoleKey,
-    {
-      auth: {
-        autoRefreshToken: false,
-        persistSession: false
-      }
-    }
-  );
-
-  console.log('[TEST] Service role client created');
-
-  try {
-    const result = await testClient
-      .from('product_templates')
-      .select('*');
-
-    console.log('[TEST] ✅ Query completed!');
-    console.log('[TEST] Result:', result);
-
-    return result;
-
-  } catch (err) {
-    console.error('[TEST] ❌ Error:', err);
-    return { data: null, error: err };
-  }
-}
 
 /**
  * Get all product templates
@@ -354,12 +329,13 @@ export const deleteProductTemplate = async (productKey) => {
 
   try {
     const client = getSupabaseClient();
-    const { error } = await client
+    const result = await client
       .from('product_templates')
       .delete()
-      .eq('product_key', productKey);
+      .eq('product_key', productKey)
+      .select('id');
 
-    if (error) throw error;
+    assertRowsWritten(result, 'product template deletion');
   } catch (error) {
     console.error('Error deleting product template:', error);
     throw error;
@@ -486,12 +462,13 @@ export const deletePrintArea = async (printAreaId) => {
 
   try {
     const client = getSupabaseClient();
-    const { error } = await client
+    const result = await client
       .from('print_areas')
       .delete()
-      .eq('id', printAreaId);
+      .eq('id', printAreaId)
+      .select('id');
 
-    if (error) throw error;
+    assertRowsWritten(result, 'print area deletion');
   } catch (error) {
     console.error('Error deleting print area:', error);
     throw error;
@@ -605,6 +582,9 @@ export const batchUpdatePrintAreas = async (productTemplateId, printAreasConfig)
       if (errors.length > 0) {
         console.error('[batchUpdatePrintAreas] Errors in operations:', errors);
         throw errors[0].error;
+      }
+      if (results.some(r => !r.data || (Array.isArray(r.data) && r.data.length === 0))) {
+        throw new Error('Some print areas could not be saved. Please refresh and try again.');
       }
 
       // Return all updated/created areas
@@ -784,12 +764,13 @@ export const deleteProductVariant = async (variantId) => {
 
   try {
     const client = getSupabaseClient();
-    const { error } = await client
+    const result = await client
       .from('product_template_variants')
       .delete()
-      .eq('id', variantId);
+      .eq('id', variantId)
+      .select('id');
 
-    if (error) throw error;
+    assertRowsWritten(result, 'variant deletion');
   } catch (error) {
     console.error('Error deleting product variant:', error);
     throw error;
@@ -1001,6 +982,9 @@ export const batchUpdatePrintAreasForVariant = async (variantId, printAreasConfi
       const results = await Promise.all(operations);
       const errors = results.filter(r => r.error);
       if (errors.length > 0) throw errors[0].error;
+      if (results.some(r => !r.data || (Array.isArray(r.data) && r.data.length === 0))) {
+        throw new Error('Some print areas could not be saved. Please refresh and try again.');
+      }
 
       const updatedAreas = results
         .filter(r => r.data)
@@ -1187,12 +1171,13 @@ export const deletePrintAreaForView = async (printAreaId) => {
 
   try {
     const client = getSupabaseClient();
-    const { error } = await client
+    const result = await client
       .from('print_areas')
       .delete()
-      .eq('id', printAreaId);
+      .eq('id', printAreaId)
+      .select('id');
 
-    if (error) throw error;
+    assertRowsWritten(result, 'print area deletion');
     console.log('[deletePrintAreaForView] Deleted print area:', printAreaId);
   } catch (error) {
     console.error('Error deleting print area:', error);
@@ -2210,12 +2195,13 @@ export const deleteUserDesign = async (designId) => {
     }
 
     // Delete design from database
-    const { error } = await client
+    const result = await client
       .from('user_designs')
       .delete()
-      .eq('id', designId);
+      .eq('id', designId)
+      .select('id');
 
-    if (error) throw error;
+    assertRowsWritten(result, 'design deletion');
 
     console.log('Design deleted successfully:', designId);
   } catch (error) {
@@ -2879,12 +2865,15 @@ export async function uploadOrderArtwork(orderId, userId, file, notes = null) {
     const wasFirstTransition = priorOrder?.artwork_status === 'pending_artwork';
 
     // 4. Update order artwork_status
-    const { error: orderError } = await client
+    const { data: statusRows, error: orderError } = await client
       .from('orders')
       .update({ artwork_status: 'artwork_uploaded' })
-      .eq('id', orderId);
+      .eq('id', orderId)
+      .select('id');
 
-    if (orderError) console.warn('[uploadOrderArtwork] Could not update artwork_status:', orderError);
+    if (orderError || !statusRows?.length) {
+      console.warn('[uploadOrderArtwork] artwork_status not updated:', orderError || 'no rows (order not editable)');
+    }
 
     // Fire-and-forget: artwork-received email on first transition only.
     // No await, no blocking. Any failure is logged and swallowed — the
@@ -2961,12 +2950,14 @@ export async function deleteOrderArtwork(artworkId, fileUrl, orderId = null) {
     if (storageError) console.warn('[deleteOrderArtwork] Storage delete error:', storageError);
 
     // 2. Delete DB row
-    const { error: dbError } = await client
+    const { data: deletedRows, error: dbError } = await client
       .from('order_artwork')
       .delete()
-      .eq('id', artworkId);
+      .eq('id', artworkId)
+      .select('id');
 
     if (dbError) throw dbError;
+    if (!deletedRows?.length) throw new Error('That artwork file could not be deleted. Please refresh and try again.');
 
     // 3. If this was the last artwork for the order, revert artwork_status
     //    back to 'pending_artwork' so the customer sees Upload Artwork again.

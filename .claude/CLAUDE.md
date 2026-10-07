@@ -47,7 +47,7 @@ print, build quotes, and place orders.
 | `src/components/ScrollToTop.jsx` | Route-change scroll reset; also sets `history.scrollRestoration='manual'` — see §22 |
 | `src/components/auth/AuthModal.jsx` | Sign in / Sign up / Forgot password flow; `onSuccess` callback supports same-session auto-continue for Buy Now / PNG / PDF |
 | `src/pages/ResetPassword.jsx` | Public page; consumes Supabase recovery session from URL hash, lets user set new password |
-| `src/components/HeaderBar.jsx` | Top nav — sticky, cart + quotes badges. Dead feature-bar strip removed (§4.5 work / §18) |
+| `src/components/HeaderBar.jsx` | Top nav — sticky, cart + quotes + **My Designs** badges (refresh on `quoteCountChanged` / `designCountChanged`, §63.3). Dead feature-bar strip removed (§4.5 work / §18) |
 | `src/context/AuthContext.jsx` | Auth state — user, signIn, signUp, signOut, `resetPassword` |
 | `supabase/functions/_shared/emailShell.ts` | `renderEmail({...})` — shared HTML/text shell for both Edge Function emails. See §21 |
 | `supabase/email-templates/` | Auth email templates (4 HTML files for Supabase Dashboard) generated from `_shell.html` + `_bodies/*.js` via `npm run build:email-templates`. See §21 |
@@ -399,6 +399,7 @@ All three route to `/account/quotes` on success, with a flash banner `"Quote cre
 - ❌ Edit `supabase/email-templates/auth/*.html` by hand — they're generated. Edit `_bodies/*.js` or `_shell.html` and run `npm run build:email-templates` (§21)
 - ❌ Revert `createQuoteFromDesign`'s pre-insert `total_amount` computation to `0` — the trigger is a safety net, not a substitute (§23)
 - ❌ Change pricing margins (22/20/18%) without explicit instruction
+- ❌ Use `window.alert()` on customer-facing pages, or let a targeted UPDATE/DELETE report success without checking a row was written (§63)
 - ❌ Create a `public` table without `ENABLE ROW LEVEL SECURITY`, or authorise anything on `user_metadata` / `raw_user_meta_data` (user-editable) — admin is `team_members` via `is_admin()` (§62)
 - ❌ Change Hi-Vis or T-shirt colour_variant resolution logic without instruction
 - ❌ Delete or truncate catalog_print_pricing (252 rows, hard to regenerate)
@@ -757,12 +758,12 @@ export const createQuoteFromDesign = async ({ design, user, quantityOverride = n
 
 ## 20. SHARED GUEST AUTH GATE
 
-One `AuthModal` mount in Designer serves **three** guest flows: Buy Now, PNG export, PDF export. Purpose discriminator + mutual-exclusion localStorage intents.
+One `AuthModal` mount in Designer serves **every** guest auth prompt: Buy Now, PNG export, PDF export, **Save** and the header **Sign In** button (`openAuthGate(purpose)`). Purpose discriminator + mutual-exclusion localStorage intents (Save / Sign In need no intent: after sign-in, Save re-runs `saveDesign()`; a sign-up email round-trip just returns the user signed in).
 
 ### 20.1 State
 ```js
 const [guestAuthGateOpen, setGuestAuthGateOpen] = useState(false);
-const [guestAuthGatePurpose, setGuestAuthGatePurpose] = useState(null); // 'buyNow' | 'png' | 'pdf' | null
+const [guestAuthGatePurpose, setGuestAuthGatePurpose] = useState(null); // 'buyNow' | 'png' | 'pdf' | 'save' | 'signIn' | null
 ```
 
 ### 20.2 Intent persistence (localStorage, 1h TTL)
@@ -777,21 +778,27 @@ Three keys, **mutually exclusive** (setting any one clears all others via `clear
 AuthModal's `onSuccess` callback fires inline after successful `signIn` with `data.user`. Designer's mount-time handler:
 - Closes the gate + clears purpose
 - Calls `clearAllGuestIntents()` (prevents double-fire from the resume useEffect)
-- Dispatches: `buyNow` → `runBuyNow(user)`, `png`/`pdf` → `runExport(format)` if `currentDesignId`, else "Please save your design first to export" toast
+- Dispatches: `buyNow` → `runBuyNow(user)`, `save` → `saveDesign()` (opens the name modal), `png`/`pdf` → `runExport(format)` if `currentDesignId`, else "Please save your design first to export" toast; `signIn` just closes
 
 ### 20.4 Resume (sign-up email round-trip)
 A single `useEffect([user, loadingProducts])` in Designer consumes whichever intent is found:
 - **Buy Now intent:** auto-runs the flow. If `designId` missing, tries to resurrect the most recent saved/migrated design via `getUserDesigns(user.id, sessionId)`; otherwise toasts "Please save your design first"
 - **PNG/PDF intent:** shows toast `"Signed in - click PNG/PDF again to download"`. **Does NOT auto-fire the download** — an unprompted file-download on page mount is surprising UX, unlike Buy Now's continuation
 
-### 20.5 Why not reuse the Designer's own inline auth form?
-Designer still has its own legacy inline auth at `showAuth` (line ~5980). That's the Save button's auth trigger, unchanged. The **new** shared AuthModal is the Buy Now / PNG / PDF gate, using `useAuth()` + `AuthContext.signIn`. Both coexist; the legacy one will eventually be removed once Save is migrated to the shared gate.
+### 20.5 The Designer's legacy inline auth form — REMOVED (7 Oct 2026)
+The old `showAuth` form called `auth.signUp({ email, password })` with **no**
+name/company/phone metadata and **no** `emailRedirectTo` — accounts created there
+got an empty `customer_profiles` row (found in the 7 Oct E2E run). Save and the
+header Sign In now open the shared AuthModal, which sends first/last name,
+company and phone (→ `handle_new_customer_profile`, §62.3) and redirects to
+`/auth/callback`. Don't reintroduce a second auth form anywhere.
 
 ### 20.6 Invariants — DO NOT BREAK
 - AuthModal must not be rendered alongside MoqModal (mutual exclusion — §19.1)
 - `persistBuyNowIntent` / `persistExportIntent` MUST call `clearAllGuestIntents()` first
 - `consume*Intent()` must remove the key BEFORE the TTL check so expired state is silently cleared
 - TTL of 1 hour matches `BUY_NOW_INTENT_TTL_MS`; applies to all three intent types
+- Every sign-in/sign-up prompt in the Designer goes through this gate (§20.5)
 
 ---
 
@@ -6075,3 +6082,54 @@ GRANT INSERT, UPDATE, DELETE, TRUNCATE ON public.catalog_print_pricing, public.p
 the migration. One DO block, always rolled back; 28 checks covering guest designs
 (right/wrong/no header), claim on sign-in, the sign-up trigger, customer vs admin
 order access, the order-update guard, and the private tables.
+
+---
+
+## 63. CLIENT WRITE SAFETY & IN-PAGE FEEDBACK
+
+Added after the 7 Oct 2026 end-to-end run (PR fix/e2e-flow-and-my-designs).
+
+### 63.1 Zero-row writes must not report success
+PostgREST returns **success with no error** when RLS (or a stale id) filters an
+`UPDATE`/`DELETE` down to zero rows — the UI said "Saved" while nothing changed.
+
+- For any write that **targets specific rows** (by id / unique key, after a user
+  action): add `.select('id')` and pass the result to
+  `assertRowsWritten(result, 'what')` from `supabaseService.js`. It throws a
+  user-readable error (`code: 'NO_ROWS_WRITTEN'`) on zero rows.
+- `.select().single()` already errors on zero rows — fine as is.
+- **Bulk "clear then re-insert" deletes** (e.g. print areas for a template) may
+  legitimately hit zero rows — no row check, but they **must** check `error`
+  (a failed clear duplicates rows on re-insert).
+- `RETURNING` only returns rows the caller can also `SELECT` — before adding a row
+  check, confirm the table's SELECT policy covers the writing role.
+- Status bookkeeping that is intentionally non-fatal (e.g. `artwork_status` after
+  an upload) logs a warning on zero rows rather than failing the user's action.
+
+Covered today: quote delivery details + quote delete (My Quotes), order delivery
+(My Orders), design rename/delete (My Designs), admin artwork status / notes /
+soft-delete, template / print-area / variant deletes and batch print-area saves,
+ProductManager variant colour + upload updates.
+
+### 63.2 No `window.alert()` in customer-facing pages
+Use the toast: `useToast()` (`src/hooks/useToast.js`) + `<Toast />`
+(`src/components/Toast.jsx`). Success/info auto-hide after 5 s, errors after 8 s,
+optional link (`{ to, label }`), `role="status"` / `role="alert"` for screen
+readers, positioned `bottom-24` to clear the AI chat launcher. Designer and
+DesignerV2 have no remaining `alert()` calls.
+
+### 63.3 Header counts — events
+`HeaderBar` re-fetches its badges on window events:
+- `quoteCountChanged` — after a quote is created/combined/deleted.
+- `designCountChanged` — after a Designer/DesignerV2 save, `claim_guest_designs()`
+  on sign-in (AuthContext), and duplicate/delete in My Designs.
+The **My Designs** link (Palette icon + count badge, `aria-label="My Designs (N saved)"`)
+sits immediately left of Quotes, signed-in only, on every breakpoint.
+
+### 63.4 Text encoding
+Several files were once saved as Windows-1252, turning arrows/×/emoji into
+mojibake (`â€¦`, `Ëœ`, stray `\x90`/`\x9d` bytes). Designer.jsx was cleaned on
+7 Oct 2026. For **user-visible** non-ASCII characters in JS/JSX use escapes
+(`×` ×, `←` ←, `→` →, `⚠` ⚠) or lucide icons, so a
+mis-encoded save can't break them; keep logs ASCII (`[OK]`, `[WARN]`, `[ERROR]`).
+`fix-chars.js` at the repo root is an obsolete one-off repair script — don't run it.

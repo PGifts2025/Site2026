@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { FileText, Trash2, ShoppingCart, Loader, AlertCircle, Check, CreditCard } from 'lucide-react';
 import CustomerLayout from '../../components/customer/CustomerLayout';
-import { supabase } from '../../services/supabaseService';
+import { supabase, assertRowsWritten } from '../../services/supabaseService';
 import { supabaseConfig } from '../../config/supabase';
 import DeliveryAddressForm from '../../components/DeliveryAddressForm';
 import { buildAccountSnapshot, accountHasAddress } from '../../lib/deliveryValidation';
@@ -79,11 +79,14 @@ const CustomerQuotes = ({ user }) => {
 
   // Persist delivery details onto a quote (jsonb shipping_address + po_number).
   const saveQuoteDelivery = async (quoteId, address, poNumber) => {
-    const { error } = await supabase
-      .from('quotes')
-      .update({ shipping_address: address, po_number: poNumber || null })
-      .eq('id', quoteId);
-    if (error) throw error;
+    assertRowsWritten(
+      await supabase
+        .from('quotes')
+        .update({ shipping_address: address, po_number: poNumber || null })
+        .eq('id', quoteId)
+        .select('id'),
+      'delivery details',
+    );
     setQuotes((prev) =>
       prev.map((q) =>
         q.id === quoteId ? { ...q, shipping_address: address, po_number: poNumber || null } : q,
@@ -191,12 +194,10 @@ const CustomerQuotes = ({ user }) => {
       if (itemsError) throw itemsError;
 
       // Then delete the quote
-      const { error: quoteError } = await supabase
-        .from('quotes')
-        .delete()
-        .eq('id', quoteId);
-
-      if (quoteError) throw quoteError;
+      assertRowsWritten(
+        await supabase.from('quotes').delete().eq('id', quoteId).select('id'),
+        'quote deletion',
+      );
 
       // Remove from local state
       setQuotes(quotes.filter(q => q.id !== quoteId));

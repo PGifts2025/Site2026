@@ -613,11 +613,14 @@ const ProductManager = ({ adminRole } = {}) => {
 
         try {
           // Update all view records for this color variant
-          const { error } = await supabase
+          const { data: updatedRows, error: updateError } = await supabase
             .from('product_template_variants')
             .update({ color_code: value })
             .eq('product_template_id', editingProductId)
-            .eq('color_name', variant.name);
+            .eq('color_name', variant.name)
+            .select('id');
+
+          const error = updateError || (!updatedRows?.length ? new Error('no matching variant rows were updated') : null);
 
           if (error) {
             console.error('[ColorPicker] Failed to update database:', error);
@@ -763,11 +766,12 @@ const ProductManager = ({ adminRole } = {}) => {
               color_code: variant.colorCode || '#000000'
             };
             console.log('[Upload] Updating with data:', updateData);
-            const { error } = await supabase
+            const { data: updatedRows, error } = await supabase
               .from('product_template_variants')
               .update(updateData)
-              .eq('id', existing.id);
-            dbError = error;
+              .eq('id', existing.id)
+              .select('id');
+            dbError = error || (!updatedRows?.length ? new Error('variant not found or not editable') : null);
             if (!error) console.log('[Upload] ✅ Updated existing variant in database');
           } else {
             // Insert new record
@@ -2165,11 +2169,12 @@ const ProductManager = ({ adminRole } = {}) => {
   const handleSaveColors = async () => {
     try {
       setSaving(true);
-      // Delete existing colors
-      await supabase
+      // Delete existing colors (a failed clear must not be reported as saved)
+      const { error: clearError } = await supabase
         .from('product_colors')
         .delete()
         .eq('product_template_id', editingProductId);
+      if (clearError) throw clearError;
 
       // Insert new colors
       const colorInserts = assignedColors.map(color => ({
@@ -2197,11 +2202,12 @@ const ProductManager = ({ adminRole } = {}) => {
   const handleSavePrintAreas = async () => {
     try {
       setSaving(true);
-      // Delete existing print areas
-      await supabase
+      // Delete existing print areas (a failed clear would duplicate rows on re-insert)
+      const { error: clearError } = await supabase
         .from('print_areas')
         .delete()
         .eq('product_template_id', editingProductId);
+      if (clearError) throw clearError;
 
       // Convert printAreas object to array and insert new print areas
       const printAreasArray = Object.entries(printAreas).flatMap(([view, areas]) => {

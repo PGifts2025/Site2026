@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { ArrowLeft, Loader, MapPin, Printer } from 'lucide-react';
 import CustomerLayout from '../../components/customer/CustomerLayout';
-import { supabase } from '../../services/supabaseService';
+import { supabase, assertRowsWritten } from '../../services/supabaseService';
 import DeliveryAddressForm from '../../components/DeliveryAddressForm';
 import { BUSINESS } from '../../config/business';
 import { formatSizeBreakdown } from '../../utils/laltexSizes';
@@ -61,12 +61,15 @@ const CustomerOrderDetail = ({ user }) => {
   };
 
   const saveOrderDelivery = async (address, poNumber) => {
-    const { error } = await supabase
-      .from('orders')
-      .update({ shipping_address: address, po_number: poNumber || null })
-      .eq('id', id)
-      .eq('customer_id', user.id);
-    if (error) throw error;
+    assertRowsWritten(
+      await supabase
+        .from('orders')
+        .update({ shipping_address: address, po_number: poNumber || null })
+        .eq('id', id)
+        .eq('customer_id', user.id)
+        .select('id'),
+      'delivery details',
+    );
     setOrder((prev) => ({ ...prev, shipping_address: address, po_number: poNumber || null }));
     setEditingDelivery(false);
   };
