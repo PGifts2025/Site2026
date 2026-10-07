@@ -154,14 +154,15 @@ const FAST_LEAD_MAX_WORKING_DAYS = 10;
 // CLAUDE.md §50.2). When scripts/check-curated-images.mjs has checked the row,
 // its verified image leads (or the card is hidden if none worked); otherwise
 // the card walks this list on load errors and is hidden when none load (§65.7).
-function curatedImageCandidates({ normalised, cardImageUrl, cardImageChecked }) {
+function curatedImageCandidates({ normalised, cardImageUrl, cardImageChecked, cardThumbUrl }) {
   if (cardImageChecked && !cardImageUrl) return [];
   const colours = normalised?.colours || [];
   const urls = [
     ...colours.flatMap((c) => [...(c?.plainImages || []), ...(c?.images || [])]),
     ...(normalised?.images || []).map((i) => i?.url),
   ].filter(Boolean);
-  return [...new Set(cardImageUrl ? [cardImageUrl, ...urls] : urls)];
+  // Thumbnail first (~5 KB vs ~700 KB originals, §65.8), then the verified original.
+  return [...new Set([cardThumbUrl, cardImageUrl, ...urls].filter(Boolean))];
 }
 
 // Calendar days -> working days (PGifts Direct lead times are calendar days, §65.2).
