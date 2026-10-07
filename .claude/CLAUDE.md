@@ -6309,3 +6309,31 @@ Owner's rule: **core products should be at the top of a search if they are relev
   listings are diluted by 65-name colour lists; capping colours did not change the order.
 - Changing descriptions/features: re-run the mirror and `node scripts/embed-catalogue.js`
   (hash-gated) or wait for the 03:30 / 04:00 crons.
+
+### 65.6 Catalogue copy must be true (9 Oct 2026)
+Owner's rules after the customer-copy audit (`20261010_customer_copy_cleanup`,
+`20261011_catalogue_truth_cleanup`):
+- **Specifications and features show only verified, product-specific facts.** Template
+  values copied across products (the shared bag/cable/garment weights and print areas,
+  "Origin: Manufactured to order", "Varies", "Premium Materials", "Fast delivery", "Low
+  minimum order", power-bank lines on the Luggie adapter) were removed; empty specs show
+  "No specifications available". Real specs come from the owner's spreadsheet
+  (`product-specs-template.xlsx`, kept outside the repo) — don't invent values.
+- **No "Best Seller" (or "most popular") claims** until it is computed from real orders.
+  Badges: "Our Pick" (recommended range), "Full Wrap Print" (Chi Cup, Water Bottle),
+  "Recycled" (12oz Recycled Canvas, 5oz Recycled Cotton Bag), "New" (Edge Classic/Silver),
+  "Compact". Home: slider heading "Our Picks"; HOT PRODUCTS selects `badge = 'Our Pick'`.
+  Ava's prompt forbids sales-ranking claims.
+- **Suppliers vs brands:** never name a wholesale supplier, importer, distributor or printer
+  (incl. the `supplier` field in tool results) — the supplier's name is deliberately NOT
+  written into Ava's prompt. Manufacturer brands that are part of the product (Gildan,
+  Klio-Eterna) are fine.
+- **Ocean Octopus / Octopus Mini are multi-head charging cables, no battery.**
+- **Colour names drive Designer template URLs** (`Designer.jsx` builds
+  `product-templates/<product>/<slug(colour name)>-<view>.png`). Renaming a colour means
+  COPYING its template PNGs to the new slug first (keep the old files for rollback), then
+  updating `catalog_product_colors`, `product_template_variants` (name + `template_url`) and
+  image alt text together. Done for "Voilet P7679" → "Violet (Pantone 7679)" and "White " →
+  "White" (the trailing space had stopped the Designer defaulting the Water Bottle to white).
+- `/<category>-legacy` URLs redirect to the live category pages (dead placeholder pages
+  removed).
