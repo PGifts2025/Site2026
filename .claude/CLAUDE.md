@@ -6477,3 +6477,46 @@ crawlers (ChatGPT search, Perplexity, Claude) do not, so they saw a blank page.
   shared by the page and the prerender. Add new spec labels to `SPEC_ORDER`.
 - Print areas on the Xoopar products are the owner's figures (16 Nov 2026), not
   Xoopar's site figures.
+
+### 66.6 Category "About" copy, crawlable links, supplier product pages (16 Nov 2026)
+- `catalog_categories.intro_heading` / `intro` (migration `20261116_category_intros.sql`):
+  visible "About" section above the "Need Help Choosing?" box; paragraphs separated by a
+  blank line; renders nothing while empty. Copy must be true (§65.6): "from N units" and
+  price claims are checked against the catalogue — re-check them if ranges change.
+- Product cards on category pages keep their card `onClick`, but the **product name is a
+  real `<Link>`** (with `stopPropagation`) so crawlers can follow it. Don't turn it back into
+  a plain heading; don't nest the card's button inside the link (invalid HTML).
+- The prerender also writes **`dist/products/<CODE>/index.html` for every curated,
+  non-retired supplier product** (~705): name, category line, description, material,
+  dimensions, origin, minimum order, lead time, express note — the fields LaltexProductView
+  shows. **No prices** (margin + delivery + print are applied at view time). **Images use
+  our `card_thumb_url` only** — `card_image_url` / Laltex image hosts would name the
+  supplier (§65.6). Static category pages list the curated products too (cards the live
+  page hides are left out). All are in `sitemap.xml`.
+- Supplier pages are a snapshot from the last deploy; a product retired since then keeps
+  its static page until the next deploy.
+- Tagline under the logo (header + both footers): "Corporate & Promotional Gifts"
+  (`uppercase` class keeps the old look; the text itself is natural case).
+- `LaltexProductView`'s "Back to Products" is a `<p>` (one `<h1>` per page).
+
+### 66.7 llms.txt + home Organization data
+- `dist/llms.txt` (llmstxt.org format) lists categories, our products and info pages.
+  Few AI crawlers read it; it's a cheap index, not a ranking lever.
+- Home `Organization` JSON-LD carries phone, email and trading address from
+  `src/config/business.js` (the same details the footer shows).
+
+### 66.8 Vercel Web Analytics (16 Nov 2026)
+- `@vercel/analytics` **2.0.1, pinned exact**, mounted once in `App.jsx`
+  (`<Analytics beforeSend={analyticsBeforeSend} />`). Cookieless, so no cookie banner
+  is needed (PECR position from §32.6 holds).
+- **Installing needed `--legacy-peer-deps` once:** the package lists `@remix-run/react` as an
+  optional peer, which wants React 18. The lock file is now consistent and a plain
+  `npm install` (what Vercel runs) works. If a future install throws ERESOLVE on that peer,
+  use `--legacy-peer-deps` for that one install. Don't add a project-wide `.npmrc`
+  without checking the build.
+- `src/utils/analyticsFilter.js` strips `?query` and `#fragment` (Stripe session ids,
+  auth tokens) and drops `/admin` pages. **Never remove the filter.**
+- Has to be switched on in Vercel → Project → Analytics. Until then the browser logs a
+  harmless 404 for `/_vercel/insights/script.js`.
+- The privacy policy ("Cookies and tracking" + the Vercel processor line) describes this.
+  Update it if analytics ever changes (different tool, cookies, more data).

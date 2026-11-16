@@ -18,7 +18,8 @@
 //   dist/index.html                   home page: title, description, H1
 //   dist/<category>/index.html        category pages
 //   dist/<category>/<slug>/index.html product pages (Product JSON-LD)
-//   dist/sitemap.xml
+//   dist/products/<CODE>/index.html   curated supplier products (no prices)
+//   dist/sitemap.xml, dist/llms.txt
 //
 // Static #root content is a SUBSET of what the React page shows, never
 // extra text (that would be cloaking). createRoot() replaces it as soon
@@ -37,6 +38,7 @@ import { fileURLToPath } from 'node:url';
 import 'dotenv/config';
 import { HOME_TITLE, HOME_H1, HOME_DESCRIPTION, SITE_NAME, SITE_URL } from '../src/config/seo.js';
 import { orderedSpecEntries } from '../src/utils/specOrder.js';
+import { BUSINESS } from '../src/config/business.js';
 
 const DIST = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'dist');
 const TITLE_TAG = '<title>Promo Gifts</title>';
@@ -128,6 +130,31 @@ const breadcrumbLd = (items) => ({
   itemListElement: items.map(([name, item], i) => ({ '@type': 'ListItem', position: i + 1, name, item })),
 });
 
+// Category "About" copy: paragraphs separated by a blank line (§66.6).
+const introParagraphs = (c) =>
+  String(c.intro ?? '')
+    .split(/\n\s*\n/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+// Contact details exactly as the site footer shows them (src/config/business.js).
+const organizationLd = () => ({
+  '@context': 'https://schema.org',
+  '@type': 'Organization',
+  name: SITE_NAME,
+  url: `${SITE_URL}/`,
+  telephone: `+44 ${BUSINESS.phone.replace(/^0/, '')}`,
+  email: BUSINESS.email,
+  address: {
+    '@type': 'PostalAddress',
+    streetAddress: BUSINESS.tradingAddress.slice(0, 2).join(', '),
+    addressLocality: BUSINESS.tradingAddress[2],
+    addressRegion: BUSINESS.tradingAddress[3],
+    postalCode: BUSINESS.tradingAddress[4],
+    addressCountry: 'GB',
+  },
+});
+
 // ---------------------------------------------------------------- home
 export function buildHomePage(template, categories) {
   const head = headTags({
@@ -135,7 +162,7 @@ export function buildHomePage(template, categories) {
     description: HOME_DESCRIPTION,
     url: `${SITE_URL}/`,
     jsonLd: [
-      { '@context': 'https://schema.org', '@type': 'Organization', name: SITE_NAME, url: `${SITE_URL}/` },
+      organizationLd(),
       { '@context': 'https://schema.org', '@type': 'WebSite', name: SITE_NAME, url: `${SITE_URL}/` },
     ],
   });
@@ -153,11 +180,14 @@ export function buildHomePage(template, categories) {
 }
 
 // ----------------------------------------------------------- category
-export function buildCategoryPage(template, c, products) {
+export function buildCategoryPage(template, c, products, supplierItems = []) {
   const url = `${SITE_URL}/${c.slug}`;
   const title = c.meta_title || `${c.name} | ${SITE_NAME}`;
   const description = c.meta_description || summarise(c.description || c.name);
-  const items = products.map((p) => [p.name, `${SITE_URL}/${c.slug}/${p.slug}`]);
+  const items = [
+    ...products.map((p) => [p.name, `${SITE_URL}/${c.slug}/${p.slug}`]),
+    ...supplierItems.map((s) => [s.name, `${SITE_URL}${supplierPath(s.supplier_product_code)}`]),
+  ];
   const head = headTags({
     title,
     description,
@@ -174,15 +204,26 @@ export function buildCategoryPage(template, c, products) {
         : []),
     ],
   });
-  const list = products
-    .map((p) => `<li><a href="/${c.slug}/${p.slug}" class="text-gray-700">${escapeHtml(p.name)}</a></li>`)
+  // Every card on the live page links to its product (in-house first, then
+  // the curated supplier products in curation order, as the page shows them).
+  const list = [
+    ...products.map((p) => [`/${c.slug}/${p.slug}`, p.name]),
+    ...supplierItems.map((s) => [supplierPath(s.supplier_product_code), s.name]),
+  ]
+    .map(([href, name]) => `<li><a href="${escapeHtml(href)}" class="text-gray-700">${escapeHtml(name)}</a></li>`)
     .join('');
+  const intro = introParagraphs(c);
   const body = [
     `<main data-prerendered="category" class="${WRAP}">`,
     `<nav aria-label="Breadcrumb" class="text-gray-600"><a href="/">Home</a> › ${escapeHtml(c.name)}</nav>`,
     `<h1 class="text-4xl font-bold text-gray-900 mb-2">${escapeHtml(c.name)}</h1>`,
     c.description ? `<p class="text-lg text-gray-600">${escapeHtml(c.description)}</p>` : '',
     list ? `<ul>${list}</ul>` : '',
+    intro.length
+      ? `<section><h2 class="text-2xl font-bold text-gray-900 mb-4">${escapeHtml(c.intro_heading || `About our ${c.name.toLowerCase()}`)}</h2>${intro
+          .map((t) => `<p class="text-gray-700 leading-relaxed mb-4">${escapeHtml(t)}</p>`)
+          .join('')}</section>`
+      : '',
     `</main>`,
   ].join('');
   return render(template, head, body);
@@ -270,14 +311,110 @@ export function buildProductPage(template, p) {
   return render(template, head, body);
 }
 
+// ---------------------------------------------- supplier (curated) product
+// /products/<CODE> — the same fields LaltexProductView shows (name,
+// category line, description, material, dimensions, country of origin,
+// minimum order, lead time, express note). No prices: the page prices with
+// margin + delivery + print at view time, so a build-time figure would be
+// wrong. Never name the supplier (§65.6). Colours are left out (the page
+// derives them from item rows, not from available_colours).
+export const supplierPath = (code) => `/products/${encodeURIComponent(code)}`;
+
+export function buildSupplierPage(template, s) {
+  const url = `${SITE_URL}${supplierPath(s.supplier_product_code)}`;
+  const text = s.description || s.web_description || '';
+  const title = `${s.name} | ${SITE_NAME}`;
+  const description = summarise(text || s.name);
+  // Our own nightly WebP thumbnail only (§65.8). card_image_url points at
+  // the supplier's image host, which would name the supplier (§65.6).
+  const image = s.card_thumb_url || null;
+  const categoryLine = [s.category, s.sub_category].filter(Boolean).join(' › ');
+  const facts = [
+    ['Material', s.material],
+    ['Dimensions', s.product_dims],
+    ['Country of origin', s.country_of_origin],
+    ['Minimum order', s.minimum_order_qty != null ? `${qty(s.minimum_order_qty)} units` : null],
+  ].filter(([, v]) => v != null && String(v).trim() !== '');
+  const leadTime = s.lead_time_days != null
+    ? `Standard lead time: ${s.lead_time_days} working days from artwork approval.`
+    : null;
+
+  const product = {
+    '@context': 'https://schema.org',
+    '@type': 'Product',
+    name: s.name,
+    url,
+    sku: s.supplier_product_code,
+    ...(text ? { description: text } : {}),
+    ...(s.sub_category || s.category ? { category: s.sub_category || s.category } : {}),
+    ...(image ? { image: [image] } : {}),
+    ...(facts.length || leadTime
+      ? {
+          additionalProperty: [
+            ...facts.map(([name, value]) => ({ '@type': 'PropertyValue', name, value: String(value) })),
+            ...(s.lead_time_days != null
+              ? [{ '@type': 'PropertyValue', name: 'Lead time', value: `${s.lead_time_days} working days from artwork approval` }]
+              : []),
+          ],
+        }
+      : {}),
+  };
+
+  const head = headTags({ title, description, url, type: 'product', image, jsonLd: [product] });
+  const body = [
+    `<main data-prerendered="supplier-product" class="${WRAP}">`,
+    `<h1 class="text-3xl font-extrabold text-gray-900">${escapeHtml(s.name)}</h1>`,
+    categoryLine ? `<p class="text-gray-600">${escapeHtml(categoryLine)}</p>` : '',
+    text ? `<p class="text-gray-700 leading-relaxed">${escapeHtml(text)}</p>` : '',
+    image ? `<img src="${escapeHtml(image)}" alt="${escapeHtml(s.name)}" class="max-h-[520px]" />` : '',
+    facts.length ? `<dl>${facts.map(([k, v]) => `<dt>${escapeHtml(k)}</dt><dd>${escapeHtml(v)}</dd>`).join('')}</dl>` : '',
+    leadTime ? `<p>${escapeHtml(leadTime)}</p>` : '',
+    s.express_available ? `<p>Express turnaround available</p>` : '',
+    `</main>`,
+  ]
+    .filter(Boolean)
+    .join('');
+  return render(template, head, body);
+}
+
+// ----------------------------------------------------------- llms.txt
+// A plain index of the main pages for AI tools (llmstxt.org format).
+// Low expectations — few crawlers fetch it — but it is cheap (§66.7).
+export function buildLlmsTxt({ categories, products }) {
+  const lines = [
+    `# ${SITE_NAME}`,
+    '',
+    `> ${HOME_DESCRIPTION}`,
+    '',
+    `${SITE_NAME} is a UK supplier of corporate and promotional gifts, printed with your logo. Prices on the site exclude VAT. Contact: ${BUSINESS.phone}, ${BUSINESS.email}.`,
+    '',
+    '## Categories',
+    '',
+    ...categories.map((c) => `- [${c.name}](${SITE_URL}/${c.slug}): ${c.meta_description || c.description || c.name}`),
+    '',
+    '## Our own products',
+    '',
+    ...products.map((p) => `- [${p.name}](${SITE_URL}/${p.category.slug}/${p.slug}): ${p.meta_description || summarise(p.description || p.subtitle || p.name)}`),
+    '',
+    '## Information',
+    '',
+    `- [Terms of sale](${SITE_URL}/terms)`,
+    `- [Privacy policy](${SITE_URL}/privacy)`,
+    `- [Sitemap](${SITE_URL}/sitemap.xml)`,
+    '',
+  ];
+  return lines.join('\n');
+}
+
 // ------------------------------------------------------------ sitemap
-export function buildSitemap({ categories, products }) {
+export function buildSitemap({ categories, products, supplierProducts = [] }) {
   const entry = (loc, lastmod) =>
     `  <url><loc>${loc}</loc>${lastmod ? `<lastmod>${lastmod.slice(0, 10)}</lastmod>` : ''}</url>`;
   const lines = [
     entry(`${SITE_URL}/`),
     ...categories.map((c) => entry(`${SITE_URL}/${c.slug}`, c.updated_at)),
     ...products.map((p) => entry(`${SITE_URL}/${p.category.slug}/${p.slug}`, p.updated_at)),
+    ...supplierProducts.map((s) => entry(`${SITE_URL}${supplierPath(s.supplier_product_code)}`, s.updated_at)),
     entry(`${SITE_URL}/privacy`),
     entry(`${SITE_URL}/terms`),
   ];
@@ -329,23 +466,77 @@ async function main() {
   try {
     [products, categories] = await Promise.all([
       fetchRows(base, key, 'catalog_products', `select=${encodeURIComponent(PRODUCT_SELECT)}&status=eq.active&order=slug.asc`),
-      fetchRows(base, key, 'catalog_categories', 'select=slug,name,description,meta_title,meta_description,updated_at&is_active=eq.true&order=sort_order.asc'),
+      // select=* so optional columns (intro, intro_heading) never break the read.
+      fetchRows(base, key, 'catalog_categories', 'select=*&is_active=eq.true&order=sort_order.asc'),
     ]);
   } catch (err) {
     console.warn(`[prerender] WARNING: could not read the catalogue (${err.message}) — static pages skipped. The site works, but pages are NOT crawler-readable in this build.`);
     return;
   }
 
+  // Curated supplier products (category pages + /products/<CODE>). Soft:
+  // on failure the in-house, category and home pages are still written.
+  let curated = [];
+  try {
+    curated = await fetchCuratedSupplierProducts(base, key);
+  } catch (err) {
+    console.warn(`[prerender] WARNING: could not read curated supplier products (${err.message}) — /products/<code> pages skipped.`);
+  }
+  const supplierByCode = new Map();
+  for (const s of curated) if (!supplierByCode.has(s.supplier_product_code)) supplierByCode.set(s.supplier_product_code, s);
+  const supplierProducts = [...supplierByCode.values()];
+
   products = products.filter((p) => p.slug && p.category?.slug);
   for (const p of products) await writePage(path.join(p.category.slug, p.slug), buildProductPage(template, p));
+  for (const s of supplierProducts) {
+    await writePage(path.join('products', s.supplier_product_code), buildSupplierPage(template, s));
+  }
   for (const c of categories) {
-    await writePage(c.slug, buildCategoryPage(template, c, products.filter((p) => p.category.slug === c.slug)));
+    // Cards the live page hides (image checked and none works, §65.7) are left out.
+    const cards = curated.filter((s) => s.category_slug === c.slug && !(s.card_image_checked_at && !s.card_image_url));
+    await writePage(c.slug, buildCategoryPage(template, c, products.filter((p) => p.category.slug === c.slug), cards));
   }
   await fs.writeFile(path.join(DIST, 'index.html'), buildHomePage(template, categories));
-  await fs.writeFile(path.join(DIST, 'sitemap.xml'), buildSitemap({ categories, products }));
+  await fs.writeFile(path.join(DIST, 'sitemap.xml'), buildSitemap({ categories, products, supplierProducts }));
+  await fs.writeFile(path.join(DIST, 'llms.txt'), buildLlmsTxt({ categories, products }));
 
   const branded = products.filter((p) => p.brand).length;
-  console.log(`[prerender] wrote home, ${categories.length} category pages, ${products.length} product pages (${branded} with a brand) and sitemap.xml.`);
+  console.log(`[prerender] wrote home, ${categories.length} category pages, ${products.length} product pages (${branded} with a brand), ${supplierProducts.length} supplier product pages, sitemap.xml and llms.txt.`);
+}
+
+// category_product_curation (position order) joined in JS to the live,
+// non-retired supplier_products rows. Paged: PostgREST caps responses at
+// 1000 rows (§28.1); supplier rows are fetched 100 codes at a time.
+const SUPPLIER_COLUMNS = [
+  'supplier_product_code', 'name', 'description', 'web_description', 'category', 'sub_category',
+  'material', 'product_dims', 'country_of_origin', 'minimum_order_qty', 'lead_time_days',
+  'express_available', 'updated_at',
+].join(',');
+
+async function fetchCuratedSupplierProducts(base, key) {
+  const curation = [];
+  for (let offset = 0; ; offset += 1000) {
+    const page = await fetchRows(
+      base, key, 'category_product_curation',
+      `select=category_slug,supplier_product_code,position,card_image_url,card_thumb_url,card_image_checked_at&order=category_slug.asc,position.asc&limit=1000&offset=${offset}`,
+    );
+    curation.push(...page);
+    if (page.length < 1000) break;
+  }
+  const codes = [...new Set(curation.map((r) => r.supplier_product_code))];
+  const rows = new Map();
+  for (let i = 0; i < codes.length; i += 100) {
+    const list = codes.slice(i, i + 100).map((c) => `"${String(c).replace(/"/g, '')}"`).join(',');
+    const page = await fetchRows(
+      base, key, 'supplier_products',
+      `select=${SUPPLIER_COLUMNS}&is_retired=is.false&supplier_product_code=in.(${encodeURIComponent(list)})`,
+    );
+    for (const r of page) rows.set(r.supplier_product_code, r);
+  }
+  // Same rule as getCuratedCategoryProducts: retired / missing codes drop out.
+  return curation
+    .filter((c) => rows.has(c.supplier_product_code))
+    .map((c) => ({ ...rows.get(c.supplier_product_code), ...c }));
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
