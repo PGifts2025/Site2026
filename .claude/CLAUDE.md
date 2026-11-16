@@ -6504,3 +6504,19 @@ crawlers (ChatGPT search, Perplexity, Claude) do not, so they saw a blank page.
   Few AI crawlers read it; it's a cheap index, not a ranking lever.
 - Home `Organization` JSON-LD carries phone, email and trading address from
   `src/config/business.js` (the same details the footer shows).
+
+### 66.8 Vercel Web Analytics (16 Nov 2026)
+- `@vercel/analytics` **2.0.1, pinned exact**, mounted once in `App.jsx`
+  (`<Analytics beforeSend={analyticsBeforeSend} />`). Cookieless, so no cookie banner
+  is needed (PECR position from §32.6 holds).
+- **Installing needed `--legacy-peer-deps` once:** the package lists `@remix-run/react` as an
+  optional peer, which wants React 18. The lock file is now consistent and a plain
+  `npm install` (what Vercel runs) works. If a future install throws ERESOLVE on that peer,
+  use `--legacy-peer-deps` for that one install. Don't add a project-wide `.npmrc`
+  without checking the build.
+- `src/utils/analyticsFilter.js` strips `?query` and `#fragment` (Stripe session ids,
+  auth tokens) and drops `/admin` pages. **Never remove the filter.**
+- Has to be switched on in Vercel → Project → Analytics. Until then the browser logs a
+  harmless 404 for `/_vercel/insights/script.js`.
+- The privacy policy ("Cookies and tracking" + the Vercel processor line) describes this.
+  Update it if analytics ever changes (different tool, cookies, more data).

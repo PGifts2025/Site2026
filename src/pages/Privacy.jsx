@@ -7,7 +7,7 @@ const HELPDESK = 'helpdesk@promo-gifts.co';
 
 function Privacy() {
   return (
-    <LegalPage title="Privacy Policy" lastUpdated="8 August 2026">
+    <LegalPage title="Privacy Policy" lastUpdated="16 November 2026">
       <P>
         This policy explains what personal data we collect when you use this
         website, why we use it, who we share it with, and how long we keep it. It
@@ -55,7 +55,7 @@ function Privacy() {
       </P>
       <UL>
         <LI><strong>Supabase</strong>:our database, sign-in system, and file storage. Holds your account, order, and artwork data.</LI>
-        <LI><strong>Vercel</strong>:hosts the website and its server functions. It does not hold your account data, but it processes your IP address and request logs as part of serving the site.</LI>
+        <LI><strong>Vercel</strong>:hosts the website and its server functions. It does not hold your account data, but it processes your IP address and request logs as part of serving the site. We also use Vercel Web Analytics to count page visits (see "Cookies and tracking").</LI>
         <LI><strong>Stripe</strong>:processes card payments. Your card details go to Stripe, not to us.</LI>
         <LI><strong>Resend</strong>:sends our transactional emails (order confirmations, artwork notifications, sign-in emails). Receives your email address and the relevant order details.</LI>
         <LI><strong>Anthropic</strong>:provides the AI model behind the on-site assistant. It receives the messages you send to the assistant.</LI>
@@ -108,6 +108,15 @@ function Privacy() {
         We do not use advertising or analytics cookies. To keep you signed in, we
         store a small amount of information in your browser; this is essential to
         the site working and cannot be switched off without breaking sign-in.
+      </P>
+      <P>
+        <strong>Visit statistics.</strong> We use Vercel Web Analytics to count
+        page visits, so we can see which pages are useful. It uses no cookies and
+        stores nothing in your browser. Vercel tells visitors apart with an
+        anonymous identifier that changes every day, rather than storing your IP
+        address. We only send the page address (never anything after a "?" or
+        "#", which can contain payment or sign-in codes), and we do not record
+        visits to our staff admin pages.
       </P>
       <P>
         <strong>Anonymous fair-use limits.</strong> When you use the AI assistant

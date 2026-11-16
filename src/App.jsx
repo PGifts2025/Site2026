@@ -15,6 +15,8 @@ import { AuthProvider } from './context/AuthContext';
 import { CartProvider } from './context/CartContext';
 import Cart from './components/Cart';
 import AIChatWidget from './components/AIChatWidget/AIChatWidget';
+import { Analytics } from '@vercel/analytics/react';
+import { analyticsBeforeSend } from './utils/analyticsFilter';
 
 // Customer Account Components
 import CustomerGuard from './components/auth/CustomerGuard';
@@ -158,6 +160,9 @@ function App() {
           <SiteFooter />
           <Cart />
           <AIChatWidget />
+          {/* Cookieless page-view counts (CLAUDE.md §66.8). Must be switched
+              on in Vercel → Project → Analytics; until then it sends nothing. */}
+          <Analytics beforeSend={analyticsBeforeSend} />
         </Router>
       </CartProvider>
     </AuthProvider>
