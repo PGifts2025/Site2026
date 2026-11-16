@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { ChevronRight, Zap, FileCheck, Clock, Loader } from 'lucide-react';
 import { supabase } from '../services/supabaseService';
 import { getCuratedCategoryProducts } from '../services/productCatalogService';
@@ -530,7 +530,11 @@ const CategoryPage = ({ categorySlug }) => {
                   {/* Product Info */}
                   <div className="p-6">
                     <h3 className="text-xl font-bold text-gray-900 mb-2 group-hover:text-blue-600 transition-colors">
-                      {product.name}
+                      {/* Real link so crawlers can follow it (§66.6); stopPropagation
+                          keeps the card's own onClick from navigating a second time. */}
+                      <Link to={`/${categorySlug}/${product.slug}`} onClick={(e) => e.stopPropagation()}>
+                        {product.name}
+                      </Link>
                     </h3>
                     <p className="text-sm text-gray-600 mb-4 line-clamp-2">
                       {product.short_description || product.description}
@@ -610,7 +614,9 @@ const CategoryPage = ({ categorySlug }) => {
                     </div>
                     <div className="p-5">
                       <h3 className="text-lg font-bold text-gray-900 mb-1 line-clamp-2 group-hover:text-blue-600 transition-colors">
-                        {normalised?.name || code}
+                        <Link to={`/products/${encodeURIComponent(code)}`} onClick={(e) => e.stopPropagation()}>
+                          {normalised?.name || code}
+                        </Link>
                       </h3>
                       <p className="text-xs text-gray-500 mb-3">Code: {code}</p>
                       {lowestTier != null && (
@@ -653,6 +659,24 @@ const CategoryPage = ({ categorySlug }) => {
               </div>
             )}
           </>
+        )}
+
+        {/* About this category (CLAUDE.md §66.6): owner-approved copy from
+            catalog_categories.intro_heading / intro. Paragraphs are separated
+            by a blank line. Nothing renders while intro is empty. */}
+        {category.intro && (
+          <section className="mt-16 max-w-4xl">
+            <h2 className="text-2xl font-bold text-gray-900 mb-4">
+              {category.intro_heading || `About our ${category.name.toLowerCase()}`}
+            </h2>
+            {String(category.intro)
+              .split(/\n\s*\n/)
+              .map((para) => para.trim())
+              .filter(Boolean)
+              .map((para, i) => (
+                <p key={i} className="text-gray-700 leading-relaxed mb-4">{para}</p>
+              ))}
+          </section>
         )}
 
         {/* Bottom CTA Section */}

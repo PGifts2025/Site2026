@@ -120,7 +120,7 @@ function HeaderBar() {
             <div>
               {/* Not an <h1>: each page owns its single main heading (CLAUDE.md §66). */}
               <div className="text-lg md:text-2xl font-bold text-gray-900">Promo Gifts</div>
-              <p className="text-xs md:text-sm text-gray-600 hidden sm:block">YOUR PROMOTIONAL PARTNER</p>
+              <p className="text-xs md:text-sm text-gray-600 hidden sm:block uppercase">Corporate &amp; Promotional Gifts</p>
               <div className="items-center mt-1 hidden md:flex">
                 <Phone className="h-4 w-4 text-red-500 mr-2" />
                 <span className="text-sm font-semibold text-gray-700">01844 398333</span>

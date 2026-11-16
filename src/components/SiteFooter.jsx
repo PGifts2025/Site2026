@@ -32,7 +32,7 @@ function SiteFooter() {
               </div>
               <div>
                 <h4 className="font-bold text-lg">{BUSINESS.tradingName}</h4>
-                <p className="text-sm text-gray-300">YOUR PROMOTIONAL PARTNER</p>
+                <p className="text-sm text-gray-300 uppercase">Corporate &amp; Promotional Gifts</p>
               </div>
             </div>
 

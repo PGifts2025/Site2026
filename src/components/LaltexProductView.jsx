@@ -718,7 +718,8 @@ const LaltexProductView = ({ product }) => {
               >
                 <ChevronLeft className="h-5 w-5" />
               </button>
-              <h1 className="text-xl font-bold text-gray-900">Back to Products</h1>
+              {/* Not an <h1>: the product name is the page's main heading (§66.5). */}
+              <p className="text-xl font-bold text-gray-900">Back to Products</p>
             </div>
             <div className="flex items-center space-x-4">
               <button
