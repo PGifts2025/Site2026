@@ -1,6 +1,7 @@
 // src/App.jsx
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { Analytics } from '@vercel/analytics/react';
 import Home from './pages/Home';
 import Designer from './pages/Designer';
 import DesignerV2 from './pages/DesignerV2';
@@ -158,6 +159,7 @@ function App() {
           <SiteFooter />
           <Cart />
           <AIChatWidget />
+          <Analytics />
         </Router>
       </CartProvider>
     </AuthProvider>
