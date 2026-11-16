@@ -9,7 +9,7 @@
 --     (sell_price, ex delivery): cables, notebooks all < £10; cups 63/64 and
 --     water bottles 63/63 < £10; pens 201/276 < £1.
 --   - "who orders" lines are PROPOSED from what the products are, for the
---     owner to correct — not sales data. Approved by the owner on: <date>.
+--     owner to correct — not sales data. Approved by the owner on 16 Nov 2026 (wording as written).
 -- Rollback: 20261116_category_intros.down.sql
 
 BEGIN;
