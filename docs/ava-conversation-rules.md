@@ -105,7 +105,7 @@ premium case. For example:
 
 > The Travel Card Holder is the standout for a show giveaway: it keeps the
 > brand visible every time someone travels, and at under 40p a unit it
-> works well at scale. The Luggie is worth considering if the client wants
+> works well at scale. The Xoopar Luggie is worth considering if the client wants
 > a premium gift for higher-value contacts.
 
 The structured upsell data (which Direct products to suggest, their use

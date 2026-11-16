@@ -14,6 +14,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import AboveCeilingNotice from './AboveCeilingNotice';
 import { formatGBP } from '../utils/currency';
+import { setPageMeta, DEFAULT_TITLE } from '../utils/pageMeta';
+import { orderedSpecEntries } from '../utils/specOrder';
 import {
   Heart,
   Share2,
@@ -453,6 +455,18 @@ const ProductDetailPage = ({ productSlug, identifier }) => {
     loadProductData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [effectiveId]);
+
+  // Tab title + meta description (CLAUDE.md §66). Same wording as the
+  // prerendered <head>: meta_title / meta_description when set, else
+  // "<name> | Promo Gifts". Supplier products use their name.
+  useEffect(() => {
+    const name = product?.name || supplierProduct?.name;
+    if (!name) return undefined;
+    return setPageMeta({
+      title: product?.meta_title || `${name} | ${DEFAULT_TITLE}`,
+      description: product?.meta_description || undefined,
+    });
+  }, [product, supplierProduct]);
 
   // Pre-load a saved design from ?design=<id> (My Designs → Add to Quote).
   // Runs once per page view after product + colors are loaded; failures are silent.
@@ -1410,7 +1424,8 @@ const ProductDetailPage = ({ productSlug, identifier }) => {
               >
                 <ChevronLeft className="h-5 w-5" />
               </button>
-              <h1 className="text-xl font-bold text-gray-900">Back to Products</h1>
+              {/* Not an <h1>: the product name is the page's main heading (§66). */}
+              <p className="text-xl font-bold text-gray-900">Back to Products</p>
             </div>
             <div className="flex items-center space-x-4">
               <button
@@ -1748,7 +1763,7 @@ const ProductDetailPage = ({ productSlug, identifier }) => {
               {activeTab === 'specs' && (
                 <div className="space-y-3">
                   {Object.keys(specifications).length > 0 ? (
-                    Object.entries(specifications).map(([key, value]) => (
+                    orderedSpecEntries(specifications).map(([key, value]) => (
                       <div key={key} className="flex justify-between py-3 border-b border-gray-100 last:border-0">
                         <span className="text-gray-600 capitalize">{key.replace(/([A-Z])/g, ' $1')}</span>
                         <span className="font-semibold text-gray-900">{value}</span>

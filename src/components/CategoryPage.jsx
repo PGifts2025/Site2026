@@ -5,6 +5,7 @@ import { supabase } from '../services/supabaseService';
 import { getCuratedCategoryProducts } from '../services/productCatalogService';
 import AvaPromptCard from './AvaPromptCard';
 import { formatGBP } from '../utils/currency';
+import { setPageMeta, DEFAULT_TITLE } from '../utils/pageMeta';
 
 // ---------------------------------------------------------------------------
 // CategoryPage — shared component rendered by all 11 category routes
@@ -267,6 +268,16 @@ const CategoryPage = ({ categorySlug }) => {
   useEffect(() => {
     fetchCategoryData();
   }, [categorySlug]);
+
+  // Tab title + meta description (CLAUDE.md §66.5): catalog_categories
+  // meta_title / meta_description, same wording as the prerendered page.
+  useEffect(() => {
+    if (!category?.name) return undefined;
+    return setPageMeta({
+      title: category.meta_title || `${category.name} | ${DEFAULT_TITLE}`,
+      description: category.meta_description || undefined,
+    });
+  }, [category]);
 
   useEffect(() => {
     if (!categorySlug) return;

@@ -128,9 +128,9 @@ GOOD (around 80 words):
 
 - **Edge Silver pen**: brushed silver metallic, executive feel, £0.56
 - **A5 Notebook**: PU cover, lined or dot-grid, £4.55
-- **Luggie travel adapter**: covers 150+ countries, recycled materials, £16.93
+- **Xoopar Luggie travel adapter**: covers 150+ countries, recycled materials, £16.93
 
-The Luggie is the most memorable: practical, sustainable, and useful for business travel. Would you like to see it customised in the Designer?"
+The Xoopar Luggie is the most memorable: practical, sustainable, and useful for business travel. Would you like to see it customised in the Designer?"
 
 Query: "I need something for my team" (vague)
 
