@@ -6444,5 +6444,12 @@ crawlers (ChatGPT search, Perplexity, Claude) do not, so they saw a blank page.
 - Renames update DRAFT `quote_items.product_name` too; paid order lines keep the name they
   were bought under.
 - Brand facts in copy come from the brand's own site or independent sources, never guessed.
-  Xoopar's own pages contradict some of our older copy (recycled %, cable length) — see the
-  §66 PR; settle with the owner before changing claims.
+- **Owner decisions (16 Nov 2026):** product descriptions stay as written (they came from
+  Xoopar's information to us). The **Specifications tab** holds facts from Xoopar's
+  official product pages (`20261116_xoopar_specifications.sql` lists the source URL per
+  product). Where those pages disagree with our description, the spec line is omitted or
+  uses the owner's figure. Mr Bio PD Long = 60W, **1.2 m**, 53% GRS-certified recycled
+  plastic (owner).
+- Spec keys must be sentence case with no capital after the first letter
+  (`ProductDetailPage` turns "CarPlay" into "Car Play"). JSONB stores keys shortest-first,
+  so the tab shows them in that order, not the order written.

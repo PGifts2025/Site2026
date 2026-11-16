@@ -12,7 +12,7 @@
 //   - <title>, meta description, canonical, Open Graph tags
 //   - schema.org Product + BreadcrumbList JSON-LD (brand when set)
 //   - a plain-HTML copy of what the product page shows (name, subtitle,
-//     description, image, features, price tiers) inside #root
+//     description, image, features, specifications, price tiers) inside #root
 //
 // The static #root content is a SUBSET of what the React page renders,
 // never extra text: createRoot() replaces it as soon as the app boots,
@@ -52,7 +52,18 @@ const PRODUCT_SELECT = [
   'images:catalog_product_images(image_url,alt_text,image_type,sort_order,is_primary)',
   'pricing:catalog_pricing_tiers(min_quantity,max_quantity,price_per_unit)',
   'features:catalog_product_features(feature_text,sort_order)',
+  'specifications:catalog_product_specifications(specifications)',
 ].join(',');
+
+// Specifications tab content as [label, value] pairs. The embed is
+// one-to-one (unique catalog_product_id) so PostgREST may return an
+// object or a one-item array. "Brand" is published as Product.brand.
+const specEntries = (p) => {
+  const row = Array.isArray(p.specifications) ? p.specifications[0] : p.specifications;
+  const specs = row?.specifications;
+  if (!specs || typeof specs !== 'object') return [];
+  return Object.entries(specs).filter(([k, v]) => k && v != null && String(v).trim() !== '');
+};
 
 export const escapeHtml = (s) =>
   String(s ?? '')
@@ -101,6 +112,10 @@ export function buildProductPage(template, p) {
     .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
     .map((f) => f.feature_text)
     .filter(Boolean);
+  const specs = specEntries(p);
+  const properties = specs
+    .filter(([k]) => k.toLowerCase() !== 'brand')
+    .map(([name, value]) => ({ '@type': 'PropertyValue', name, value: String(value) }));
 
   const product = {
     '@context': 'https://schema.org',
@@ -112,6 +127,7 @@ export function buildProductPage(template, p) {
     category: cat.name,
     ...(p.brand ? { brand: { '@type': 'Brand', name: p.brand } } : {}),
     ...(img ? { image: [img.image_url] } : {}),
+    ...(properties.length ? { additionalProperty: properties } : {}),
     ...(tiers.length
       ? {
           offers: {
@@ -167,6 +183,9 @@ export function buildProductPage(template, p) {
     p.description ? `<p>${escapeHtml(p.description)}</p>` : '',
     img ? `<img src="${escapeHtml(img.image_url)}" alt="${escapeHtml(img.alt_text || p.name)}" />` : '',
     features.length ? `<h2>Features</h2><ul>${features.map((f) => `<li>${escapeHtml(f)}</li>`).join('')}</ul>` : '',
+    specs.length
+      ? `<h2>Specifications</h2><dl>${specs.map(([k, v]) => `<dt>${escapeHtml(k)}</dt><dd>${escapeHtml(v)}</dd>`).join('')}</dl>`
+      : '',
     tierItems ? `<h2>Pricing</h2><ul>${tierItems}</ul>` : '',
     moq ? `<p>Minimum order: ${qty(moq)} units.</p>` : '',
     `</main>`,
