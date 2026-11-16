@@ -6453,3 +6453,27 @@ crawlers (ChatGPT search, Perplexity, Claude) do not, so they saw a blank page.
 - Spec keys must be sentence case with no capital after the first letter
   (`ProductDetailPage` turns "CarPlay" into "Car Play"). JSONB stores keys shortest-first,
   so the tab shows them in that order, not the order written.
+
+### 66.5 Home + category pages, single H1, SPA fallback = app.html (16 Nov 2026)
+- **`vercel.json` rewrites every unmatched path to `/app.html`, not `/index.html`.**
+  `scripts/prerender-products.mjs` writes `dist/app.html` (the untouched Vite shell) FIRST
+  and the build fails if it can't, so a deploy can never ship without it. `dist/index.html`
+  is then the prerendered HOME page. **Never point the rewrite back at `/index.html`**
+  (every account/designer/supplier-product URL would flash the home content and inherit
+  the home title), and never remove the app.html step (every non-static URL would 404).
+- Also written: `dist/<category>/index.html` for the 11 categories (title/description from
+  `catalog_categories.meta_title` / `meta_description`, H1 = category name, links to the
+  in-house products). `CategoryPage` and `Home` set the same title/description in the tab
+  via `setPageMeta`.
+- **Home wording lives in `src/config/seo.js`** (owner's keywords, 16 Nov 2026):
+  title and H1 "Corporate Gifts & Promotional Gifts - Gifts Under £10 & Express Delivery"
+  (72 chars: Google shows ~60, owner's choice). "Express" = express turnaround on
+  selected supplier products; the 24hr Express service is still pending (Home footer).
+  If express is ever withdrawn, change this wording.
+- **One `<h1>` per page.** HeaderBar's "Promo Gifts" is a `<div>`; the home page H1 is the
+  keyword heading above the hero; product pages use the product name; category pages the
+  category name. Don't add another `<h1>` to shared layout components.
+- Specifications tab order comes from `src/utils/specOrder.js` (`orderedSpecEntries`),
+  shared by the page and the prerender. Add new spec labels to `SPEC_ORDER`.
+- Print areas on the Xoopar products are the owner's figures (16 Nov 2026), not
+  Xoopar's site figures.

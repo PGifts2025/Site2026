@@ -15,6 +15,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import AboveCeilingNotice from './AboveCeilingNotice';
 import { formatGBP } from '../utils/currency';
 import { setPageMeta, DEFAULT_TITLE } from '../utils/pageMeta';
+import { orderedSpecEntries } from '../utils/specOrder';
 import {
   Heart,
   Share2,
@@ -1762,7 +1763,7 @@ const ProductDetailPage = ({ productSlug, identifier }) => {
               {activeTab === 'specs' && (
                 <div className="space-y-3">
                   {Object.keys(specifications).length > 0 ? (
-                    Object.entries(specifications).map(([key, value]) => (
+                    orderedSpecEntries(specifications).map(([key, value]) => (
                       <div key={key} className="flex justify-between py-3 border-b border-gray-100 last:border-0">
                         <span className="text-gray-600 capitalize">{key.replace(/([A-Z])/g, ' $1')}</span>
                         <span className="font-semibold text-gray-900">{value}</span>

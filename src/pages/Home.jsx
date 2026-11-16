@@ -4,6 +4,8 @@ import { Link } from "react-router-dom";
 import { getSupabaseClient } from '../services/productCatalogService';
 import AvaTypewriter from '../components/AvaTypewriter';
 import { BUSINESS, registeredOfficeLine } from '../config/business';
+import { HOME_TITLE, HOME_H1, HOME_DESCRIPTION } from '../config/seo';
+import { setPageMeta } from '../utils/pageMeta';
 
 // Ava's cycling intent phrases. The first one is the default the click
 // handler pre-fills if Ava hasn't notified us of a phrase yet (rare —
@@ -250,11 +252,19 @@ const PromoGiftsApp = () => {
     fetchHotProducts();
   }, []);
 
+  // Tab title + meta description (CLAUDE.md §66.5). The prerendered
+  // index.html carries the same wording for crawlers.
+  useEffect(() => setPageMeta({ title: HOME_TITLE, description: HOME_DESCRIPTION }), []);
+
   return (
     <div className="min-h-screen bg-white">
-      
+
       {/* Hero Image Blocks */}
       <section className="max-w-7xl mx-auto px-4 py-6">
+        {/* The page's single main heading — owner's keywords (§66.5). */}
+        <h1 className="text-xl sm:text-2xl md:text-3xl font-bold text-gray-900 text-center mb-4">
+          {HOME_H1}
+        </h1>
         {/* Top row - Slider left, Static right - Stack on mobile */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4 md:h-64">
           {/* Left - Hero Slider */}

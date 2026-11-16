@@ -10,5 +10,6 @@ Disallow: /auth
 Disallow: /api/
 Disallow: /order-confirmation
 Disallow: /reset-password
+Disallow: /app.html
 
 Sitemap: https://promo-gifts-co.uk/sitemap.xml
