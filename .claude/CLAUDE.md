@@ -6388,3 +6388,61 @@ Owner's rules after the customer-copy audit (`20261010_customer_copy_cleanup`,
 - Bucket: public read, `image/webp` only, 300 KB limit, **no client write policies** —
   written only by the service role. Rollback leaves the bucket (Supabase blocks SQL deletes
   of storage objects); empty/delete it in the dashboard if ever needed.
+
+---
+
+## 66. CRAWLER-READABLE PRODUCT PAGES + BRANDS (16 Nov 2026)
+
+### 66.1 Why
+The site is a single-page app: every URL used to return the same `index.html` (title
+"Promo Gifts", no description, empty `#root`). Google runs the JavaScript; most AI search
+crawlers (ChatGPT search, Perplexity, Claude) do not, so they saw a blank page.
+
+### 66.2 What runs
+- **`npm run build` = `vite build && node scripts/prerender-products.mjs`.** The second step
+  reads every `status = 'active'` `catalog_products` row with the **anon key** (same reads as
+  the browser) and writes `dist/<category-slug>/<slug>/index.html` with: `<title>`, meta
+  description, canonical (`https://promo-gifts-co.uk/...`), Open Graph, schema.org `Product`
+  (+ `brand` when set, + `AggregateOffer` for tier-priced products only) and `BreadcrumbList`
+  JSON-LD, and a plain-HTML copy of the page content inside `#root`. Also writes
+  `dist/sitemap.xml` (home, active categories, product pages, privacy, terms).
+- `createRoot()` (not `hydrateRoot`) replaces the static `#root` content on boot, so
+  shoppers see the normal React page. **Keep it that way** — switching to `hydrateRoot`
+  would need markup that matches React's exactly.
+- **Fails soft:** missing env / Supabase down / template changed → warning in the build log,
+  build still succeeds, site behaves as before. Check the log line
+  `[prerender] wrote N product pages (M with a brand)` after deploys.
+- `public/robots.txt` allows all crawlers (AI ones included), excludes account/admin/auth/
+  api/order-confirmation/reset-password, and points at the sitemap.
+- `src/utils/pageMeta.js` + an effect in `ProductDetailPage` set the tab title / meta
+  description on client-side navigation (catalog: `meta_title` / `meta_description`, else
+  `<name> | Promo Gifts`; supplier products: name). Cleanup resets the title.
+- "Back to Products" is a `<p>`, not an `<h1>`: the product name is the page's main heading.
+  (HeaderBar's "Promo Gifts" is still an `<h1>` on every page — owner decision pending.)
+
+### 66.3 Rules
+- **Static content must never say more than the React page.** It is a subset (name,
+  subtitle, description, image, features, tier prices, MOQ). Adding crawler-only text is
+  cloaking.
+- **No price in structured data for clothing or bags** — their page price comes from the
+  print matrix / bag model, not `catalog_pricing_tiers` (§16.10). `hasTierPagePrice()` in
+  the script encodes this; keep it in step with §60.
+- Prices are **baked in at build time**. After changing `catalog_pricing_tiers`,
+  descriptions, names or meta fields, **redeploy** (or wait for the next deploy) so the
+  static pages and sitemap match.
+- Products added after a deploy have no static page until the next build; they still work
+  via the SPA fallback.
+- `meta_title` ≤ 60 chars, `meta_description` ≤ 160 chars, true facts only (§65.6).
+
+### 66.4 Brands
+- `catalog_products.brand` (nullable text; migration `20261116_xoopar_brand_and_seo.sql`).
+  The brand is **also part of `name`** ("Xoopar Octopus Mini") so it shows in headings,
+  cards, quotes, Stripe lines, emails and Ava's search (via the 03:30 mirror).
+- Xoopar products (owner, 16 Nov 2026): octopus-mini, ocean-octopus, mr-bio,
+  mr-bio-pd-long, ice-p, luggie, gamma-lite. Manufacturer brands may be named; wholesale
+  suppliers may not (§65.6).
+- Renames update DRAFT `quote_items.product_name` too; paid order lines keep the name they
+  were bought under.
+- Brand facts in copy come from the brand's own site or independent sources, never guessed.
+  Xoopar's own pages contradict some of our older copy (recycled %, cable length) — see the
+  §66 PR; settle with the owner before changing claims.

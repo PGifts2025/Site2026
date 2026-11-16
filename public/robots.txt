@@ -1,0 +1,14 @@
+# Promo Gifts — all crawlers welcome, including AI search crawlers
+# (GPTBot, OAI-SearchBot, ClaudeBot, PerplexityBot, Google-Extended …).
+# Private, per-customer pages are excluded. (CLAUDE.md §66)
+
+User-agent: *
+Allow: /
+Disallow: /account
+Disallow: /admin
+Disallow: /auth
+Disallow: /api/
+Disallow: /order-confirmation
+Disallow: /reset-password
+
+Sitemap: https://promo-gifts-co.uk/sitemap.xml
