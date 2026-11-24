@@ -10,6 +10,10 @@
   },
   "rewrites": [
     {
+      "source": "/u/:token*",
+      "destination": "/api/unsubscribes?page=1&u=:token*"
+    },
+    {
       "source": "/(.*)",
       "destination": "/app.html"
     }
