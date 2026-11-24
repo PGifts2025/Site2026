@@ -6520,3 +6520,42 @@ crawlers (ChatGPT search, Perplexity, Claude) do not, so they saw a blank page.
   harmless 404 for `/_vercel/insights/script.js`.
 - The privacy policy ("Cookies and tracking" + the Vercel processor line) describes this.
   Update it if analytics ever changes (different tool, cookies, more data).
+
+---
+
+## 67. OUTREACH UNSUBSCRIBES — `/u/<token>` + `/api/unsubscribes` (24 Nov 2026)
+
+Interface contract with the separate cold-outreach system. Emails end with
+`Unsubscribe: https://promo-gifts-co.uk/u/<token>`. The token is 27 chars
+`^[A-Za-z0-9_-]{27}$` (URL-safe base64 of 160 random bits), one per recipient, and
+cannot be turned back into an address. Only the outreach server knows the mapping.
+**The path `/u/` is printed in sent emails. Never move or reuse it.**
+
+- **One function** `api/unsubscribes.js` (Hobby 12-function limit). `vercel.json`
+  rewrites `/u/:token*` → `/api/unsubscribes?page=1&u=:token*`. That rewrite must stay
+  **above** the `/(.*)` → `/app.html` catch-all.
+- `GET`/`HEAD /u/<token>`: confirmation page with one HTML form button. It **records nothing**,
+  because email security scanners (Safe Links, Mimecast) open every link. Only the button's
+  `POST` counts. No JavaScript needed.
+- `POST /u/<token>`: insert `{token}` (`unsubscribed_at` defaults to `now()`), `on_conflict`
+  ignore, so a repeat press is harmless. Shows "You've been unsubscribed…" for **any**
+  well-formed token, seen or not: never reveal which tokens exist. It also handles RFC 8058
+  one-click POSTs.
+- Malformed token → 404 on both, nothing stored. The DB CHECK constraint enforces the same
+  regex.
+- `GET /api/unsubscribes?since=<ISO>`: `Authorization: Bearer ${UNSUB_PULL_SECRET}`
+  (constant-time compare); wrong or missing → 401 with an empty body. **An unset secret never
+  opens it.** Returns `{unsubscribes:[{token, unsubscribed_at}]}` with `unsubscribed_at ≥ since`,
+  oldest first, paged past the 1000-row cap. Timestamps are floored to milliseconds, so
+  re-using the last value as `since` re-reads a row and never skips one.
+- **Table `public.unsubscribes`** (migration `20261124_unsubscribes.sql`): token PK +
+  `unsubscribed_at` only. **Never add IP, user agent or email. Never delete rows**: the
+  outreach server pulls incrementally. RLS on; anon has no grants; authenticated has SELECT,
+  narrowed to admins by policy. Writes come only from the function, with the service-role key.
+- Pages: `noindex` (meta + `X-Robots-Tag`), `no-store`, `no-referrer`, inline CSS, **no
+  scripts, analytics or third-party assets**. They are served by the function, not the React
+  app, so Vercel Analytics never loads on them.
+- `UNSUB_PULL_SECRET`: Dave generates it and sets it in Vercel env (Production) and the outreach
+  server's `.env`. Never commit it, write it to a file, or paste it into chat.
+- Test tokens written 24 Nov 2026 (the outreach side ignores them):
+  `TESTtestTESTtestTESTtest123`, `TESTtestTESTtestTESTtest456`.
