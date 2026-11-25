@@ -48,6 +48,7 @@
  */
 
 import { normaliseProduct, unwrapFeedResponse } from './laltex-parser.js';
+import { fetchTextCorrections, applyTextCorrections } from './text-corrections.js';
 import { applyMarginsInPlace, DEFAULT_SCHEDULE_VERSION } from './laltex-margin.js';
 
 const LALTEX_BASE = 'https://auto.laltex.com/trade/api';
@@ -453,6 +454,16 @@ export async function syncFullCatalogue({
     const existingCodes = await getExistingCodes({ supabaseUrl, serviceRoleKey, supplierId });
     const existingOverrides = await getExistingOverrides({ supabaseUrl, serviceRoleKey, supplierId });
     const retirementState = await getExistingRetirementState({ supabaseUrl, serviceRoleKey, supplierId });
+    // Owner-approved spelling corrections (CLAUDE.md §69). Soft: if the table
+    // can't be read the sync still runs, but the supplier's typos come back
+    // until the next run, so say so loudly.
+    let textCorrections = new Map();
+    try {
+      textCorrections = await fetchTextCorrections({ supabaseUrl, serviceRoleKey });
+    } catch (err) {
+      log(`[sync] WARNING: text corrections not applied this run (${err.message})`);
+    }
+    let correctedFields = 0;
     const nowIso = new Date().toISOString();
 
     // 5. Normalise + bucket
@@ -478,6 +489,9 @@ export async function syncFullCatalogue({
         continue;
       }
 
+      // Spelling corrections before anything is stored (§69).
+      correctedFields += applyTextCorrections(row, textCorrections);
+
       // Apply margins per Task 10 / CLAUDE.md §46. The row's product_pricing
       // and print_details JSONB structures get sell_price + margin_applied_pct
       // injected per tier. Delivery is NOT baked in — that's read-time.
@@ -492,7 +506,7 @@ export async function syncFullCatalogue({
 
       rows.push(row);
     }
-    log(`[sync] normalised ${rows.length} rows, ${failures.length} parse errors`);
+    log(`[sync] normalised ${rows.length} rows, ${failures.length} parse errors, ${correctedFields} spelling corrections applied`);
 
     // Persist parse errors now so they land even if later upserts throw
     // unexpectedly. job_failures.raw_snippet is truncated per row.
