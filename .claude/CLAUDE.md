@@ -6580,5 +6580,7 @@ cannot be turned back into an address. Only the outreach server knows the mappin
 - System prompt section "COLOURS AND PRODUCT NOTES" tells Ava to use `colours`, respect
   `colour_count`, treat `notes` as accurate, and never carry one product's note over to
   another.
-- Notes so far: **JF0012** Regatta Ablaze softshell (mens): two-part colour = jacket / zip
-  (owner, 25 Nov 2026).
+- Notes so far (owner, 25 Nov 2026): two-part colour = **jacket colour / zip colour** on the
+  Regatta softshells **JF0012** (Ablaze mens), **JF0112** (Ablaze womens), **JF0013** (Uproar mens),
+  **JF0113** (Uproar womens). Migrations `20261125_ai_product_notes.sql` and `…_regatta.sql`.
+  Verified on live Ava: "Navy/French Blue" → navy jacket, French Blue zip.
