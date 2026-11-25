@@ -25,7 +25,7 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 
 export const config = { maxDuration: 15 };
 
-export const TOKEN_RE = /^[A-Za-z0-9_-]{27}$/;
+export const TOKEN_RE = /^[A-Za-z0-9_-]{8,27}$/; // 8–27 chars (outreach change request, 26 Nov 2026)
 const PAGE_SIZE = 1000; // PostgREST response cap (CLAUDE.md §28.1)
 
 const esc = (s) =>

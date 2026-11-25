@@ -6527,7 +6527,7 @@ crawlers (ChatGPT search, Perplexity, Claude) do not, so they saw a blank page.
 
 Interface contract with the separate cold-outreach system. Emails end with
 `Unsubscribe: https://promo-gifts-co.uk/u/<token>`. The token is 27 chars
-`^[A-Za-z0-9_-]{27}$` (URL-safe base64 of 160 random bits), one per recipient, and
+`^[A-Za-z0-9_-]{8,27}$` (8–27 chars since 26 Nov 2026; was exactly 27), one per recipient, and
 cannot be turned back into an address. Only the outreach server knows the mapping.
 **The path `/u/` is printed in sent emails. Never move or reuse it.**
 
@@ -6542,7 +6542,8 @@ cannot be turned back into an address. Only the outreach server knows the mappin
   well-formed token, seen or not: never reveal which tokens exist. It also handles RFC 8058
   one-click POSTs.
 - Malformed token → 404 on both, nothing stored. The DB CHECK constraint enforces the same
-  regex.
+  regex: **change both together**, and apply the DB one first (migration
+  `20261126_unsubscribes_token_length.sql`).
 - `GET /api/unsubscribes?since=<ISO>`: `Authorization: Bearer ${UNSUB_PULL_SECRET}`
   (constant-time compare); wrong or missing → 401 with an empty body. **An unset secret never
   opens it.** Returns `{unsubscribes:[{token, unsubscribed_at}]}` with `unsubscribed_at ≥ since`,
