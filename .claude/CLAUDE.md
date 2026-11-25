@@ -6559,3 +6559,26 @@ cannot be turned back into an address. Only the outreach server knows the mappin
   server's `.env`. Never commit it, write it to a file, or paste it into chat.
 - Test tokens written 24 Nov 2026 (the outreach side ignores them):
   `TESTtestTESTtestTESTtest123`, `TESTtestTESTtestTESTtest456`.
+
+---
+
+## 68. AVA: COLOURS + OWNER PRODUCT NOTES (25 Nov 2026)
+
+- **Colours:** `slimProduct()` in `api/ai/chat.js` now passes `colours` (distinct
+  `items[].item_colour` for supplier rows, `items[].ItemColour` for the PGifts Direct mirror,
+  first 40) and `colour_count` **only when the list was cut short**. Before this, Ava saw no
+  colours and told customers the data "wasn't available".
+- **Owner notes:** `public.ai_product_notes (supplier_product_code PK, note)` (migration
+  `20261125_ai_product_notes.sql`). `scripts/lib/ai-product-notes.js`
+  `attachProductNotes()` adds `notes` to matching search and alternatives results. It runs
+  after `truncateForModel`, uses the service role, isn't cached and fails soft. RLS on;
+  admins manage rows; no anon access.
+- **To add a note:** `INSERT … ON CONFLICT (supplier_product_code) DO UPDATE` with the exact
+  code (Laltex codes are UPPERCASE, PGifts Direct uses its slug). One short, true,
+  product-specific note per product. No prices, no supplier names (§65.6). It takes effect on
+  the next chat turn, with no deploy needed.
+- System prompt section "COLOURS AND PRODUCT NOTES" tells Ava to use `colours`, respect
+  `colour_count`, treat `notes` as accurate, and never carry one product's note over to
+  another.
+- Notes so far: **JF0012** Regatta Ablaze softshell (mens): two-part colour = jacket / zip
+  (owner, 25 Nov 2026).
