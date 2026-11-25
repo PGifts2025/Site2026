@@ -31,6 +31,7 @@ import { fileURLToPath } from 'node:url';
 import dotenv from 'dotenv';
 
 import { applyMarginsInPlace, DEFAULT_SCHEDULE_VERSION } from './lib/laltex-margin.js';
+import { indexCorrections, applyTextCorrections } from './lib/text-corrections.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, '..', '.env') });
@@ -346,6 +347,22 @@ async function main() {
     0,
   );
 
+  // Owner-approved spelling corrections (CLAUDE.md §69) — same rules as the
+  // nightly sync, so a debug re-sync never brings a fixed typo back.
+  const text = {
+    supplier_product_code: product.ProductCode,
+    name: product.ProductName,
+    title: product.ProductTitle,
+    description: product.Description,
+    web_description: product.WebDescription,
+  };
+  const correctionRows = await execSQL(
+    `SELECT supplier_product_code, field, find, replace_with FROM supplier_text_corrections WHERE supplier_product_code = '${product.ProductCode.replace(/'/g, "''")}'`,
+    token,
+  );
+  const corrected = applyTextCorrections(text, indexCorrections(Array.isArray(correctionRows) ? correctionRows : []));
+  if (corrected) console.log(`[sync] applied ${corrected} spelling correction(s)`);
+
   // UPSERT
   // NOTE: margin_pct_override is intentionally NOT in this list. It's
   // admin-owned state and must survive sync. The CLI's --override flag
@@ -389,10 +406,10 @@ async function main() {
   const values = [
     sqlText(supplierId),
     sqlText(product.ProductCode),
-    sqlText(product.ProductName),
-    sqlText(product.ProductTitle),
-    sqlText(product.Description),
-    sqlText(product.WebDescription),
+    sqlText(text.name),
+    sqlText(text.title),
+    sqlText(text.description),
+    sqlText(text.web_description),
     sqlText(product.KeyWords),
     sqlText(product.AvailableColours),
     sqlText(product.ProductDims),

@@ -6584,3 +6584,29 @@ cannot be turned back into an address. Only the outreach server knows the mappin
   Regatta softshells **JF0012** (Ablaze mens), **JF0112** (Ablaze womens), **JF0013** (Uproar mens),
   **JF0113** (Uproar womens). Migrations `20261125_ai_product_notes.sql` and `…_regatta.sql`.
   Verified on live Ava: "Navy/French Blue" → navy jacket, French Blue zip.
+
+---
+
+## 69. SUPPLIER SPELLING CORRECTIONS (25 Nov 2026)
+
+- The Laltex feed overwrites `name`, `title`, `description` and `web_description` every night,
+  so **never fix supplier typos with a plain UPDATE**: it is undone by 03:00.
+- Add a row to **`public.supplier_text_corrections`** `(supplier_product_code, field, find,
+  replace_with)` instead. `scripts/lib/text-corrections.js` `applyTextCorrections()` runs
+  inside both `laltex-sync.js` (nightly, before margins and upsert) and
+  `scripts/sync-laltex-product.js` (manual). The rules are a literal, case-sensitive find; every
+  occurrence is replaced; and a correction is **skipped when the field already contains the
+  replacement**, so a supplier-side fix is never doubled. Make `find` specific enough not to
+  match the correct spelling (e.g. `Russel Full` → `Russell Full`, not `Russel` → `Russell`).
+- To fix the live text immediately as well, run the four per-field `UPDATE … FROM` statements
+  from the migration. **One statement per field**: an `UPDATE … FROM` applies only one joined
+  row per target.
+- If the table can't be read, the sync still runs, logs `WARNING: text corrections not
+  applied`, and the typos return until the next good run. The sync log line reports
+  `N spelling corrections applied`.
+- RLS on, admins manage, no anon access.
+- Seeded 25 Nov 2026 (migration `20261125_supplier_text_corrections.sql`) from a spell-check of
+  all live names and titles plus curated descriptions: 18 fixes on 13 products, including
+  JF0013 "Shoftshell". British spellings (colour, aluminium, personalised) are correct; model
+  names (Legant, Mech, Marico…) are deliberate.
+- Prerendered pages pick up corrected names on the next deploy; embeddings re-embed at 04:00.
