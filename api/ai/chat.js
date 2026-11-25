@@ -49,6 +49,7 @@ import { loadConversationRules } from '../../scripts/lib/ai-conversation-rules.j
 import { loadUpsellContext } from '../../scripts/lib/ai-upsell-context.js';
 import { deliveryPerUnit } from '../../scripts/lib/laltex-delivery.js';
 import { scheduleMarginForTier } from '../../scripts/lib/laltex-margin.js';
+import { attachProductNotes } from '../../scripts/lib/ai-product-notes.js';
 import {
   checkSearchQuota,
   hashVisitorId,
@@ -524,6 +525,8 @@ export default async function handler(req, res) {
             name: 'searchProducts', input: tool.input, baseUrl, cronSecret,
           });
           const slimmed = out.ok ? truncateForModel(out.payload) : null;
+          // Owner-confirmed product notes (§68); fails soft.
+          if (slimmed?.results) await attachProductNotes(slimmed.results, { supabaseUrl, serviceRoleKey });
           if (slimmed?.results) {
             for (const r of slimmed.results) {
               if (r?.supplier_product_code) productCardMap.set(r.supplier_product_code, r);
@@ -541,6 +544,7 @@ export default async function handler(req, res) {
             name: 'findAlternatives', input: tool.input, baseUrl, cronSecret,
           });
           const slimmed = out.ok ? truncateForModel(out.payload) : null;
+          if (slimmed?.alternatives) await attachProductNotes(slimmed.alternatives, { supabaseUrl, serviceRoleKey });
           if (slimmed?.alternatives) {
             for (const r of slimmed.alternatives) {
               if (r?.supplier_product_code) productCardMap.set(r.supplier_product_code, r);
@@ -744,6 +748,13 @@ function slimProduct(p) {
   const firstImage = Array.isArray(p.images) && p.images.length > 0
     ? (typeof p.images[0] === 'string' ? p.images[0] : p.images[0]?.url ?? null)
     : null;
+  // Colour names exactly as the product page shows them (CLAUDE.md §68):
+  // Laltex items[].item_colour, PGifts Direct mirror items[].ItemColour.
+  // Distinct, first-seen order, capped so a 65-colour garment stays cheap.
+  const allColours = Array.isArray(p.items)
+    ? [...new Set(p.items.map((it) => it?.item_colour || it?.ItemColour).filter(Boolean).map(String))]
+    : [];
+  const colours = allColours.slice(0, 40);
   return {
     supplier_product_code: p.supplier_product_code,
     name: p.name,
@@ -751,6 +762,9 @@ function slimProduct(p) {
     category: p.category,
     sub_category: p.sub_category,
     description: typeof p.description === 'string' ? p.description.slice(0, 600) : null,
+    ...(colours.length ? { colours } : {}),
+    // Only when the list above is cut short, so Ava never under-counts.
+    ...(allColours.length > colours.length ? { colour_count: allColours.length } : {}),
     minimum_order_qty: p.minimum_order_qty,
     lead_time_days: p.lead_time_days,
     express_available: p.express_available,
